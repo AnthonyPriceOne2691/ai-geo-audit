@@ -14,3 +14,15 @@ React с Vite и Mantine, pytest, docker compose.
 - База разработки и тестов — `docker compose -f docker-compose.dev.yml up -d db` (127.0.0.1:5462).
 - Тесты — `cd backend && uv run pytest -q`; база копии — `audit_test_` + 10 знаков sha256 пути
   корня. Снятую копию — `docker compose -f docker-compose.dev.yml exec db dropdb -U audit <база>`.
+
+## Миграции
+
+- Схема базы — цепочкой ревизий alembic: `cd backend && uv run alembic upgrade head`; адрес базы —
+  `DATABASE_URL`. Тестовая база строится той же командой.
+- Новая ревизия — `uv run alembic revision -m "что меняет" --rev-id 0002`: номер следующий по
+  порядку, четыре цифры. Две ветки принесли один номер — перенумеровывает тот, кто сливает вторым;
+  повтор и пропуск номера ловит тест цепочки.
+- Модели — от `storage.models.Base`: целые — `bigint`, строки — `text`, время — с поясом. Узкий тип,
+  плавающая точка и `SET NULL` у ключа — только поимённо, с причиной; у ключа — явный `ondelete`.
+- Статус — одно перечисление `StrEnum` в одном модуле, колонка — через `enum_column`.
+- Колонка, добавленная задним числом, получает NULL — «неизвестно», а не умолчание.
