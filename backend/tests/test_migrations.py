@@ -247,3 +247,16 @@ async def test_a18_revision_failing_midway_leaves_the_previous_revision(tmp_path
     assert run.returncode != 0
     assert "0001 -> 0002" in run.stderr and "сбой посередине ревизии" in run.stderr
     assert ("probe_half" in tables, current) == (False, "0001")
+
+
+async def test_a18_whole_run_is_one_transaction(tmp_path: Path) -> None:
+    """A18: из двух новых ревизий падает вторая — откатывается и первая: прогон — одна
+    транзакция, база остаётся на ревизии до прогона."""
+    ini = ini_for(tmp_path, "fails_second")
+    try:
+        run = dbtools.alembic("upgrade", "head", config=ini)
+        tables, current = await public_tables(), await version()
+    finally:
+        await back_to_start(ini)
+    assert run.returncode != 0
+    assert (tables & {"probe_rev", "probe_half"}, current) == (set(), "0001")
