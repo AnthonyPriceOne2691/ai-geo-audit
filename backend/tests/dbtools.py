@@ -9,6 +9,8 @@ import asyncio
 import contextlib
 import hashlib
 import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from datetime import datetime
 from enum import StrEnum
@@ -26,6 +28,9 @@ PREFIX = "audit_test_"
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
 START = "docker compose -f docker-compose.dev.yml up -d db"
 ROOT = Path(__file__).resolve().parents[2]
+BACKEND = ROOT / "backend"
+#: Предел одного прогона alembic в тестах: зависший называется командой, а не висит.
+ALEMBIC_TIMEOUT = 60
 #: Пояс базы по умолчанию — не UTC: UTC соединения обязан задать наш движок (A9).
 DB_TIMEZONE = "Asia/Tokyo"
 
@@ -123,7 +128,8 @@ async def empty_schema(url: str) -> None:
 
 
 async def prepare() -> None:
-    """База рабочей копии: создать, если нет; пояс по умолчанию; пустая схема; пробы."""
+    """База рабочей копии: создать, если нет; пояс по умолчанию; пустая схема; цепочка
+    ревизий `alembic upgrade head` — той же командой, что в бою; пробы — в схеме `probe`."""
     name = own_name()
     server = await asyncpg.connect(_raw(server_url()))
     try:
@@ -134,12 +140,47 @@ async def prepare() -> None:
     finally:
         await server.close()
     await empty_schema(own_url())
+    done = alembic("upgrade", "head")
+    if done.returncode != 0:
+        tail = done.stderr[-2000:]
+        raise RuntimeError(f"alembic upgrade head упал, код {done.returncode}:\n{tail}")
     engine = build_engine("test", url=own_url())
     try:
         async with engine.begin() as conn:
             await conn.run_sync(ProbeBase.metadata.create_all)
     finally:
         await engine.dispose()
+
+
+def alembic_env() -> dict[str, str]:
+    """Окружение подпроцесса alembic — с нуля: адрес своей тестовой базы, без `.env`, переменные
+    разработчика не доходят. `COVERAGE_*` проходят по приставке: так покрытие подпроцесса увидит
+    ревизии. Адрес не своей тестовой базы — отказ до подпроцесса."""
+    url = own_url()
+    name = make_url(url).database or ""
+    if not name.startswith(PREFIX):
+        raise RefusedError(f"alembic в тестах идёт только по базе {PREFIX}…; «{name}» не тронута")
+    env = {"PATH": os.environ.get("PATH", ""), "ENV_FILE": os.devnull, "DATABASE_URL": url}
+    env["PYTHONUTF8"] = "1"  # журнал на русском при пустом окружении локали
+    env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
+    return env
+
+
+def alembic(
+    *args: str, config: Path | None = None, timeout: float = ALEMBIC_TIMEOUT
+) -> subprocess.CompletedProcess[str]:
+    """`alembic <args>` подпроцессом из backend/ — та же команда, что в бою."""
+    cli = Path(sys.executable).with_name("alembic")
+    command = [str(cli), *(["-c", str(config)] if config else []), *args]
+    return subprocess.run(
+        command,
+        cwd=BACKEND,
+        env=alembic_env(),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
 
 
 async def rows(engine: AsyncEngine, key: str | None = None) -> int:
