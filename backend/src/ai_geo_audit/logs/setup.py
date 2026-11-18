@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -27,6 +28,12 @@ _audit_id: ContextVar[str] = ContextVar("audit_id", default="")
 _secrets: set[str] = set()
 _MIN_SECRET_LEN = 6
 MASK = "***"
+#: Значения строки, которые Postgres сам кладёт в DETAIL ошибки: `Key (email)=(…)`,
+#: `Failing row contains (…)`. Имена колонок остаются — по ним ищут причину.
+_PG_VALUES = (
+    re.compile(r"(Key \([^)]*\)=\().*?(\) (?:already exists|is not present|is still ref))"),
+    re.compile(r"(Failing row contains \().*?(\)\.)"),
+)
 
 #: Поля, которые `logging` кладёт в запись сам; всё прочее пришло из `extra`.
 _STANDARD = frozenset(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {"message"}
@@ -51,9 +58,12 @@ def register_config_secrets(*domains: config.Settings) -> None:
 
 
 def redact(text: str) -> str:
-    """Заменить известные секреты на маску; длинные — первыми."""
+    """Заменить на маску известные секреты (длинные — первыми) и значения строк из
+    ошибок Postgres."""
     for secret in sorted(_secrets, key=len, reverse=True):
         text = text.replace(secret, MASK)
+    for pattern in _PG_VALUES:
+        text = pattern.sub(rf"\g<1>{MASK}\g<2>", text)
     return text
 
 

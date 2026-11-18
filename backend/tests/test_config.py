@@ -31,6 +31,9 @@ CASES = [
     ("DATABASE_URL", "postgresql+asyncpg://u:p@db/x", config.StorageSettings, "database_url", None),
     ("REDIS_URL", "redis://redis:6379/1", config.StorageSettings, "redis_url", None),
     ("DB_ECHO_SQL", "true", config.StorageSettings, "echo_sql", True),
+    ("DB_POOL_SIZE", "7", config.StorageSettings, "pool_size", 7),
+    ("DB_MAX_OVERFLOW", "0", config.StorageSettings, "max_overflow", 0),
+    ("DB_TASK_POOL_SIZE", "3", config.StorageSettings, "task_pool_size", 3),
     ("JWT_SECRET", "s" * 40, config.AccessSettings, "jwt_secret", None),
     ("JWT_TTL_HOURS", "24", config.AccessSettings, "jwt_ttl_hours", 24),
     ("JWT_ALGORITHM", "HS256", config.AccessSettings, "jwt_algorithm", "HS256"),
@@ -95,3 +98,14 @@ def test_a8_secrets_in_env_example_are_placeholders() -> None:
     example = _example()
     for name in [*secrets, "KEYS_MASTER_KEY_FILE"]:
         assert PLACEHOLDER in example[name], name
+
+
+COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.dev.yml"
+
+
+def test_a13_dev_database_is_the_compose_one_on_5462() -> None:
+    """A13: база разработки по умолчанию — из docker-compose.dev.yml на 5462, стек назван явно."""
+    compose = COMPOSE.read_text(encoding="utf-8")
+    assert "@localhost:5462/" in config.StorageSettings().database_url.get_secret_value()
+    assert '"127.0.0.1:5462:5432"' in compose
+    assert re.search(r"(?m)^name: ai-geo-audit-dev$", compose)

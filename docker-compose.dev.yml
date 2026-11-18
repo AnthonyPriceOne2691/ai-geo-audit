@@ -1,0 +1,24 @@
+# Postgres разработки и тестов на этой машине. Порт — только 127.0.0.1:5462: 5432 и 5442 здесь
+# заняты или бывают заняты соседними проектами. Пароль разработки публичен; в бою адрес базы
+# задаётся явно и проходит проверку старта.
+name: ai-geo-audit-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: audit
+      POSTGRES_PASSWORD: audit
+      POSTGRES_DB: audit
+    ports:
+      - "127.0.0.1:5462:5432"
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit -d audit"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  db:
