@@ -63,6 +63,16 @@ def test_a17_a_number_below_0001_is_named(tmp_path: Path) -> None:
     assert revisions.chain_problems(tmp_path) == ["номер 0000: цепочка начинается с 0001"]
 
 
+def test_a17_a_file_without_a_number_is_named(tmp_path: Path) -> None:
+    """A17: номер не вида `0001` (опечатка в три цифры, hex-номер alembic по умолчанию) — красная
+    с именем файла."""
+    write(tmp_path, "0001_start.py", "0001", None)
+    write(tmp_path, "0002_typo.py", "002", "0001")
+    assert revisions.chain_problems(tmp_path) == [
+        "0002_typo.py: нет номера ревизии вида 0001 или её down_revision"
+    ]
+
+
 def test_a17_no_revisions_refuse(tmp_path: Path) -> None:
     """A17: каталог без ревизий — отказ, а не «цепочка цела»."""
     with pytest.raises(models.NothingToCheck, match="ревизий не найдено"):
