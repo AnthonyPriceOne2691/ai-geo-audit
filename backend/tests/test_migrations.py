@@ -8,6 +8,8 @@ import pytest
 
 from ai_geo_audit.storage import models, revisions
 
+VERSIONS = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+
 
 def write(directory: Path, name: str, number: str, down: str | None) -> None:
     down_text = f'"{down}"' if down else "None"
@@ -46,3 +48,8 @@ def test_a17_no_revisions_refuse(tmp_path: Path) -> None:
     """A17: каталог без ревизий — отказ, а не «цепочка цела»."""
     with pytest.raises(models.NothingToCheck, match="ревизий не найдено"):
         revisions.chain_problems(tmp_path)
+
+
+def test_a17_the_real_chain_is_whole() -> None:
+    """A17: настоящий каталог ревизий проходит ту же проверку цепочки."""
+    assert revisions.chain_problems(VERSIONS) == []
