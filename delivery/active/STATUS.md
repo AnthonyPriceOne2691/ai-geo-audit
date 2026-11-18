@@ -7,7 +7,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** deferred (reason=примеры A1–A8 у проверяющей сессии, затем одним сообщением владельцу; работа идёт под запись долга, at=2026-11-18)
