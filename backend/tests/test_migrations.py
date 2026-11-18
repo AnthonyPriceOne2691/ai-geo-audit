@@ -13,7 +13,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import BigInteger, Column, Index, MetaData, Table, Text, text
+from sqlalchemy import BigInteger, Column, Index, Integer, MetaData, Table, Text, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ai_geo_audit import config
@@ -97,8 +97,9 @@ def test_a18_alembic_refuses_a_database_without_the_test_prefix(
         dbtools.alembic("downgrade", "base")
 
 
-def cmp_table(metadata: MetaData, *extra: Column | Index) -> Table:
-    id_, name = Column("id", BigInteger, primary_key=True), Column("name", Text)
+def cmp_table(metadata: MetaData, *extra: Column | Index, name: Column | None = None) -> Table:
+    name = name if name is not None else Column("name", Text)
+    id_ = Column("id", BigInteger, primary_key=True)
     return Table(CMP, metadata, id_, name, *extra)
 
 
@@ -106,9 +107,10 @@ async def diffs(engine: AsyncEngine, metadata: MetaData) -> list[str]:
     """Расхождения моделей с базой — `compare_metadata` с типами и умолчаниями, по `public`."""
 
     def run(sync_conn: object) -> list[str]:
-        opts = {"compare_type": True, "compare_server_default": True}
+        opts = dict(models.COMPARE)
         context = MigrationContext.configure(sync_conn, opts=opts)  # type: ignore[arg-type]
-        return [str(d[0]) for d in compare_metadata(context, metadata)]
+        found = compare_metadata(context, metadata)
+        return [str(d[0][0] if isinstance(d, list) else d[0]) for d in found]
 
     async with engine.connect() as conn:
         return await conn.run_sync(run)
@@ -125,17 +127,21 @@ def test_a17_one_head_and_second_upgrade_changes_nothing() -> None:
 async def test_a17_models_match_the_database_and_the_comparison_can_go_red(
     engine: AsyncEngine,
 ) -> None:
-    """A17: модели сервиса совпадают с базой; лишняя колонка, лишний индекс и таблица без
-    модели дают расхождение — сверка умеет краснеть. Пробы схемы `probe` она не видит."""
+    """A17: модели сервиса совпадают с базой; лишняя колонка, лишний индекс, другой тип, другое
+    умолчание и таблица без модели дают расхождение. Пробы схемы `probe` сверка не видит."""
     assert await diffs(engine, models.Base.metadata) == []
     async with engine.begin() as conn:
         await conn.execute(text(f"CREATE TABLE {CMP} (id bigint PRIMARY KEY, name text)"))
     try:
-        exact, column, index = MetaData(), MetaData(), MetaData()
+        exact, column, index, kind, default = (MetaData() for _ in range(5))
         cmp_table(exact)
         cmp_table(column, Column("extra", Text))
         cmp_table(index, Index("ix_cmp_probe_name", "name"))
+        cmp_table(kind, name=Column("name", Integer))
+        cmp_table(default, name=Column("name", Text, server_default="—"))
         assert await diffs(engine, exact) == []
+        assert await diffs(engine, kind) == ["modify_type"]
+        assert await diffs(engine, default) == ["modify_default"]
         assert await diffs(engine, column) == ["add_column"]
         assert await diffs(engine, index) == ["add_index"]
         assert await diffs(engine, MetaData()) == ["remove_table"]  # таблица есть, модели нет

@@ -19,8 +19,7 @@ def _migrate(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=models.Base.metadata,
-        compare_type=True,
-        compare_server_default=True,
+        **models.COMPARE,
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -31,6 +31,8 @@ NAMING = {
 TYPES = {int: BigInteger(), str: Text(), datetime: DateTime(timezone=True)}
 #: Длина строки колонки-перечисления: задаёт помощник, а не самое длинное значение (A16).
 ENUM_LENGTH = 32
+#: Сверка моделей с базой сравнивает и типы, и серверные умолчания — у `env.py` и у тестов.
+COMPARE = {"compare_type": True, "compare_server_default": True}
 #: Длиннее Postgres имя обрезает молча, и «имя известно заранее» перестаёт быть правдой.
 PG_NAME_MAX = 63
 #: Корень backend: от него ищется тест, названный для ключа с `SET NULL`.
