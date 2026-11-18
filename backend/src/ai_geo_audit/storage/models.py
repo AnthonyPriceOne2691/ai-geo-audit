@@ -147,7 +147,7 @@ def model_problems(
                 problems.append(f"{name}: SET NULL без теста пути при обнулённой связи")
         for item in [*table.constraints, *table.indexes]:
             if len(str(item.name).encode()) > PG_NAME_MAX:
-                problems.append(f"{item.name}: имя длиннее {PG_NAME_MAX} знаков — Postgres обрежет")
+                problems.append(f"{item.name}: имя длиннее {PG_NAME_MAX} байт — Postgres обрежет")
     return sorted(problems)
 
 

@@ -14,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     String,
@@ -228,7 +229,24 @@ def test_a15_rules_catch_names_longer_than_postgres_keeps() -> None:
     m = MetaData(naming_convention=models.NAMING)
     long = "t" * 60
     Table(long, m, Column("id", BigInteger, primary_key=True), Column("code", Text, unique=True))
-    assert models.model_problems(m) == [f"uq_{long}_code: имя длиннее 63 знаков — Postgres обрежет"]
+    assert models.model_problems(m) == [f"uq_{long}_code: имя длиннее 63 байт — Postgres обрежет"]
+
+
+def test_a15_rules_catch_a_long_index_name() -> None:
+    """A15: длину имени проверка меряет и у индекса, а не только у ограничений."""
+    m = MetaData(naming_convention=models.NAMING)
+    name = "ix_" + "i" * 61
+    columns = (Column("id", BigInteger, primary_key=True), Column("code", Text))
+    Table("t", m, *columns, Index(name, "code"))
+    assert models.model_problems(m) == [f"{name}: имя длиннее 63 байт — Postgres обрежет"]
+
+
+def test_a15_rules_measure_names_in_bytes() -> None:
+    """A15: Postgres режет имя по байтам: `pk_` и 31 буква кириллицы — 34 знака, но 65 байт."""
+    m = MetaData(naming_convention=models.NAMING)
+    table = "т" * 31
+    Table(table, m, Column("id", BigInteger, primary_key=True))
+    assert models.model_problems(m) == [f"pk_{table}: имя длиннее 63 байт — Postgres обрежет"]
 
 
 def test_a15_rules_refuse_empty_metadata() -> None:
