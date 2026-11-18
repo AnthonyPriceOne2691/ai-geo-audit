@@ -9,7 +9,7 @@
 - **kind:** bootstrap
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** n/a reason=класс S, §2.2 — достаточно tasks
