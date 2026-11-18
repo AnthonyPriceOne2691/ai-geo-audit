@@ -45,4 +45,7 @@
 - **observability:** 1
 - **observe_signal:** <заполняется на handoff>
 - **observe_until:** <заполняется на handoff>
-- **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
+- **circuit_breakers:** max_loc_diff=1200
+  <!-- Настройка проекта по слову владельца ведущей сессии 2026-11-18T13:49Z: «давай 1200
+       строк вместе с тестами». Гейт считает и тесты, а они у нас — около 70% правки.
+       Остальные предохранители — по умолчанию из AGENT_DELIVERY_HARNESS.md §3.4. -->
