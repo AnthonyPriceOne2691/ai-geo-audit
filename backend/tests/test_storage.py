@@ -98,7 +98,7 @@ async def test_a9_query_values_stay_out_of_errors_and_log(
     out = capsys.readouterr().err
     chain = (caught.value, caught.value.orig, caught.value.orig.__cause__)
     assert not [type(e).__name__ for e in chain if MARK in str(e)]
-    assert MARK not in out and "probe_key_key" in out  # значения нет, имя ограничения есть
+    assert MARK not in out and "uq_probe_key" in out  # значения нет, имя ограничения есть
     assert MARK not in logs.redact(f"DETAIL:  Key (key)=({MARK}) already exists.")  # вторая сетка
 
 
@@ -118,7 +118,7 @@ async def test_a9_unsent_object_with_taken_key_fails_as_itself(committed: AsyncE
     """A9: неотправленный объект с занятым ключом на выходе — IntegrityError, не «без step()»."""
     async with session_scope(committed) as s:
         await s.execute(add("taken"))
-    with pytest.raises(IntegrityError, match="probe_key_key") as caught:
+    with pytest.raises(IntegrityError, match="uq_probe_key") as caught:
         async with session_scope(committed) as s:
             s.add(dbtools.Probe("taken"))
     assert "autoflush" not in str(caught.value)  # отправлено явно, а не попутно с проверкой

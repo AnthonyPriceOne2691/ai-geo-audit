@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** tasks
-  <!-- Спека, план и задачи готовы. Код — после коммита проверяющего с подписью владельца
-       под примерами. -->
+- **phase:** implement
+  <!-- Подпись владельца под примерами — коммитом проверяющего `7856337`; код идёт
+       срезами по tasks.md. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-18T14:12Z)

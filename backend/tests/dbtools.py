@@ -10,15 +10,17 @@ import contextlib
 import hashlib
 import os
 from collections.abc import AsyncIterator
+from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 
 import asyncpg
-from sqlalchemy import Column, Integer, MetaData, String, Table, func, select, text
+from sqlalchemy import CheckConstraint, ForeignKey, MetaData, func, select, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from sqlalchemy.orm import registry
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from ai_geo_audit.storage import build_engine
+from ai_geo_audit.storage import build_engine, models
 
 PREFIX = "audit_test_"
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
@@ -27,23 +29,49 @@ ROOT = Path(__file__).resolve().parents[2]
 #: Пояс базы по умолчанию — не UTC: UTC соединения обязан задать наш движок (A9).
 DB_TIMEZONE = "Asia/Tokyo"
 
-probe_meta = MetaData()
-probe = Table(
-    "probe",
-    probe_meta,
-    Column("id", Integer, primary_key=True),
-    Column("key", String(64), nullable=False, unique=True),
-)
+#: Схема проб: сверка моделей сервиса с базой идёт по `public` и её не видит.
+PROBE_SCHEMA = "probe"
 
 
-class Probe:
-    """Строка пробы через ORM: для шага, который застаёт в сессии неотправленное."""
+class ProbeBase(DeclarativeBase):
+    """Модели проб: соглашение и карта типов сервиса, но своя схема Postgres."""
 
-    def __init__(self, key: str) -> None:
-        self.key = key
+    metadata = MetaData(schema=PROBE_SCHEMA, naming_convention=models.NAMING)
+    type_annotation_map = models.TYPES
 
 
-registry().map_imperatively(Probe, probe)
+class Status(StrEnum):
+    NEW = "new"
+    DONE = "done"
+
+
+class Owner(ProbeBase):
+    __tablename__ = "owner"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+
+class Probe(ProbeBase):
+    """Строка пробы: уникальный `key`, ключ на `owner`, проверка `positive`, статус, типы."""
+
+    __tablename__ = "probe"
+    __table_args__ = (CheckConstraint("amount > 0", name="positive"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(unique=True)
+    owner_id: Mapped[int | None] = mapped_column(
+        ForeignKey(Owner.id, ondelete="RESTRICT"), index=True
+    )
+    amount: Mapped[int | None]
+    note: Mapped[str | None]
+    seen_at: Mapped[datetime | None]
+    status: Mapped[Status | None] = mapped_column(models.enum_column(Status, name="status"))
+
+    def __init__(self, key: str, **values: object) -> None:
+        super().__init__(key=key, **values)
+
+
+probe = Probe.__table__
 
 
 class RefusedError(RuntimeError):
@@ -86,7 +114,10 @@ async def empty_schema(url: str) -> None:
         raise RefusedError(f"схема сносится только в базе {PREFIX}…; «{name}» не тронута")
     conn = await asyncpg.connect(_raw(url))
     try:
-        await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+        await conn.execute(
+            f"DROP SCHEMA IF EXISTS {PROBE_SCHEMA} CASCADE; DROP SCHEMA public CASCADE; "
+            f"CREATE SCHEMA public; CREATE SCHEMA {PROBE_SCHEMA}"
+        )
     finally:
         await conn.close()
 
@@ -106,7 +137,7 @@ async def prepare() -> None:
     engine = build_engine("test", url=own_url())
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(probe_meta.create_all)
+            await conn.run_sync(ProbeBase.metadata.create_all)
     finally:
         await engine.dispose()
 
@@ -122,7 +153,7 @@ async def rows(engine: AsyncEngine, key: str | None = None) -> int:
 
 async def truncate(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE probe RESTART IDENTITY"))
+        await conn.execute(text("TRUNCATE probe.probe, probe.owner RESTART IDENTITY"))
 
 
 async def require_empty(engine: AsyncEngine) -> None:
