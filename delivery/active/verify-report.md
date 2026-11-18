@@ -9,7 +9,43 @@
 
 ## Прогон в чистом клоне
 
-<вставляется после финального коммита поставки>
+Локальные гейты обходятся (`commit -n`, `STRICT=0`), поэтому доказательство — прогон на
+склонированном состоянии (§10.4). База диффа — `origin/main` клона (`3cac31a`).
+
+Прогон на коммите `d6cd220` (до подписи владельца под утверждениями), 2026-11-18T13:12Z:
+
+```
+$ git clone -b ch1-02a-db-stand-session <репозиторий> <клон> && cd <клон>
+$ docker compose -f docker-compose.dev.yml up -d db
+ Container ai-geo-audit-dev-db-1 Running
+$ python3 scripts/delivery_check.py --diff-base origin/main
+breakers: files=14 net_loc=764 (+769/-5), excluded=11 (…), limits={'max_files_touched': 25, 'max_loc_diff': 800, 'max_runtime_paths': 1, 'max_unsigned_irreversible': 0}
+наблюдение §13.1: поставок в архиве 2, окон со сроком 2, истекших без observed.md 0
+WARNING: class M: asserts_reviewed_by deferred — ещё никем не подписано (§2.2b); долг закрывается до handoff
+WARNING: class M: ни одного реляционного оракула с генератором входов (§6.5) — … `@given` (hypothesis). …
+WARNING: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+delivery_check: 0 error(s), 3 warning(s)
+exit=0
+$ cd backend && uv sync --frozen && uv run pytest -q
+59 passed
+```
+
+- **Компоуз из второй копии** поднял тот же контейнер `ai-geo-audit-dev-db-1` («Running»):
+  имя стека задано в файле. Контейнер на машине один (A13, строка со ✱).
+- **Тестовая база клона** — своя, `audit_test_` по пути клона; после прогона снесена.
+- **WARNING «asserts_reviewed_by deferred»** — подписи владельца под утверждениями ещё нет.
+- **WARNING «реляционный оракул»** — долг на волну В1.
+- **WARNING «ci-oracles: weak»** — CI нет до волны В1; вместо ссылки — этот прогон.
+- Версии в клоне: SQLAlchemy 2.1.9, asyncpg 0.31.0, pytest-asyncio 1.5.0; пакет импортируется
+  из клона. `git ls-files` — 72 файла, имён текстов канона и рабочих каталогов — 0.
+
+## Дайджест утверждений
+
+`assert_digest.sh` из полезной нагрузки канона, положенный в клон (CQG в репозитории ещё нет),
+база `origin/main`: новых и изменённых утверждений 36, без ссылки на пример спеки — 0. По
+примерам: A9 — 13, A10 — 4, A11 — 6, A12 — 10, A13 — 3.
+
+asserts_without_example: 0
 
 ## Ревью рисковых мест
 
