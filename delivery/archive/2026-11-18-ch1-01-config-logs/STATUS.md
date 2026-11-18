@@ -7,7 +7,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-18T14:52+03:00)
@@ -42,6 +42,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** A3, A5 и A6 на тестовом выкате (Ч1.6): `api`, `worker` и `migrate` стартуют в боевом режиме с настоящими настройками, а с заглушкой `CHANGE_ME` — отказ с именами переменных; в журнале сервера за первые сутки нет секрета входа и пароля базы, время записей — UTC
+- **observe_until:** 2026-11-27
 - **circuit_breakers:** defaults from AGENT_DELIVERY_HARNESS.md §3.4
