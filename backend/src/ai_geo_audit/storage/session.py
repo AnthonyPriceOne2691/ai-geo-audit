@@ -47,10 +47,17 @@ async def step(session: AsyncSession) -> AsyncIterator[None]:
 
 
 async def _still_alive(session: AsyncSession) -> None:
-    """На COMMIT сорванной транзакции Postgres отвечает откатом без ошибки — проверяем до него."""
+    """На COMMIT сорванной транзакции Postgres отвечает откатом без ошибки — проверяем до него.
+
+    Сорванная — только `25P02`; другая ошибка базы на выходе уходит как есть: объект не лёг на
+    уникальности — `IntegrityError`, соединение потеряно — ошибка соединения.
+    """
     try:
+        await session.flush()
         await session.execute(text("SELECT 1"))
     except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) != "25P02":  # транзакция сорвана
+            raise
         raise AbortedTransactionError(
             "ошибку базы поймали без step(): записанное в сессии не сохранено"
         ) from exc

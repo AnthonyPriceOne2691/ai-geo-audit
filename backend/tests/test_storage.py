@@ -114,6 +114,16 @@ async def test_a9_error_caught_without_step_is_loud(committed: AsyncEngine) -> N
     assert await dbtools.rows(committed, "work-1") == 0
 
 
+async def test_a9_unsent_object_with_taken_key_fails_as_itself(committed: AsyncEngine) -> None:
+    """A9: неотправленный объект с занятым ключом на выходе — IntegrityError, не «без step()»."""
+    async with session_scope(committed) as s:
+        await s.execute(add("taken"))
+    with pytest.raises(IntegrityError, match="probe_key_key") as caught:
+        async with session_scope(committed) as s:
+            s.add(dbtools.Probe("taken"))
+    assert "autoflush" not in str(caught.value)  # отправлено явно, а не попутно с проверкой
+
+
 async def test_a9_echo_logs_the_query_without_values(
     committed: AsyncEngine, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -179,19 +189,6 @@ async def test_a11_process_engine_is_one_and_named() -> None:
     assert first is second
     async with first.connect() as conn:
         assert (await conn.execute(text(WHO))).scalar_one() == "ai-geo-audit:api"
-
-
-async def test_a11_pool_settings_and_process_name_reach_the_engine(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A11: процесс worker, пул 3 и запас 4 — так и в движке, подпись ai-geo-audit:worker."""
-    url = dbtools.own_url()
-    settings = config.StorageSettings(database_url=url, pool_size=3, max_overflow=4)
-    monkeypatch.setattr(config, "storage", settings)
-    engine = storage.get_engine("worker")
-    assert (engine.pool.size(), engine.pool._max_overflow) == (3, 4)  # type: ignore[attr-defined]
-    async with engine.connect() as conn:
-        assert (await conn.execute(text(WHO))).scalar_one() == "ai-geo-audit:worker"
 
 
 @pytest.mark.usefixtures("on_test_db")

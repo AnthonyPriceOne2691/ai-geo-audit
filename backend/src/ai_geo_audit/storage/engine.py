@@ -36,8 +36,10 @@ def build_engine(
     storage: config.StorageSettings | None = None,
 ) -> AsyncEngine:
     """Движок сервиса: имя `<сервис>:<name>` в `pg_stat_activity`, пояс UTC, проверка соединения
-    перед выдачей; значения параметров не идут ни в ошибки, ни в журнал. `DB_ECHO_SQL` пишет
-    запросы через общий журнал. `pool_size=0` — без пула: соединение на каждую сессию.
+    перед выдачей. Параметры запроса в ошибках и журнале не печатаются, значения строки из DETAIL
+    ошибок Postgres вырезаются. Предел: в ошибке данных значение стоит в самом сообщении сервера
+    или драйвера (`invalid input …`) и пока не прячется — Ч1.2в. `DB_ECHO_SQL` пишет запросы через
+    общий журнал. `pool_size=0` — без пула: соединение на каждую сессию.
     """
     storage = storage or config.storage
     if storage.echo_sql:
@@ -60,10 +62,9 @@ def build_engine(
 
 def _without_row_values(context: ExceptionContext) -> None:
     """Значения строки из DETAIL ошибки Postgres — не в текст исключений; `constraint_name` цел."""
-    for error in (context.original_exception, context.original_exception.__cause__):
-        if getattr(error, "detail", None):
-            error.detail = None  # type: ignore[union-attr]
-            error.args = tuple(str(arg).split("\nDETAIL:")[0] for arg in error.args)
+    error = context.original_exception.__cause__
+    if getattr(error, "detail", None):
+        error.detail = None  # type: ignore[union-attr]
 
 
 def get_engine(process: str = "api") -> AsyncEngine:
