@@ -23,7 +23,8 @@
 - [x] T9: `scripts/delivery_check.py` со всеми частями и `scripts/delivery_metrics.py`.
 - [x] T10: подпись необратимого парой скриптов (§7.2 п.5а): `check_irreversible_signature.sh`,
       `sign_irreversible.sh`, публичный ключ владельца в `.github/allowed_signers`.
-- [ ] T11: подпись объявления `irreversible_surfaces:` — ставит владелец своим ключом.
+- [x] T11: подпись объявления `irreversible_surfaces:` — поставил владелец своим ключом
+      (Secretive) 2026-11-18 14:19; `check_irreversible_signature.sh` — сходится.
 - [x] T12: STATUS первой поставки: `kind: bootstrap`, версии, непришедшие оси с причиной
       и волной, необратимое объявлено, поля про исполнение.
 - [x] T13: гейт поставки в чистом клоне (`--diff-base origin/main`); числа ошибок и
