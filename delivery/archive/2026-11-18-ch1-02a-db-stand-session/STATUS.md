@@ -7,7 +7,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-18T12:51:41Z)
@@ -47,8 +47,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** A9 и A11 на тестовом выкате (Ч1.6): `api` и `worker` видны в `pg_stat_activity` под своими именами, время соединений — UTC, соединений не больше настроек пула; в журнале сервера за первые сутки нет значений строк из ошибок базы (DETAIL)
+- **observe_until:** 2026-11-27
 - **circuit_breakers:** max_loc_diff=1200
   <!-- Настройка проекта по слову владельца ведущей сессии 2026-11-18T13:49Z: «давай 1200
        строк вместе с тестами». Гейт считает и тесты, а они у нас — около 70% правки.
