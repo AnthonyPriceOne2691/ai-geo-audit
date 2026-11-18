@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Секреты и локальные настройки — не в git
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+.claude/worktrees/
+
+# Система
+.DS_Store
