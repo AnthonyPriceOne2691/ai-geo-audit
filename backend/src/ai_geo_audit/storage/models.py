@@ -9,10 +9,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum, StrEnum
+from pathlib import Path
 
-from sqlalchemy import BigInteger, DateTime, MetaData, Text, text
+from sqlalchemy import BigInteger, DateTime, Float, Integer, MetaData, String, Text, text
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.orm import DeclarativeBase
@@ -29,6 +31,10 @@ NAMING = {
 TYPES = {int: BigInteger(), str: Text(), datetime: DateTime(timezone=True)}
 #: Длина строки колонки-перечисления: задаёт помощник, а не самое длинное значение (A16).
 ENUM_LENGTH = 32
+#: Длиннее Postgres имя обрезает молча, и «имя известно заранее» перестаёт быть правдой.
+PG_NAME_MAX = 63
+#: Корень backend: от него ищется тест, названный для ключа с `SET NULL`.
+BACKEND = Path(__file__).resolve().parents[3]
 _CHECK = text(
     "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
     "JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace "
@@ -95,3 +101,52 @@ async def enum_drift(conn: AsyncConnection, metadata: MetaData) -> list[str]:
         problems += [f"{place}: значения «{v}» нет в проверке базы" for v in missing]
         problems += [f"{place}: в проверке базы лишнее «{v}»" for v in extra]
     return problems
+
+
+def model_problems(
+    metadata: MetaData,
+    *,
+    narrow: Mapping[str, str] | None = None,
+    set_null: Mapping[str, str] | None = None,
+    root: Path = BACKEND,
+) -> list[str]:
+    """Нарушения правил моделей (A15). Ни одной таблицы — отказ, а не «нарушений нет».
+
+    - узкий тип (`Integer`, `String(n)`) и плавающая точка — только поимённо: `narrow` —
+      «таблица.колонка» → причина. Колонки помощника перечисления не в счёт;
+    - у внешнего ключа явный `ondelete`; `SET NULL` — только с тестом пути при обнулённой
+      связи: `set_null` — имя ключа → «файл::тест», и тест должен быть на диске;
+    - имя ограничения или индекса — не длиннее `PG_NAME_MAX` байт.
+    """
+    narrow, set_null = narrow or {}, set_null or {}
+    tables = list(metadata.tables.values())
+    if not tables:
+        raise NothingToCheck("таблиц не найдено: просмотрено таблиц 0, колонок 0, ключей 0")
+    problems = []
+    for table in tables:
+        for column in table.columns:
+            kind, place = column.type, f"{table.name}.{column.name}"
+            small = isinstance(kind, Integer) and not isinstance(kind, BigInteger)
+            sized = isinstance(kind, String) and kind.length and not isinstance(kind, SqlEnum)
+            if (small or sized or isinstance(kind, Float)) and place not in narrow:
+                problems.append(f"{place}: тип {kind} — только поимённо, с причиной")
+        for fk in table.foreign_keys:
+            name = str(fk.constraint.name)
+            if fk.ondelete is None:
+                problems.append(f"{name}: нет явного ondelete")
+            elif fk.ondelete.upper() == "SET NULL" and not _test_exists(root, set_null.get(name)):
+                problems.append(f"{name}: SET NULL без теста пути при обнулённой связи")
+        for item in [*table.constraints, *table.indexes]:
+            if len(str(item.name).encode()) > PG_NAME_MAX:
+                problems.append(f"{item.name}: имя длиннее {PG_NAME_MAX} знаков — Postgres обрежет")
+    return sorted(problems)
+
+
+def _test_exists(root: Path, ref: str | None) -> bool:
+    """Тест «файл::имя» есть на диске: список без живого теста — та же дыра, что без списка."""
+    path, _, name = (ref or "").partition("::")
+    file = root / path
+    if not (name and file.is_file()):
+        return False
+    pattern = rf"(?m)^(async )?def {re.escape(name)}\("
+    return re.search(pattern, file.read_text(encoding="utf-8")) is not None

@@ -8,7 +8,20 @@ from enum import Enum, StrEnum
 import dbtools
 import pytest
 from dbtools import Probe, Status
-from sqlalchemy import Column, MetaData, Table, Text, insert, select, text
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    Float,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    insert,
+    select,
+    text,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -18,6 +31,7 @@ NAMES = """
 SELECT conname FROM pg_constraint WHERE conrelid = 'probe.probe'::regclass
 UNION SELECT indexname FROM pg_indexes WHERE schemaname = 'probe' AND tablename = 'probe'
 """
+HERE = "tests/test_models.py::"
 TYPES = """
 SELECT column_name, data_type FROM information_schema.columns
 WHERE table_schema = 'probe' AND table_name = 'probe'
@@ -127,3 +141,73 @@ async def test_a16_drift_refuses_when_no_enum_column_is_found(engine: AsyncEngin
     async with engine.connect() as conn:
         with pytest.raises(models.NothingToCheck, match="просмотрено колонок 1"):
             await models.enum_drift(conn, plain)
+
+
+def test_a15_rules_pass_the_probe_and_catch_narrow_and_float_types() -> None:
+    """A15: честная проба проходит; узкий тип и плавающая точка без причины — красная."""
+    assert models.model_problems(dbtools.ProbeBase.metadata) == []
+    m = MetaData(naming_convention=models.NAMING)
+    Table(
+        "t",
+        m,
+        Column("id", BigInteger, primary_key=True),
+        Column("n", Integer),
+        Column("code", String(8)),
+        Column("ratio", Float),
+        Column("iso", String(2)),
+        Column("kind", models.enum_column(Status, name="kind")),
+    )
+    problems = models.model_problems(m, narrow={"t.iso": "код страны ISO — ровно 2 знака"})
+    assert [p.split(":")[0] for p in problems] == ["t.code", "t.n", "t.ratio"]
+
+
+def test_a15_rules_catch_keys_without_ondelete_and_untested_set_null() -> None:
+    """A15: ключ без `ondelete` и `SET NULL` без живого теста — красная; с тестом — проходит."""
+    m = MetaData(naming_convention=models.NAMING)
+    Table("owner", m, Column("id", BigInteger, primary_key=True))
+    Table(
+        "child",
+        m,
+        Column("id", BigInteger, primary_key=True),
+        Column("a_id", BigInteger, ForeignKey("owner.id")),
+        Column("b_id", BigInteger, ForeignKey("owner.id", ondelete="SET NULL")),
+        Column("c_id", BigInteger, ForeignKey("owner.id", ondelete="SET NULL")),
+    )
+    set_null = {
+        "fk_child_b_id_owner": HERE + "test_missing_on_purpose",
+        "fk_child_c_id_owner": HERE
+        + "test_a15_rules_catch_keys_without_ondelete_and_untested_set_null",
+    }
+    assert models.model_problems(m, set_null=set_null) == [
+        "fk_child_a_id_owner: нет явного ondelete",
+        "fk_child_b_id_owner: SET NULL без теста пути при обнулённой связи",
+    ]
+
+
+def test_a15_rules_catch_names_longer_than_postgres_keeps() -> None:
+    """A15: имя длиннее 63 знаков — красная с именем: Postgres обрезал бы его молча."""
+    m = MetaData(naming_convention=models.NAMING)
+    long = "t" * 60
+    Table(long, m, Column("id", BigInteger, primary_key=True), Column("code", Text, unique=True))
+    assert models.model_problems(m) == [f"uq_{long}_code: имя длиннее 63 знаков — Postgres обрежет"]
+
+
+def test_a15_rules_refuse_empty_metadata() -> None:
+    """A15: таблиц нет — отказ с числом просмотренного, а не «нарушений нет»."""
+    with pytest.raises(models.NothingToCheck, match="таблиц 0, колонок 0, ключей 0"):
+        models.model_problems(MetaData())
+
+
+def test_a15_service_models_follow_the_rules() -> None:
+    """A15: модели сервиса. Пока таблиц нет — ждём отказа; первая таблица Части 3 сама переводит
+    тест на настоящую проверку. Печатает, какой ветвью прошёл."""
+    tables = models.Base.metadata.tables
+    if not tables:
+        print("ветвь: у сервиса таблиц нет — ждём отказа")
+        with pytest.raises(models.NothingToCheck):
+            models.model_problems(models.Base.metadata)
+        return
+    keys = sum(len(t.foreign_keys) for t in tables.values())
+    print(f"ветвь: таблиц {len(tables)}, колонок {sum(len(t.columns) for t in tables.values())}, "
+          f"ключей {keys}")
+    assert models.model_problems(models.Base.metadata) == []
