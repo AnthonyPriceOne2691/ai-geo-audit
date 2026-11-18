@@ -16,11 +16,25 @@
 `--diff-base main` проверки по диффу пропускаются молча (см. приёмку, «где
 процедура подвела»).
 
+Прогон на коммите `b43cf70` (до подписи владельца):
+
 ```
 $ git clone -b bootstrap/contour-b0 <репозиторий> <клон> && cd <клон>
 $ python3 scripts/delivery_check.py --diff-base origin/main
-<вставляется после финального коммита>
+breakers: kind=bootstrap — объём не мерится (§3.4): развёртывание контура не режется на части, его DoD — §7.3 + приёмка §6
+наблюдение §13.1: поставок в архиве 0, окон со сроком 0, истекших без observed.md 0
+WARNING: необратимое без человека: объявлено необратимое без человека в цепочке (…), подписи нет или она не сходится (§3.4a). …
+WARNING: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+delivery_check: 0 error(s), 2 warning(s)
+exit=0
 ```
+
+- **WARNING «необратимое без человека»** — объявлены четыре поверхности, подписи ещё нет:
+  её ставит владелец ключом из анклава (`bash scripts/sign_irreversible.sh`). На
+  handoff это стало бы ошибкой — так и задумано (§3.4a).
+- **WARNING «ci-oracles: weak»** — CI нет до волны В1; вместо ссылки на прогон CI —
+  этот прогон в чистом клоне.
+- **Строка `breakers:`** — у `kind: bootstrap` объём не мерится (§3.4), это не находка.
 
 ## Ревью рисковых мест
 
