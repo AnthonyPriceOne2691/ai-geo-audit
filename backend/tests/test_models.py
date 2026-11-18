@@ -23,6 +23,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -235,3 +236,19 @@ def test_a15_service_models_follow_the_rules() -> None:
     print(f"ветвь: таблиц {len(tables)}, колонок {sum(len(t.columns) for t in tables.values())}, "
           f"ключей {keys}")
     assert models.model_problems(models.Base.metadata) == []
+
+
+async def test_a16_service_enum_columns_match_the_database(engine: AsyncEngine) -> None:
+    """A16: сверка перечислений на моделях сервиса. Колонок-перечислений нет — ждём отказа;
+    первая такая колонка Части 3 сама переводит тест на сверку с базой после `upgrade head`.
+    Печатает, какой ветвью прошёл."""
+    tables = models.Base.metadata.tables.values()
+    enums = [c for t in tables for c in t.columns if isinstance(c.type, SqlEnum)]
+    async with engine.connect() as conn:
+        if not enums:
+            print("ветвь: колонок-перечислений у сервиса нет — ждём отказа")
+            with pytest.raises(models.NothingToCheck):
+                await models.enum_drift(conn, models.Base.metadata)
+            return
+        print(f"ветвь: колонок-перечислений {len(enums)}")
+        assert await models.enum_drift(conn, models.Base.metadata) == []
