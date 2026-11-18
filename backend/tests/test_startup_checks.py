@@ -97,6 +97,6 @@ def test_a4_starts_without_external_keys(monkeypatch: pytest.MonkeyPatch, master
 
 @pytest.mark.parametrize("env", ["dev", "test"])
 def test_outside_prod_checks_are_silent(monkeypatch: pytest.MonkeyPatch, env: str) -> None:
-    """Разработка и тесты стартуют без единой настройки."""
+    """A1: разработка и тесты стартуют без единой настройки."""
     monkeypatch.setenv("APP_ENV", env)
     assert sc.problems("api", app=config.AppSettings()) == []

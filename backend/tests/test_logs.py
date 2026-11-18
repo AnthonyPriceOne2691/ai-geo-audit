@@ -93,7 +93,7 @@ def test_a6_httpx_info_is_silenced() -> None:
 
 
 def test_short_values_are_not_masked(capsys: pytest.CaptureFixture[str]) -> None:
-    """Короткое значение не маскируется: иначе «***» съел бы обычные слова журнала."""
+    """A6: короткое значение не маскируется — иначе маска съела бы обычные слова журнала."""
     logs.register_secret("audit")
     logs.setup_logging(fmt="text")
     logging.getLogger("x").warning("audit started")
@@ -101,7 +101,7 @@ def test_short_values_are_not_masked(capsys: pytest.CaptureFixture[str]) -> None
 
 
 def test_repeated_setup_does_not_duplicate_lines(capsys: pytest.CaptureFixture[str]) -> None:
-    """Повторная настройка заменяет обработчик, а не добавляет второй."""
+    """A5: повторная настройка заменяет обработчик, а не добавляет второй."""
     logs.setup_logging(fmt="text")
     logs.setup_logging(fmt="text")
     logging.getLogger("x").warning("один раз")

@@ -62,7 +62,7 @@ def test_a2_table_covers_every_setting() -> None:
 
 
 def test_a2_constructor_accepts_field_name() -> None:
-    """Имя поля в конструкторе работает, а не молча теряется."""
+    """A2: имя поля в конструкторе работает, а не молча теряется."""
     assert config.AccessSettings(jwt_ttl_hours=6).jwt_ttl_hours == 6
 
 
