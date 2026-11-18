@@ -11,6 +11,7 @@ from dbtools import Probe, Status
 from sqlalchemy import (
     BigInteger,
     Column,
+    DateTime,
     Float,
     ForeignKey,
     Integer,
@@ -115,6 +116,17 @@ def test_a16_helper_takes_only_str_enum() -> None:
     assert (str(Status.DONE), Status.DONE == "done") == ("done", True)
 
 
+def test_a16_helper_refuses_an_apostrophe_in_a_value() -> None:
+    """A16: значение с апострофом — отказ словами: в проверке базы оно стоит как `'it''s'`, и
+    сверка прочла бы два значения вместо одного."""
+
+    class Quoted(StrEnum):
+        IT = "it's"
+
+    with pytest.raises(ValueError, match="апостроф"):
+        models.enum_column(Quoted, name="quoted")
+
+
 async def test_a16_drift_is_empty_for_the_probe_and_names_an_added_value(
     engine: AsyncEngine,
 ) -> None:
@@ -161,6 +173,16 @@ def test_a15_rules_pass_the_probe_and_catch_narrow_and_float_types() -> None:
     assert [p.split(":")[0] for p in problems] == ["t.code", "t.n", "t.ratio"]
     no_reason = models.model_problems(m, narrow={"t.iso": " "})
     assert "t.iso" in [p.split(":")[0] for p in no_reason]  # пустая причина — не причина
+
+
+def test_a15_rules_catch_time_without_zone() -> None:
+    """A15: явный `DateTime()` без пояса карта типов не спасает — без причины красная; время с
+    поясом проходит."""
+    m = MetaData(naming_convention=models.NAMING)
+    at, stamp = Column("at", DateTime()), Column("stamp", DateTime(timezone=True))
+    Table("t", m, Column("id", BigInteger, primary_key=True), at, stamp)
+    assert models.model_problems(m) == ["t.at: тип DATETIME — только поимённо, с причиной"]
+    assert models.model_problems(m, narrow={"t.at": "внешняя система отдаёт время без пояса"}) == []
 
 
 def test_a15_rules_catch_keys_without_ondelete_and_untested_set_null() -> None:

@@ -18,8 +18,8 @@ _DOWN = re.compile(r"(?m)^down_revision\s*(?::[^=\n]*)?=\s*(?:[\"'](\d{4})[\"']|
 
 
 def chain_problems(versions: Path) -> list[str]:
-    """Нарушения цепочки в каталоге ревизий: повтор номера с именами файлов, пропуск номера,
-    `down_revision` не на предыдущий номер, файл без номера. Ревизий нет — отказ."""
+    """Нарушения цепочки в каталоге ревизий: номер меньше `0001`, повтор номера с именами файлов,
+    пропуск номера, `down_revision` не на предыдущий номер, файл без номера. Ревизий нет — отказ."""
     files: dict[str, list[str]] = {}
     downs: dict[str, str | None] = {}
     problems = []
@@ -34,6 +34,8 @@ def chain_problems(versions: Path) -> list[str]:
     if not files and not problems:
         raise NothingToCheck(f"ревизий не найдено: просмотрен каталог {versions}")
     for number, names in files.items():
+        if int(number) < 1:
+            problems.append(f"номер {number}: цепочка начинается с 0001")
         if len(names) > 1:
             problems.append(f"номер {number} у нескольких ревизий: {', '.join(names)}")
     last = max((int(number) for number in files), default=0)

@@ -57,6 +57,12 @@ def test_a17_a_skipped_number_is_named(tmp_path: Path) -> None:
     ]
 
 
+def test_a17_a_number_below_0001_is_named(tmp_path: Path) -> None:
+    """A17: единственная ревизия `0000` — красная: цепочка начинается с `0001`."""
+    write(tmp_path, "0000_start.py", "0000", None)
+    assert revisions.chain_problems(tmp_path) == ["номер 0000: цепочка начинается с 0001"]
+
+
 def test_a17_no_revisions_refuse(tmp_path: Path) -> None:
     """A17: каталог без ревизий — отказ, а не «цепочка цела»."""
     with pytest.raises(models.NothingToCheck, match="ревизий не найдено"):

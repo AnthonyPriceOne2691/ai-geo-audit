@@ -3,7 +3,8 @@
 Имена ограничений известны заранее: по имени из ответа базы (`constraint_name`) вызывающий
 отличает «ключ занят» от «нарушена проверка», не разбирая текст ошибки. Карта типов даёт
 `bigint`, `text` и `timestamptz` без явного типа: счётчик не переполнится, длинный адрес не
-уронит пачку, время не потеряет пояс. Перечисление — строка с проверкой, типов ENUM в базе нет.
+уронит пачку, время не потеряет пояс. Явный узкий тип и время без пояса проверка правил
+пропускает только поимённо. Перечисление — строка с проверкой, типов ENUM в базе нет.
 """
 
 from __future__ import annotations
@@ -58,13 +59,16 @@ class Base(DeclarativeBase):
 def enum_column(enum_cls: type[Enum], *, name: str) -> SqlEnum:
     """Тип колонки-перечисления: значения, а не имена, строкой `ENUM_LENGTH` с проверкой
     `ck_<таблица>_<name>`. Только `StrEnum`: у него `str()` равен значению, и сравнение со
-    строкой не может молча соврать.
+    строкой не может молча соврать. Значение с апострофом — отказ: сверка значений читает
+    проверку базы по кавычкам.
     """
     if not (isinstance(enum_cls, type) and issubclass(enum_cls, StrEnum)):
         raise TypeError(
             f"помощник перечисления берёт только StrEnum: у {enum_cls!r} str() даёт имя, "
             "а не значение"
         )
+    if any("'" in member.value for member in enum_cls):
+        raise ValueError(f"значение {enum_cls.__name__} с апострофом: сверка прочла бы его неверно")
     return SqlEnum(
         enum_cls,
         name=name,
@@ -114,8 +118,9 @@ def model_problems(
 ) -> list[str]:
     """Нарушения правил моделей (A15). Ни одной таблицы — отказ, а не «нарушений нет».
 
-    - узкий тип (`Integer`, `String(n)`) и плавающая точка — только поимённо: `narrow` —
-      «таблица.колонка» → причина. Колонки помощника перечисления не в счёт;
+    - узкий тип (`Integer`, `String(n)`), плавающая точка и время без пояса (`DateTime()`) —
+      только поимённо: `narrow` — «таблица.колонка» → причина. Колонки помощника перечисления
+      не в счёт;
     - у внешнего ключа явный `ondelete`; `SET NULL` — только с тестом пути при обнулённой
       связи: `set_null` — имя ключа → «файл::тест», и тест должен быть на диске;
     - имя ограничения или индекса — не длиннее `PG_NAME_MAX` байт.
@@ -130,7 +135,9 @@ def model_problems(
             kind, place = column.type, f"{table.name}.{column.name}"
             small = isinstance(kind, Integer) and not isinstance(kind, BigInteger)
             sized = isinstance(kind, String) and kind.length and not isinstance(kind, SqlEnum)
-            if (small or sized or isinstance(kind, Float)) and not narrow.get(place, "").strip():
+            naive = isinstance(kind, DateTime) and not kind.timezone
+            loose = small or sized or naive or isinstance(kind, Float)
+            if loose and not narrow.get(place, "").strip():
                 problems.append(f"{place}: тип {kind} — только поимённо, с причиной")
         for fk in table.foreign_keys:
             name = str(fk.constraint.name)
