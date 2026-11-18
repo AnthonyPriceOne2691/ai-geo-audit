@@ -147,6 +147,20 @@ async def test_a16_drift_is_empty_for_the_probe_and_names_an_added_value(
         ]
 
 
+async def test_a16_drift_names_a_value_left_in_the_database(engine: AsyncEngine) -> None:
+    """A16: значение убрали из Python, ревизии нет — в проверке базы оно осталось: красная."""
+
+    class StatusLess(StrEnum):
+        NEW = "new"
+
+    left = MetaData(schema=dbtools.PROBE_SCHEMA, naming_convention=models.NAMING)
+    Table("probe", left, Column("status", models.enum_column(StatusLess, name="status")))
+    async with engine.connect() as conn:
+        assert await models.enum_drift(conn, left) == [
+            "probe.probe.status: в проверке базы лишнее «done»"
+        ]
+
+
 async def test_a16_drift_refuses_when_no_enum_column_is_found(engine: AsyncEngine) -> None:
     """A16: колонок-перечислений сверка не нашла, хотя проба есть — отказ, а не «чисто»."""
     plain = MetaData(schema=dbtools.PROBE_SCHEMA)
