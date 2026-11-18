@@ -35,7 +35,7 @@ $ python3 scripts/delivery_check.py --diff-base origin/main
 - [x] n/a — CQG не развёрнут (волна В1). `shape-oracles: weak` объявлено в STATUS с причиной.
 
 ## Behavior oracles
-- [x] PASS — `scripts/delivery_check.py` в чистом клоне: единственная ошибка — пустое поле «Verifier» (заполняет проверяющий); предупреждения перечислены и объяснены в блоке прогона.
+- [x] PASS — `scripts/delivery_check.py` в чистом клоне: ошибок 0; предупреждения перечислены и объяснены в блоке прогона. Builder ≠ Verifier гейт сверяет по объявлению: поле «Verifier» здесь пустое, и гейт берёт `verifier:` из STATUS (`agent:lead-session` ≠ `agent:hands-session`). Поле «Verifier» и вердикт заполняет проверяющий.
 - [x] PASS — `extract_payload.py --check-local`: в рабочей копии 0 и 0 при текстах канонов на диске; контроль — свежий клон без строк игнора даёт «без игнора 7» и код выхода 1.
 - [x] PASS — права агента: блок `agent-permissions` конституции и `.claude/settings.json` совпадают в обе стороны (14 deny, 11 ask) — ошибок §4.5 в прогоне нет.
 - [x] n/a — тестов продукта нет: кода продукта нет. Первые придут с каркасом.
