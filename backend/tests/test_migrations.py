@@ -141,6 +141,13 @@ def test_a17_one_head_and_second_upgrade_changes_nothing() -> None:
     assert (again.returncode, "Running upgrade" in again.stderr) == (0, False)
 
 
+def test_a17_offline_mode_is_refused() -> None:
+    """A17: `upgrade head --sql` — режим без базы: отказ своими словами и код не 0."""
+    run = dbtools.alembic("upgrade", "head", "--sql")
+    assert run.returncode != 0
+    assert "миграции без базы (--sql) не поддерживаются" in run.stderr
+
+
 async def test_a17_models_match_the_database_and_the_comparison_can_go_red(
     engine: AsyncEngine,
 ) -> None:
