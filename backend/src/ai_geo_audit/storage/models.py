@@ -130,7 +130,7 @@ def model_problems(
             kind, place = column.type, f"{table.name}.{column.name}"
             small = isinstance(kind, Integer) and not isinstance(kind, BigInteger)
             sized = isinstance(kind, String) and kind.length and not isinstance(kind, SqlEnum)
-            if (small or sized or isinstance(kind, Float)) and place not in narrow:
+            if (small or sized or isinstance(kind, Float)) and not narrow.get(place, "").strip():
                 problems.append(f"{place}: тип {kind} — только поимённо, с причиной")
         for fk in table.foreign_keys:
             name = str(fk.constraint.name)

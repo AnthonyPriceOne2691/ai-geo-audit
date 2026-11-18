@@ -159,6 +159,8 @@ def test_a15_rules_pass_the_probe_and_catch_narrow_and_float_types() -> None:
     )
     problems = models.model_problems(m, narrow={"t.iso": "код страны ISO — ровно 2 знака"})
     assert [p.split(":")[0] for p in problems] == ["t.code", "t.n", "t.ratio"]
+    no_reason = models.model_problems(m, narrow={"t.iso": " "})
+    assert "t.iso" in [p.split(":")[0] for p in no_reason]  # пустая причина — не причина
 
 
 def test_a15_rules_catch_keys_without_ondelete_and_untested_set_null() -> None:
