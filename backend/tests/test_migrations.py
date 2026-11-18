@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import asyncpg
 import dbtools
 import pytest
+from alembic import command
+from alembic.autogenerate import compare_metadata
+from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import BigInteger, Column, Index, MetaData, Table, Text, text
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ai_geo_audit import config
 from ai_geo_audit.storage import models, revisions
 
 VERSIONS = Path(__file__).resolve().parents[1] / "migrations" / "versions"
+CMP = "cmp_probe"
 
 
 def write(directory: Path, name: str, number: str, down: str | None) -> None:
@@ -85,3 +95,63 @@ def test_a18_alembic_refuses_a_database_without_the_test_prefix(
     monkeypatch.setattr(dbtools, "own_name", lambda root=dbtools.ROOT: "audit")
     with pytest.raises(dbtools.RefusedError, match="«audit» не тронута"):
         dbtools.alembic("downgrade", "base")
+
+
+def cmp_table(metadata: MetaData, *extra: Column | Index) -> Table:
+    id_, name = Column("id", BigInteger, primary_key=True), Column("name", Text)
+    return Table(CMP, metadata, id_, name, *extra)
+
+
+async def diffs(engine: AsyncEngine, metadata: MetaData) -> list[str]:
+    """Расхождения моделей с базой — `compare_metadata` с типами и умолчаниями, по `public`."""
+
+    def run(sync_conn: object) -> list[str]:
+        opts = {"compare_type": True, "compare_server_default": True}
+        context = MigrationContext.configure(sync_conn, opts=opts)  # type: ignore[arg-type]
+        return [str(d[0]) for d in compare_metadata(context, metadata)]
+
+    async with engine.connect() as conn:
+        return await conn.run_sync(run)
+
+
+def test_a17_one_head_and_second_upgrade_changes_nothing() -> None:
+    """A17: голова ревизий одна — `0001`; второй `upgrade head` ничего не меняет, код 0."""
+    heads = ScriptDirectory.from_config(Config(str(dbtools.BACKEND / "alembic.ini"))).get_heads()
+    assert heads == ["0001"]
+    again = dbtools.alembic("upgrade", "head")
+    assert (again.returncode, "Running upgrade" in again.stderr) == (0, False)
+
+
+async def test_a17_models_match_the_database_and_the_comparison_can_go_red(
+    engine: AsyncEngine,
+) -> None:
+    """A17: модели сервиса совпадают с базой; лишняя колонка, лишний индекс и таблица без
+    модели дают расхождение — сверка умеет краснеть. Пробы схемы `probe` она не видит."""
+    assert await diffs(engine, models.Base.metadata) == []
+    async with engine.begin() as conn:
+        await conn.execute(text(f"CREATE TABLE {CMP} (id bigint PRIMARY KEY, name text)"))
+    try:
+        exact, column, index = MetaData(), MetaData(), MetaData()
+        cmp_table(exact)
+        cmp_table(column, Column("extra", Text))
+        cmp_table(index, Index("ix_cmp_probe_name", "name"))
+        assert await diffs(engine, exact) == []
+        assert await diffs(engine, column) == ["add_column"]
+        assert await diffs(engine, index) == ["add_index"]
+        assert await diffs(engine, MetaData()) == ["remove_table"]  # таблица есть, модели нет
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"DROP TABLE {CMP}"))
+
+
+def test_a17_migration_in_process_keeps_application_logging(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A17: после `upgrade head` в том же процессе запись логгера приложения доходит до вывода:
+    `env.py` логгеры не выключает."""
+    app = logging.getLogger("ai_geo_audit.after_migration")
+    monkeypatch.setattr(config, "storage", config.StorageSettings(database_url=dbtools.own_url()))
+    command.upgrade(Config(str(dbtools.BACKEND / "alembic.ini")), "head")
+    app.warning("журнал жив после миграции")
+    assert app.disabled is False
+    assert "журнал жив после миграции" in capsys.readouterr().err
