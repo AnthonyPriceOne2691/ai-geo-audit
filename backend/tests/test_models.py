@@ -25,7 +25,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import Enum as SqlEnum
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ai_geo_audit.storage import models, session_scope
@@ -91,6 +91,17 @@ async def test_a16_values_are_stored_and_the_check_rejects_the_rest(
             await s.execute(text("INSERT INTO probe.probe (key, status) VALUES ('x', 'DONE')"))
     cause = caught.value.orig.__cause__
     assert cause.constraint_name == "ck_probe_status"  # type: ignore[union-attr]
+
+
+async def test_a16_a_value_outside_the_enum_is_refused_before_the_database(
+    committed: AsyncEngine,
+) -> None:
+    """A16: строка не из перечисления отвергается ещё в Python — `LookupError` до запроса к базе;
+    проверка `ck_probe_status` — второй замок."""
+    with pytest.raises(StatementError) as caught:
+        async with session_scope(committed) as s:
+            await s.execute(insert(dbtools.probe).values(key="x", status="DONE"))
+    assert isinstance(caught.value.orig, LookupError)
 
 
 def test_a16_column_length_is_set_by_the_helper_not_by_values() -> None:
