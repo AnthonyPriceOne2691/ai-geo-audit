@@ -3,13 +3,52 @@
 **Date:** 2026-11-18
 **Verifier:**
 <!-- Заполняет проверяющая сессия (agent:lead-session) своим коммитом. -->
-**asserts_reviewed_by:** deferred (reason=список утверждений идёт владельцу одним сообщением вместе с примерами спеки; до его подписи — долг, at=2026-11-18)
+**asserts_reviewed_by:** human:owner at=2026-11-18T14:52+03:00
+<!-- Подписано тем же словом владельца, что и спека (STATUS, `human_ok_spec`): все 34
+     утверждения ведут к примерам, которые он подписал, — дайджест ниже. Четыре
+     ожидания, придуманные исполнителем после кода, он видел отмеченными. -->
+
 **CI run:** n/a reason=CI не развёрнут, волна В1; вместо ссылки — прогон в чистом клоне ниже
 **Commit:** см. блок «Прогон в чистом клоне»
 
 ## Прогон в чистом клоне
 
-<вставляется после финального коммита поставки>
+Локальные гейты обходятся (`commit -n`, `STRICT=0`), поэтому доказательство — прогон на
+склонированном состоянии (§10.4). База диффа — `origin/main` клона, то есть main после
+перемотки на архив В0 (`c571b68`): архив прошлой поставки в окно не попадает.
+
+Прогон на коммите `19a5d61` (до подписи владельца), 2026-11-18 14:45:
+
+```
+$ git clone -b ch1-01-config-logs <репозиторий> <клон> && cd <клон>
+$ python3 scripts/delivery_check.py --diff-base origin/main
+breakers: files=13 net_loc=795 (+795/-0), excluded=11 (…), limits={'max_files_touched': 25, 'max_loc_diff': 800, 'max_runtime_paths': 1, 'max_unsigned_irreversible': 0}
+наблюдение §13.1: поставок в архиве 1, окон со сроком 1, истекших без observed.md 0
+WARNING: class M: human_ok_spec deferred — ещё никем не подписано (§2.2b); долг закрывается до handoff
+WARNING: class M: asserts_reviewed_by deferred — ещё никем не подписано (§2.2b); долг закрывается до handoff
+WARNING: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given` (hypothesis). …
+WARNING: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+delivery_check: 0 error(s), 4 warning(s)
+exit=0
+$ cd backend && uv sync --frozen && uv run pytest -q
+34 passed
+```
+
+- **Два WARNING «deferred»** — подписи владельца ещё не было; закрыты коммитом подписи
+  (поле выше и `human_ok_spec` в STATUS).
+- **WARNING «реляционный оракул»** — долг на волну В1: STATUS и «Spec coverage gaps».
+- **WARNING «ci-oracles: weak»** — CI нет до волны В1; вместо ссылки — этот прогон.
+- Пакет импортируется из клона; Python 3.12.13, pydantic-settings 2.16.3, pytest 9.2.0.
+  `git ls-files` — 56 файлов, имён текстов канона и рабочих каталогов — 0.
+
+## Дайджест утверждений
+
+`assert_digest.sh` из полезной нагрузки канона, положенный в клон (CQG в репозитории ещё
+нет), база `origin/main`, 2026-11-18 14:54: новых утверждений 34, без ссылки на пример
+спеки — 0. По примерам: A1 — 6, A2 — 3, A3 — 8, A4 — 2, A5 — 6, A6 — 6, A8 — 3. `n/a`
+здесь не годится: примеры подписаны после кода, и пересчитать дайджест гейту нечем.
+
+asserts_without_example: 0
 
 ## Ревью рисковых мест
 
