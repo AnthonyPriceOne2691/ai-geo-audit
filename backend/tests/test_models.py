@@ -8,7 +8,7 @@ from enum import Enum, StrEnum
 import dbtools
 import pytest
 from dbtools import Probe, Status
-from sqlalchemy import insert, select, text
+from sqlalchemy import Column, MetaData, Table, Text, insert, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -99,3 +99,31 @@ def test_a16_helper_takes_only_str_enum() -> None:
     with pytest.raises(TypeError, match="только StrEnum"):
         models.enum_column(Plain, name="plain")
     assert (str(Status.DONE), Status.DONE == "done") == ("done", True)
+
+
+async def test_a16_drift_is_empty_for_the_probe_and_names_an_added_value(
+    engine: AsyncEngine,
+) -> None:
+    """A16: у пробы расхождений нет; значение, добавленное в Python без ревизии, — красная."""
+
+    class StatusPlus(StrEnum):
+        NEW = "new"
+        DONE = "done"
+        ARCHIVED = "archived"
+
+    drifted = MetaData(schema=dbtools.PROBE_SCHEMA, naming_convention=models.NAMING)
+    Table("probe", drifted, Column("status", models.enum_column(StatusPlus, name="status")))
+    async with engine.connect() as conn:
+        assert await models.enum_drift(conn, dbtools.ProbeBase.metadata) == []
+        assert await models.enum_drift(conn, drifted) == [
+            "probe.probe.status: значения «archived» нет в проверке базы"
+        ]
+
+
+async def test_a16_drift_refuses_when_no_enum_column_is_found(engine: AsyncEngine) -> None:
+    """A16: колонок-перечислений сверка не нашла, хотя проба есть — отказ, а не «чисто»."""
+    plain = MetaData(schema=dbtools.PROBE_SCHEMA)
+    Table("probe", plain, Column("key", Text))
+    async with engine.connect() as conn:
+        with pytest.raises(models.NothingToCheck, match="просмотрено колонок 1"):
+            await models.enum_drift(conn, plain)

@@ -8,11 +8,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum, StrEnum
 
-from sqlalchemy import BigInteger, DateTime, MetaData, Text
+from sqlalchemy import BigInteger, DateTime, MetaData, Text, text
 from sqlalchemy import Enum as SqlEnum
+from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.orm import DeclarativeBase
 
 #: Соглашение об именах ограничений и индексов (A15).
@@ -27,6 +29,15 @@ NAMING = {
 TYPES = {int: BigInteger(), str: Text(), datetime: DateTime(timezone=True)}
 #: Длина строки колонки-перечисления: задаёт помощник, а не самое длинное значение (A16).
 ENUM_LENGTH = 32
+_CHECK = text(
+    "SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c "
+    "JOIN pg_class t ON t.oid = c.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace "
+    "WHERE c.conname = :name AND n.nspname = :schema AND t.relname = :table"
+)
+
+
+class NothingToCheck(RuntimeError):
+    """Проверке нечего проверять: молчание выглядело бы как «нарушений нет»."""
 
 
 class Base(DeclarativeBase):
@@ -55,3 +66,32 @@ def enum_column(enum_cls: type[Enum], *, name: str) -> SqlEnum:
         values_callable=lambda members: [member.value for member in members],
         validate_strings=True,
     )
+
+
+async def enum_drift(conn: AsyncConnection, metadata: MetaData) -> list[str]:
+    """Расхождения значений проверок `ck_…` в базе с перечислениями Python (A16).
+
+    alembic проверки CHECK не сравнивает: значение, добавленное в Python без ревизии, всплыло бы
+    на первой вставке в бою. Ни одной колонки-перечисления — отказ: «расхождений нет» на пустом
+    месте было бы ложью.
+    """
+    found = [
+        (table, column)
+        for table in metadata.sorted_tables
+        for column in table.columns
+        if isinstance(column.type, SqlEnum) and not column.type.native_enum
+    ]
+    if not found:
+        seen = sum(len(table.columns) for table in metadata.tables.values())
+        raise NothingToCheck(f"колонок-перечислений не найдено: просмотрено колонок {seen}")
+    problems = []
+    for table, column in found:
+        kind = column.type
+        where = {"name": f"ck_{table.name}_{kind.name}", "schema": table.schema or "public"}
+        definition = await conn.scalar(_CHECK, {**where, "table": table.name})
+        in_db, in_code = set(re.findall(r"'([^']*)'", definition or "")), set(kind.enums)
+        place = f"{table.fullname}.{column.name}"
+        missing, extra = sorted(in_code - in_db), sorted(in_db - in_code)
+        problems += [f"{place}: значения «{v}» нет в проверке базы" for v in missing]
+        problems += [f"{place}: в проверке базы лишнее «{v}»" for v in extra]
+    return problems
