@@ -1,7 +1,6 @@
 """Тестовая база: своя у рабочей копии, снос схемы только под префиксом `audit_test_`.
 
-Адрес сервера — только `TEST_DATABASE_URL`: `DATABASE_URL` тесты не читают, база разработки им
-недоступна. Без Postgres прогон останавливается один раз, а не пропускает тесты.
+Адрес сервера — только `TEST_DATABASE_URL`; `DATABASE_URL` тесты не читают.
 """
 
 from __future__ import annotations
@@ -18,6 +17,8 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, func, select, t
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import registry
+
+from ai_geo_audit.storage import build_engine
 
 PREFIX = "audit_test_"
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
@@ -90,7 +91,7 @@ async def empty_schema(url: str) -> None:
         await conn.close()
 
 
-async def prepare(engine: AsyncEngine) -> None:
+async def prepare() -> None:
     """База рабочей копии: создать, если нет; пояс по умолчанию; пустая схема; пробы."""
     name = own_name()
     server = await asyncpg.connect(_raw(server_url()))
@@ -102,8 +103,12 @@ async def prepare(engine: AsyncEngine) -> None:
     finally:
         await server.close()
     await empty_schema(own_url())
-    async with engine.begin() as conn:
-        await conn.run_sync(probe_meta.create_all)
+    engine = build_engine("test", url=own_url())
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(probe_meta.create_all)
+    finally:
+        await engine.dispose()
 
 
 async def rows(engine: AsyncEngine, key: str | None = None) -> int:
@@ -129,11 +134,8 @@ async def require_empty(engine: AsyncEngine) -> None:
 
 @contextlib.asynccontextmanager
 async def outer_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
-    """Сессия во внешней транзакции теста; в конце внешняя транзакция откатывается.
-
-    `create_savepoint`: фиксация и откат кода под тестом идут по точке сохранения, и откат кода
-    не снимает транзакцию теста.
-    """
+    """Сессия во внешней транзакции теста. `create_savepoint`: фиксация и откат кода под тестом
+    идут по точке сохранения и транзакцию теста не снимают; в конце она откатывается."""
     async with engine.connect() as conn:
         outer = await conn.begin()
         session = AsyncSession(

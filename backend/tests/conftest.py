@@ -30,15 +30,7 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
         message = f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}"
         raise pytest.UsageError(message)
-    asyncio.run(_prepare())
-
-
-async def _prepare() -> None:
-    engine = build_engine("test", url=dbtools.own_url())
-    try:
-        await dbtools.prepare(engine)
-    finally:
-        await engine.dispose()
+    asyncio.run(dbtools.prepare())
 
 
 @pytest.fixture(autouse=True)

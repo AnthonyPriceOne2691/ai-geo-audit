@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import asyncpg
@@ -95,9 +96,22 @@ async def test_a9_query_values_stay_out_of_errors_and_log(
             await s.execute(add(MARK))
     logging.getLogger("audit").error("вставка упала", exc_info=caught.value)
     out = capsys.readouterr().err
-    assert MARK not in str(caught.value)
-    assert MARK not in out
-    assert "Key (key)=(***)" in out  # значение Postgres кладёт в DETAIL сам — его прячет журнал
+    chain = (caught.value, caught.value.orig, caught.value.orig.__cause__)
+    assert not [type(e).__name__ for e in chain if MARK in str(e)]
+    assert MARK not in out and "probe_key_key" in out  # значения нет, имя ограничения есть
+    assert MARK not in logs.redact(f"DETAIL:  Key (key)=({MARK}) already exists.")  # вторая сетка
+
+
+async def test_a9_error_caught_without_step_is_loud(committed: AsyncEngine) -> None:
+    """A9: ошибку базы поймали без step(), это последняя команда — громкий отказ, не потеря."""
+    async with session_scope(committed) as s:
+        await s.execute(add("taken"))
+    with pytest.raises(storage.AbortedTransactionError, match="поймали без step"):
+        async with session_scope(committed) as s:
+            await s.execute(add("work-1"))
+            with contextlib.suppress(IntegrityError):
+                await s.execute(add("taken"))
+    assert await dbtools.rows(committed, "work-1") == 0
 
 
 async def test_a9_echo_logs_the_query_without_values(
@@ -167,6 +181,19 @@ async def test_a11_process_engine_is_one_and_named() -> None:
         assert (await conn.execute(text(WHO))).scalar_one() == "ai-geo-audit:api"
 
 
+async def test_a11_pool_settings_and_process_name_reach_the_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A11: процесс worker, пул 3 и запас 4 — так и в движке, подпись ai-geo-audit:worker."""
+    url = dbtools.own_url()
+    settings = config.StorageSettings(database_url=url, pool_size=3, max_overflow=4)
+    monkeypatch.setattr(config, "storage", settings)
+    engine = storage.get_engine("worker")
+    assert (engine.pool.size(), engine.pool._max_overflow) == (3, 4)  # type: ignore[attr-defined]
+    async with engine.connect() as conn:
+        assert (await conn.execute(text(WHO))).scalar_one() == "ai-geo-audit:worker"
+
+
 @pytest.mark.usefixtures("on_test_db")
 async def test_a11_pool_defaults_are_small_for_tasks() -> None:
     """A11: без настроек у движка процесса пул 5 и запас 5, у движка задачи — 2 и 1."""
@@ -197,21 +224,12 @@ async def _left(name: str) -> int:
         await conn.close()
 
 
-@pytest.mark.usefixtures("on_test_db")
+@pytest.mark.usefixtures("on_test_db", "committed")
 def test_a11_two_worker_tasks_each_in_its_own_loop() -> None:
     """A11: две задачи подряд, каждая в своём asyncio.run, — обе пишут и читают, соединений нет."""
     for key in ("task-1", "task-2"):
         assert asyncio.run(_task(key)) == 1
         assert asyncio.run(_left("ai-geo-audit:a11-task")) == 0
-    asyncio.run(_clean())
-
-
-async def _clean() -> None:
-    engine = storage.build_engine("test", url=dbtools.own_url())
-    try:
-        await dbtools.truncate(engine)
-    finally:
-        await engine.dispose()
 
 
 @pytest.mark.usefixtures("on_test_db")
