@@ -45,6 +45,9 @@ CASES = [
     ("KEYS_MASTER_KEY_FILE", "/run/key", config.KeySettings, "master_key_file", None),
     ("LOG_FORMAT", "json", config.LogSettings, "format", "json"),
     ("LOG_LEVEL", "WARNING", config.LogSettings, "level", "WARNING"),
+    ("API_HOST", "0.0.0.0", config.ApiSettings, "host", "0.0.0.0"),
+    ("API_PORT", "8200", config.ApiSettings, "port", 8200),
+    ("API_TRUSTED_PROXIES", "10.9.9.9", config.ApiSettings, "trusted_proxies_text", "10.9.9.9"),
 ]
 
 

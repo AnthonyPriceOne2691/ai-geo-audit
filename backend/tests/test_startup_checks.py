@@ -27,6 +27,7 @@ def full_env(master_key: str) -> dict[str, str]:
         "REDIS_URL": "redis://redis:6379/0",
         "JWT_SECRET": "a" * 64,
         "KEYS_MASTER_KEY_FILE": master_key,
+        "API_TRUSTED_PROXIES": "10.9.9.9",
     }
 
 
@@ -41,6 +42,7 @@ def prod(monkeypatch: pytest.MonkeyPatch, process: sc.Process, **env: str) -> li
         storage=config.StorageSettings(),
         access=config.AccessSettings(),
         keys=config.KeySettings(),
+        api=config.ApiSettings(),
     )
 
 
@@ -83,11 +85,29 @@ def test_a3_master_key_file_must_exist(monkeypatch: pytest.MonkeyPatch, master_k
 
 
 def test_a3_processes_need_different_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A3: миграциям хватает базы; воркеру не нужен секрет входа, api — нужно всё."""
+    """A3, A33: миграциям хватает базы; воркеру не нужен секрет входа, api — нужно всё, и ещё
+    адреса прокси (A33)."""
     assert names(prod(monkeypatch, "migrate", DATABASE_URL=DSN)) == set()
     worker = {"REDIS_URL", "KEYS_MASTER_KEY_FILE"}
     assert names(prod(monkeypatch, "worker", DATABASE_URL=DSN)) == worker
-    assert names(prod(monkeypatch, "api", DATABASE_URL=DSN)) == worker | {"JWT_SECRET"}
+    api = worker | {"JWT_SECRET", "API_TRUSTED_PROXIES"}
+    assert names(prod(monkeypatch, "api", DATABASE_URL=DSN)) == api
+
+
+EXPLICIT = "API_TRUSTED_PROXIES — в бою задаётся явно: умолчание ведёт на машину разработчика"
+
+
+def test_a33_prod_api_needs_trusted_proxies_explicitly(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A33: `APP_ENV=prod`, всё задано, кроме `API_TRUSTED_PROXIES`, — процесс `api` не
+    стартует, строка отказа ровно «API_TRUSTED_PROXIES — в бою задаётся явно: умолчание ведёт на
+    машину разработчика»; у `worker` и `migrate` этой строки нет."""
+    env = {k: v for k, v in full_env(master_key).items() if k != "API_TRUSTED_PROXIES"}
+    with pytest.raises(sc.ConfigError) as refusal:
+        sc.check_startup("api", prod(monkeypatch, "api", **env))
+    assert [line.strip() for line in str(refusal.value).splitlines()[1:]] == [EXPLICIT]
+    assert [p for p in ("worker", "migrate") if names(prod(monkeypatch, p, **env))] == []
 
 
 def test_a4_starts_without_external_keys(monkeypatch: pytest.MonkeyPatch, master_key: str) -> None:
