@@ -351,7 +351,7 @@ async def test_a28_empty_session_sends_nothing(engine: AsyncEngine) -> None:
 async def test_a29_killed_connection_is_named_as_lost(engine: AsyncEngine) -> None:
     """A29: соединение убито базой (`pg_terminate_backend`), пока сессия простаивает в транзакции,
     — на выходе `ConnectionLostError`, а не «ошибку базы поймали без step()»."""
-    with pytest.raises(storage.ConnectionLostError, match="соединение с базой потеряно"):
+    with pytest.raises(storage.ConnectionLostError) as lost:
         async with session_scope(engine) as s:
             pid = (await s.execute(text("SELECT pg_backend_pid()"))).scalar_one()
             killer = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
@@ -359,6 +359,8 @@ async def test_a29_killed_connection_is_named_as_lost(engine: AsyncEngine) -> No
                 await killer.execute("SELECT pg_terminate_backend($1)", pid)
             finally:
                 await killer.close()
+    assert str(lost.value).startswith("соединение с базой потеряно до фиксации")
+    assert lost.value.__cause__ is not None and "ошибку базы поймали" not in str(lost.value)
 
 
 #: Ошибки класса данных, где значение стоит в самом сообщении: запрос, значение, что остаётся.

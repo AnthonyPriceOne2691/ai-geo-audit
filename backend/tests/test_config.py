@@ -18,7 +18,7 @@ ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
 
 
 def test_a1_dev_works_out_of_the_box() -> None:
-    """A1: без `.env` и переменных — рабочий набор разработчика."""
+    """A1: без `.env` и переменных — рабочий набор разработчика; адрес Redis — секрет (A21)."""
     storage = config.StorageSettings()
     assert config.AppSettings().env == "dev"
     assert storage.database_url.get_secret_value().startswith("postgresql+asyncpg://")
