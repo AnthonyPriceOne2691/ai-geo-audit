@@ -15,6 +15,9 @@ React с Vite и Mantine, pytest, docker compose.
 - Тесты — `cd backend && uv run pytest -q`; база копии — `audit_test_` + 10 знаков sha256 пути
   корня. Снятую копию — `docker compose -f docker-compose.dev.yml exec db dropdb -U audit <база>`.
 
+- Тесты ходят только на петлю и не видят окружения машины: `.env` в рабочие копии ссылкой не
+  подключается — у каждой копии своё окружение и своя тестовая база.
+
 ## Миграции
 
 - Схема базы — цепочкой ревизий alembic: `cd backend && uv run alembic upgrade head`; адрес базы —
