@@ -12,6 +12,7 @@ import {
   Table,
   Text,
   Transition,
+  defaultCssVariablesResolver,
   mergeMantineTheme,
 } from '@mantine/core';
 import { screen } from '@testing-library/react';
@@ -68,6 +69,14 @@ const PAIRS: readonly (readonly [string, string, number])[] = [
 const comma = (text: string): string => text.replace('.', ',');
 // prettier пишет числа CSS по-своему (`.2` → `0.2`): значения сравниваются числом.
 const byValue = (text: string): string => text.replace(/\d*\.?\d+/g, (n) => String(Number(n)));
+
+// Переменные Mantine, которые тема оставляет библиотеке, — поимённо и с причиной.
+const LIBRARY_LEFT = new Map([
+  ['--mantine-color-scheme', 'не цвет: имя схемы для color-scheme'],
+  ['--mantine-color-disabled', 'вид выключенного — Ч1.4г, кнопки'],
+  ['--mantine-color-disabled-color', 'вид выключенного — Ч1.4г, кнопки'],
+  ['--mantine-color-disabled-border', 'вид выключенного — Ч1.4г, кнопки'],
+]);
 
 /** Переменная выше по дереву — так её ставит расширение браузера. */
 function underLeak(children: ReactNode) {
@@ -127,6 +136,24 @@ describe('контраст токенов', () => {
       expect(resolved[scheme]['--mantine-color-text']).toBe(cssVar('ink'));
       expect(resolved[scheme]['--mantine-color-dimmed']).toBe(cssVar('faint'));
       expect(resolved[scheme]['--mantine-color-anchor']).toBe(cssVar('accent'));
+    }
+  });
+
+  it('F11: каждая цветовая роль Mantine вне палитр — на токене, кроме названных поимённо', () => {
+    // Роль без строки в теме берёт цвет библиотеки молча — и после обновления Mantine тоже.
+    const library = defaultCssVariablesResolver(merged);
+    const palettes = Object.keys(merged.colors).map((color) => `--mantine-color-${color}-`);
+    const primary = Object.keys(library.variables).filter((name) =>
+      /^--mantine-primary-color-[a-z]/.test(name),
+    );
+    const roles = [...Object.keys(library.light), ...primary].filter(
+      (name) => !palettes.some((prefix) => name.startsWith(prefix)) && !LIBRARY_LEFT.has(name),
+    );
+    expect(roles).toContain('--mantine-primary-color-filled-hover');
+    const resolved = cssVariablesResolver(merged);
+    for (const scheme of SCHEMES) {
+      const bare = roles.filter((name) => !(name in resolved[scheme]));
+      expect(bare, `схема ${scheme}: роли Mantine без токена`).toEqual([]);
     }
   });
 });
