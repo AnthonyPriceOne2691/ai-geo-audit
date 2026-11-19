@@ -8,6 +8,30 @@
   "check_eslint_warnings.sh": "поставка В1б: ратчет предупреждений eslint — гейт фронта; npm в CI В1а нет, хуки eslint и prettier сняты до В1б",
   "check_jscpd_gate.sh": "пакет npm, поставка В1б: jscpd — пакет npm, без него не судит и половина Python; npm в CI В1а нет, дублирование Python до В1б не судит никто",
   "check_grep_gate.sh:service-no-web": "слоя сервисов нет: правило выбирает файлы по имени (каталог services/, service.py), в ai_geo_audit таких нет — просмотрено 0",
+  "check_baseline_ratchet.sh": {
+    "reason": "срез 2 поставки В1а: место — джоба `gates` в CI (A102, ратчет снимков); объявление истекает, когда появится файл CI",
+    "until": ".github/workflows/quality.yml"
+  },
+  "check_deps_audit.sh": {
+    "reason": "срез 2 поставки В1а: место — джоба `gates` в CI, хук — стадия manual (A102, A103); объявление истекает, когда появится файл CI",
+    "until": ".github/workflows/quality.yml"
+  },
+  "check_new_dependency.py": {
+    "reason": "срез 2 поставки В1а: место — CI (A104); объявление истекает, когда появится файл CI",
+    "until": ".github/workflows/quality.yml"
+  },
+  "check_diff_coverage.sh": {
+    "reason": "срез 3 поставки В1а: место — джоба `tests` в CI (A107, A108); объявление истекает, когда появится контракт джобы `tests`",
+    "until": "backend/tests/test_tests_job.py"
+  },
+  "check_mutation_gate.sh": {
+    "reason": "срез 3 поставки В1а: место — джоба `tests` в CI (A109); объявление истекает, когда появится контракт джобы `tests`",
+    "until": "backend/tests/test_tests_job.py"
+  },
+  "check_ci_status.sh": {
+    "reason": "срез 5 поставки В1а: место — гейт мержа и pre-push (A114, A118); объявление истекает, когда появится гейт мержа",
+    "until": "scripts/merge_guard.sh"
+  },
   "merge_guard.sh": {
     "reason": "срез 5 поставки В1а: гейт мержа кладётся вместе с подключением и pre-push (A113–A115); объявление истекает, когда файл появится",
     "until": "scripts/merge_guard.sh"

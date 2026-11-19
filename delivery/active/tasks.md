@@ -88,6 +88,11 @@
 - [ ] T23: джоба `tests` со службой Postgres по дайджесту, покрытие изменённого с гринлетами,
       мутационный гейт с адаптацией глоба и одним воркером; хук пропуска в `conftest.py`;
       строки `.gitignore`, вместе с `coverage.json` и `mutants/`.
+      Контракт джобы `tests` — отдельным файлом `backend/tests/test_tests_job.py`, красным
+      первым: он — метка `until` у `check_diff_coverage.sh` и `check_mutation_gate.sh`; в том же
+      коммите джоба подключает оба гейта и ключи снимаются. Срез 2: `quality.yml` — метка у
+      ратчета снимков, аудита зависимостей и `check_new_dependency.py`; срез 5: `merge_guard.sh` —
+      у `check_ci_status.sh`. На сдаче ни одного из шести ключей в `not-applicable.json` нет.
 
 ## Slice 4 — свойства A111, A112, A119
 - [ ] T24: A111 — `test_logs.py`; A112 — `test_storage.py`, настоящая база; A119 —

@@ -253,3 +253,32 @@
   потому что фрагмент — то же `error` плюс одна рабочая строка о ключе pytest-asyncio, без
   которой pytest 9.2 с плагином не стартует; ключ у нас объявлен, строка не срабатывает;
   цена — нет.
+- 2026-11-19 · выбрал записать расхождение подписанной строки A91 «там же: WEAK — только у
+  адаптаций из `adapted.json`, с их причиной» с фактом и предлагаемый текст здесь, вместо правки
+  строки или пояснения под таблицей, потому что пояснение спорило бы с подписанной строкой, а
+  несёт её владельцу проверяющий четвёртой вместе с A107, A108, A110 (решение
+  2026-11-19T15:01Z). Факт — доктор на `c2452b6`, WEAK 17 трёх видов. Адаптации из
+  `adapted.json` — 7: `check_deps_audit.sh`, `mutation_py.sh`, `sentinels_taps.py`,
+  `check_gate_coverage.sh`, `gate_coverage_roles.sh`, `mutation_shard.sh`, `mutation_ts.sh`.
+  Честный пропуск — проба доктора идёт на голом PATH, инструмента в ней нет — 9:
+  `check_ci_status.sh` (gh), `check_complexity_gate.sh` (ruff), `check_dead_code.py` (vulture,
+  knip), `check_deps_audit.sh` (pip-audit, npm), `check_diff_coverage.sh` (pytest-cov),
+  `check_eslint_warnings.sh` (eslint, npm), `check_jscpd_gate.sh` (jscpd), `check_layers_gate.sh`
+  (lint-imports, depcruise), `check_mutation_gate.sh` (mutmut). Область не на коммите — 1, одна
+  строка на два гейта: `check_dead_code.py` (pre-push) и `check_deps_audit.sh` (manual) областью
+  не пробованы. Предлагаемый текст строки: «там же: WEAK — трёх видов, у каждого причина:
+  адаптация из `adapted.json`; честный пропуск пробы доктора — в пробе нет инструмента; область
+  гейта вне коммит-стадии (pre-push, manual)»;
+  цена — нет: гейты и доктор те же, меняется только текст строки.
+- 2026-11-19 · выбрал объявить шесть неподключённых гейтов в `not-applicable.json` с `until` —
+  `check_baseline_ratchet.sh`, `check_deps_audit.sh`, `check_new_dependency.py` до
+  `.github/workflows/quality.yml` (срез 2), `check_diff_coverage.sh`, `check_mutation_gate.sh` до
+  контракта джобы `tests` `backend/tests/test_tests_job.py` (срез 3), `check_ci_status.sh` до
+  `scripts/merge_guard.sh` (срез 5) — вместо заглушек хуков только после среза 5, потому что
+  мета-гейт стоит на стадии pre-commit с `always_run` и без объявлений не пропустил бы ни одного
+  коммита в копии, а с ними хуки судят срезы 2–5 (вариант (а), решение проверяющего
+  2026-11-19T15:01Z). Джоба `tests` живёт в том же `quality.yml`, что появится в срезе 2, поэтому
+  у гейтов среза 3 своя метка — отдельный файл контракта джобы `tests`. Проба: пустой файл в
+  дереве, не в индексе — мета-гейт код 1, названы истёкшие объявления; без файлов — код 0;
+  цена — объявление истекает, как только файл появится в дереве: подключение гейта и снятие
+  ключа — в том же коммите. На сдаче ни одного из шести ключей в файле нет.
