@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
-  <!-- Подпись владельца под примерами — коммитом проверяющего `7856337`; код идёт
-       срезами по tasks.md. -->
+- **phase:** verify
+  <!-- T11 — сверка в чистом клоне 2026-11-19T08:17Z, отчёт — verify-report.md; сдача —
+       T12, вердикт ставит проверяющий. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-18T15:34Z)
