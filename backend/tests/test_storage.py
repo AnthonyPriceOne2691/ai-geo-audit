@@ -87,7 +87,7 @@ async def test_a9_connection_is_in_utc_whatever_the_database_default(engine: Asy
 async def test_a9_query_values_stay_out_of_errors_and_log(
     committed: AsyncEngine, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A9: приметное значение упавшей вставки не попадает ни в исключение, ни в журнал."""
+    """A9: значение упавшей вставки — ни в исключении, ни в журнале; имя ограничения — по A15."""
     logs.setup_logging(fmt="json")
     async with session_scope(committed) as s:
         await s.execute(add(MARK))
