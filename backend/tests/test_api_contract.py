@@ -18,7 +18,7 @@ SIGNED_OUT = probes.sample("signed-out")
 
 
 def refused_signed_out(response: object) -> list[str]:
-    """Что не так с ответом «нужен вход»; пусто — ответ по образцу `signed-out`."""
+    """Что не так с ответом «нужен вход»; пусто — по образцу `signed-out` (у `HEAD` — без тела)."""
     problems = []
     if response.status_code != 403:
         problems.append(f"код {response.status_code}")
@@ -26,11 +26,12 @@ def refused_signed_out(response: object) -> list[str]:
         problems.append("нет X-Access-Refusal: signed-out")
     if "www-authenticate" in response.headers:
         problems.append("есть WWW-Authenticate")
-    if response.json() != SIGNED_OUT["body"]:
+    if response.request.method != "HEAD" and response.json() != SIGNED_OUT["body"]:
         problems.append(f"тело {response.json()}")
     return problems
 
 
+OTHER_METHODS = ("HEAD", "OPTIONS", "PUT", "PATCH", "DELETE")
 WITHOUT_PASS = [
     ("GET", probes.CLOSED, {}),
     ("GET", probes.CLOSED, {"Authorization": "Bearer abc"}),
@@ -40,6 +41,7 @@ WITHOUT_PASS = [
     ("GET", "/", {}),
     ("GET", "/api/health/", {}),
     ("GET", "/api/health/x", {}),
+    *[(method, path, {}) for method in OTHER_METHODS for path in (probes.CLOSED, "/api/nope")],
 ]
 
 
@@ -49,8 +51,9 @@ async def test_a42_without_a_valid_pass_everything_is_signed_out(
 ) -> None:
     """A42: ворота с настоящей проверкой (до Ч1.8 она не признаёт ни одного пропуска): закрытая
     проба без заголовков, с `Authorization` `Bearer` и `Basic`, с чужим `X-Access-Token`;
-    `/api/nope`; `/`; `/api/health/` и `/api/health/x` — всё 403 по образцу `signed-out`, без
-    `WWW-Authenticate`. Есть адрес или нет — ответ один; путь сверяется точным равенством."""
+    `/api/nope`; `/`; `/api/health/` и `/api/health/x`; закрытая проба и `/api/nope` методами
+    `HEAD`, `OPTIONS`, `PUT`, `PATCH`, `DELETE` — всё 403 по образцу `signed-out`, без
+    `WWW-Authenticate`. Есть адрес или нет, метод любой — ответ один; путь — точным равенством."""
     async with probes.client(probes.build(check=access.visitor_for)) as http:
         response = await http.request(method, path, headers=headers)
     assert refused_signed_out(response) == []
@@ -117,13 +120,16 @@ async def test_a42_failed_check_does_not_open_the_entry(capsys: pytest.CaptureFi
 
 
 async def test_a42_mistake_in_the_open_list_does_not_open_a_closed_route() -> None:
-    """A42: путь закрытой пробы по ошибке внесён в список открытых — без пропуска 403
-    `signed-out` от зависимости закрытого роутера: вошедшего в состоянии запроса нет."""
+    """A42: путь закрытой пробы и `/api/nope` по ошибке внесены в список открытых. Без пропуска
+    закрытая проба — 403 `signed-out` от зависимости закрытого роутера: вошедшего в состоянии
+    запроса нет; `/api/nope` — 404 `not-found`: ворота этот список видят и пропустили."""
     probes.CALLS.clear()
-    mistaken = {**access.OPEN_PATHS, probes.CLOSED: "ошибка списка в тесте"}
+    mistaken = {**access.OPEN_PATHS, probes.CLOSED: "ошибка списка", "/api/nope": "ошибка списка"}
     async with probes.client(probes.build(open_paths=mistaken)) as http:
         response = await http.get(probes.CLOSED)
+        missing = await http.get("/api/nope")
     assert refused_signed_out(response) == []
+    assert (missing.status_code, missing.json()) == (404, probes.sample("not-found")["body"])
     assert probes.CALLS == []
 
 
