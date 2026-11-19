@@ -1,4 +1,6 @@
 import '@mantine/core/styles.css';
+// Токены красят страницу до запуска React (F12).
+import './theme/tokens.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 

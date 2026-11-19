@@ -22,6 +22,27 @@ const NAME = 'Пробный сервис';
 const JS = 'assets/index-B7xQ2_Lm.js';
 const VENDOR = 'assets/vendor-Cq2fP0aZ.js';
 const CSS = 'assets/index-Dk3-Q9Zr.css';
+// Шрифт — файлы двух наборов знаков, как их кладёт Vite (F6).
+const LATIN = 'assets/geologica-latin-wght-normal-Lt4Xa9Qe.woff2';
+const CYRILLIC = 'assets/geologica-cyrillic-wght-normal-Cy7Rb2Kd.woff2';
+// Фон и текст схем в файле токенов — и они же в CSS сборки так, как их пишет минификатор: числа без
+// ведущего нуля, без кавычек в селекторе (F12).
+const TOKENS = `:root[data-mantine-color-scheme='light'] {
+  --audit-bg: oklch(97% 0.006 250);
+  --audit-ink: oklch(23% 0.020 255);
+}
+:root[data-mantine-color-scheme='dark'] {
+  --audit-bg: oklch(17% 0.012 255);
+  --audit-ink: oklch(95% 0.006 250);
+}
+`;
+const LIGHT =
+  ':root[data-mantine-color-scheme=light]' +
+  '{--audit-bg: oklch(97% .006 250);--audit-ink: oklch(23% .02 255)}';
+const DARK =
+  ':root[data-mantine-color-scheme=dark]' +
+  '{--audit-bg: oklch(17% .012 255);--audit-ink: oklch(95% .006 250)}';
+const PAGE = ':root body{background-color:var(--audit-bg);color:var(--audit-ink)}';
 // Сборка-образец — как у Vite: страница, свой код, код пакетов с узлами из списка, стили.
 const SAMPLE = {
   'index.html': `<!doctype html>
@@ -38,8 +59,10 @@ const SAMPLE = {
 `,
   [JS]: 'import"./vendor-Cq2fP0aZ.js";document.title="x";',
   [VENDOR]: 'const s="http://www.w3.org/2000/svg",r="https://react.dev/",m="https://mantine.dev/";',
-  [CSS]: 'body{margin:0}.logo{background:url(./logo-AbCd1234.svg)}',
+  [CSS]: `body{margin:0}${LIGHT}${DARK}${PAGE}.logo{background:url(./logo-AbCd1234.svg)}`,
   'assets/logo-AbCd1234.svg': '<svg></svg>',
+  [LATIN]: 'wOF2',
+  [CYRILLIC]: 'wOF2',
 };
 // Куда подкладывается порча и какой файл оракул обязан назвать.
 const PLACES = {
@@ -67,7 +90,7 @@ function oracle(spoil = () => undefined) {
   const dir = tempDir();
   cpSync(clean, dir, { recursive: true });
   spoil(join(dir, 'dist'));
-  const args = [ORACLE, join(dir, 'dist'), join(dir, 'brand.ts')];
+  const args = [ORACLE, join(dir, 'dist'), join(dir, 'brand.ts'), join(dir, 'tokens.css')];
   const run = spawnSync(process.execPath, args, { encoding: 'utf8' });
   return { code: run.status, out: run.stdout + run.stderr };
 }
@@ -88,6 +111,7 @@ function expectRedAt(place, text, reason) {
 beforeAll(() => {
   clean = tempDir();
   writeFileSync(join(clean, 'brand.ts'), `export const SERVICE_NAME = '${NAME}';\n`);
+  writeFileSync(join(clean, 'tokens.css'), TOKENS);
   for (const [path, text] of Object.entries(SAMPLE)) {
     mkdirSync(dirname(join(clean, 'dist', path)), { recursive: true });
     writeFileSync(join(clean, 'dist', path), text);
@@ -101,7 +125,7 @@ afterAll(() => {
 describe('оракул сборки', () => {
   it('F5: чистая сборка-образец — код 0 и «проверено N файлов»', () => {
     const { code, out } = oracle();
-    expect(out.trim()).toBe('проверено 5 файлов');
+    expect(out.trim()).toBe('проверено 7 файлов');
     expect(code).toBe(0);
   });
 
@@ -199,5 +223,61 @@ describe('оракул сборки', () => {
     const { code, out } = oracle((dist) => edit(dist, 'index.html', change));
     expect(out).toContain(`index.html: встроенный скрипт — ${reason}`);
     expect(code).toBe(1);
+  });
+
+  // Без фона и текста схем в CSS сборки первая отрисовка до запуска приложения — цветами
+  // библиотеки: переменные темы Mantine появляются только после запуска React.
+  it.each([
+    [
+      'правило страницы убрано',
+      (css) => css.replace(PAGE, ''),
+      'dist: в CSS сборки нет правила страницы — фон var(--audit-bg), текст var(--audit-ink)',
+    ],
+    [
+      'блок тёмной схемы убран',
+      (css) => css.replace(DARK, ''),
+      'dist: в CSS сборки нет --audit-bg схемы dark из токенов: oklch(17% 0.012 255)',
+    ],
+    [
+      'текст тёмной схемы не из токенов',
+      (css) => css.replace('oklch(95% .006 250)', 'oklch(90% .006 250)'),
+      'dist: в CSS сборки нет --audit-ink схемы dark из токенов: oklch(95% 0.006 250)',
+    ],
+  ])('F12: фон и цвет текста обеих схем в CSS сборки — %s — красный', (_kind, change, line) => {
+    expectRed((dist) => edit(dist, CSS, change), line);
+  });
+
+  // Шрифт — только латиница и кириллица (F6): лишний набор — лишний вес страницы и знаки, которых
+  // правила вида не проверяли; без одного из двух страница уходит в запасной шрифт.
+  const GREEK = 'assets/geologica-greek-wght-normal-Gk3Mn8Pq.woff2';
+  const TTF = 'assets/geologica-latin-Lt4Xa9Qe.ttf';
+  it.each([
+    [
+      'подложен файл набора греческого',
+      (dist) => writeFileSync(join(dist, GREEK), 'wOF2'),
+      `${GREEK}: шрифт не из наборов латиницы и кириллицы`,
+    ],
+    [
+      'подложен шрифт другого вида',
+      (dist) => writeFileSync(join(dist, TTF), 'ttf'),
+      `${TTF}: шрифт не из наборов латиницы и кириллицы`,
+    ],
+    [
+      'файла кириллицы нет',
+      (dist) => rmSync(join(dist, CYRILLIC)),
+      'dist: нет файла шрифта с кириллицей',
+    ],
+    [
+      'файла латиницы нет',
+      (dist) => rmSync(join(dist, LATIN)),
+      'dist: нет файла шрифта с латиницей',
+    ],
+  ])('F6: шрифт в сборке — %s — красный', (_kind, spoil, line) => {
+    expectRed(spoil, line);
+  });
+
+  it('F6: шрифт с сервера шрифтов в CSS сборки — красный', () => {
+    const face = '@font-face{src:url(https://fonts.gstatic.com/s/geologica/a.woff2)}';
+    expectRedAt('css', face, 'чужой узел fonts.gstatic.com');
   });
 });

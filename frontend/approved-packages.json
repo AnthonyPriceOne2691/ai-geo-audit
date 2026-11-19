@@ -1,6 +1,7 @@
 {
   "_": "Прямые зависимости фронта, одобренные владельцем, и зачем каждая. Новый пакет — строка здесь и строка new_dependency в delivery/active/STATUS.md одной правкой; тест F17 сверяет список с package.json в обе стороны.",
   "dependencies": {
+    "@fontsource-variable/geologica": "шрифт Geologica со своего адреса: переменный, наборы латиницы и кириллицы, лицензия OFL-1.1",
     "@mantine/core": "компоненты и тема интерфейса",
     "@mantine/hooks": "хуки Mantine, без них не работает @mantine/core",
     "react": "библиотека интерфейса",
