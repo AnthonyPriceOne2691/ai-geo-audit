@@ -270,3 +270,67 @@ describe('таблица', () => {
     expect(cells.map((cell) => cell.style.textAlign)).toEqual(Array(4).fill('center'));
   });
 });
+
+// F15: таблицы цветов и чисел в frontend/UI_RULES.md. Колонка значения → схема; у чисел схемы нет.
+const RULES = join(dirname(TOKENS), '..', '..', 'UI_RULES.md');
+const VALUE_COLUMNS = new Map([
+  ['Светлая', 'light'],
+  ['Тёмная', 'dark'],
+  ['Значение', ''],
+]);
+
+/** Значения токенов в таблицах правил: «имя схема» у цвета, «имя» у числа → значения клеток. */
+function ruleCells(markdown: string): Map<string, string[]> {
+  const cells = new Map<string, string[]>();
+  let head: string[] = [];
+  for (const line of markdown.split('\n')) {
+    const row = line.startsWith('|') ? line.split('|').slice(1, -1) : [];
+    const [name = '', ...rest] = row.map((cell) => cell.trim().replace(/^`(.*)`$/, '$1'));
+    if (row.length === 0 || name === 'Токен') head = rest;
+    else if (name.startsWith('--audit-')) {
+      rest.forEach((value, at) => {
+        const scheme = VALUE_COLUMNS.get(head[at] ?? '');
+        const key = scheme ? `${name} ${scheme}` : name;
+        if (scheme !== undefined) cells.set(key, [...(cells.get(key) ?? []), value]);
+      });
+    }
+  }
+  return cells;
+}
+
+/** Токены tokens.css в тех же ключах: цвета схем и числа корня. */
+function tokenCells(): Map<string, string> {
+  const cells = new Map(Object.entries(root).filter(([name]) => name.startsWith('--audit-')));
+  for (const scheme of SCHEMES) {
+    const block = blocks.get(`:root[data-mantine-color-scheme='${scheme}']`) ?? {};
+    for (const [name, value] of Object.entries(block)) cells.set(`${name} ${scheme}`, value);
+  }
+  return cells;
+}
+
+/** Расхождения правил с токенами — токен и оба значения; строка дважды — тоже расхождение. */
+function drift(rules: Map<string, string[]>, tokens: Map<string, string>): string[] {
+  return [...new Set([...tokens.keys(), ...rules.keys()])].flatMap((key) => {
+    const found = rules.get(key) ?? [];
+    const [rule, token] = [found.join(' | '), tokens.get(key)];
+    if (token === undefined) return [`${key}: в правилах ${rule}, в токенах нет`];
+    if (found.length === 0) return [`${key}: в токенах ${token}, в правилах строки нет`];
+    const same = found.length === 1 && byValue(rule) === byValue(token);
+    return same ? [] : [`${key}: в правилах ${rule}, в токенах ${token}`];
+  });
+}
+
+describe('правила интерфейса', () => {
+  it('F15: таблицы цветов и чисел frontend/UI_RULES.md — ровно токены, в обе стороны', () => {
+    const rules = ruleCells(readFileSync(RULES, 'utf8'));
+    expect(drift(rules, tokenCells())).toEqual([]);
+  });
+
+  it('F15: в таблице чисел — 120, 180 и 260 мс и общая кривая cubic-bezier(.2, .8, .2, 1)', () => {
+    const rules = ruleCells(readFileSync(RULES, 'utf8'));
+    const numbers = [...rules].filter(([key]) => !key.includes(' ')).flatMap(([, cell]) => cell);
+    expect(numbers.map(byValue)).toEqual(
+      expect.arrayContaining(['120ms', '180ms', '260ms', byValue('cubic-bezier(.2, .8, .2, 1)')]),
+    );
+  });
+});
