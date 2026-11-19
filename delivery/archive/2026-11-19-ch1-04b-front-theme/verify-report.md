@@ -551,9 +551,9 @@ asserts_without_example: 3
 | Metric | Value |
 |---|---|
 | files_touched / loc_diff | 17 code (+9 process docs) / +1203/-18 (net +1185); гейт без lock — 16 файлов, 1175 строк |
-| commits | 19 — с коммитом этого отчёта |
+| commits | 23 — с вердиктом и подписью проверяющего, двумя слияниями main и коммитом сдачи |
 | time_to_accepted_spec | 0.0h — спеку подписал владелец до открытия ветки (08:59Z) |
-| rework_after_done | 0 (handoff not declared yet) |
+| rework_after_done | 0 |
 | harness_hardened | yes — расчёт контраста `frontend/src/test/contrast.ts`; тест темы с таблицей ролей Mantine целиком; оракул сборки: фон и цвет текста схем (F12), наборы знаков шрифта (F6) |
 | implement_retries | 4 — по журналу сессии: `?raw` у Vitest пустой (срез 1); типы кортежей в `cssVariablesResolver` — дважды; предупреждение линтера о длине блока тестов |
 | verify_fails_before_green | 2 — ранняя приёмка проверяющего: на `5cd724a` две находки по цветам библиотеки и 5 выживших порч из 31; на `1e8e676` 2 выживших из 41 (P7, P8); закрыто до сдачи |
@@ -561,7 +561,8 @@ asserts_without_example: 3
 
 MANUAL-поля заполняет агент/человек на handoff. Если `verify_fails_before_green >= 2` при `harness_hardened: no` — по §9.2 добавь oracle/breaker/hook в этой же поставке.
 
-**Убрано (CONSTITUTION, п. 10):** клоны сверки и порч — удалены после прогона; временные профили
-Chrome и сервер `vite preview` — сняты. Клоны опытов исполнителя во временной папке, вне
-репозитория, — после вердикта. После слияния — рабочая копия `.claude/worktrees/ch1-04b` и
-ветка `ch1-04b-front-theme`.
+**Убрано (CONSTITUTION, п. 10):** клоны сверки, порч и опытов исполнителя — удалены после
+прогонов; временные профили Chrome и сервер `vite preview` — сняты; черновые файлы исполнителя во
+временной папке — выводы прогонов, копии lock, патчи и скрипты среза: их итоги — в этом отчёте.
+Снимки — в `docs/deliveries/ch1-04b-shots/`, вне git. После слияния — рабочая копия
+`.claude/worktrees/ch1-04b` и ветка `ch1-04b-front-theme`.
