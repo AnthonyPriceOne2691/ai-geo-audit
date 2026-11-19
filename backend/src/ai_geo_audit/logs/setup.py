@@ -29,10 +29,16 @@ _secrets: set[str] = set()
 _MIN_SECRET_LEN = 6
 MASK = "***"
 #: Значения строки, которые Postgres сам кладёт в DETAIL ошибки: `Key (email)=(…)`,
-#: `Failing row contains (…)`. Имена колонок остаются — по ним ищут причину.
+#: `Failing row contains (…)`, исключающее ограничение. Имена колонок остаются — по ним ищут
+#: причину. Значение бывает с переводом строки и с «).» внутри: конец — «).» перед концом строки.
 _PG_VALUES = (
-    re.compile(r"(Key \([^)]*\)=\().*?(\) (?:already exists|is not present|is still ref))"),
-    re.compile(r"(Failing row contains \().*?(\)\.)"),
+    re.compile(
+        r"(Key \([^)]*\)=\().*?(\) (?:already exists|is not present|is still ref"
+        r"|conflicts with existing key))",
+        re.DOTALL,
+    ),
+    re.compile(r"(conflicts with existing key \([^)]*\)=\().*?(\)\.)(?=\n|$)", re.DOTALL),
+    re.compile(r"(Failing row contains \().*?(\)\.)(?=\n|$)", re.DOTALL),
 )
 
 #: Поля, которые `logging` кладёт в запись сам; всё прочее пришло из `extra`.
