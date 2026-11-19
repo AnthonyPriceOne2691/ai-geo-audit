@@ -22,6 +22,13 @@ React с Vite и Mantine, pytest, docker compose.
 - Миграции — только командой, не из работающего сервиса: `env.py` сам запускает цикл событий,
   и `command.upgrade` из работающего цикла падает с «asyncio.run() cannot be called from a
   running event loop».
+- Два `migrate` разом друг другу не мешают: прогон берёт замок миграций, второй ждёт первого не
+  дольше `MIGRATION_LOCK_WAIT_SECONDS` (120 с) и выходит с кодом 0. Дольше — отказ «миграции
+  уже идут». Ревизия ждёт чужую блокировку таблицы не дольше 10 с — отказ «таблицу держит
+  другая транзакция», база остаётся на прежней ревизии.
+- Кто держит замок миграций (ключ — `storage/locks.py`, `MIGRATIONS`):
+  `SELECT a.pid, a.application_name, a.xact_start FROM pg_locks l JOIN pg_stat_activity a
+  USING (pid) WHERE l.locktype = 'advisory' AND l.granted AND l.objid = 1001;`
 - Новая ревизия — `uv run alembic revision -m "что меняет" --rev-id 0002`: номер следующий по
   порядку, четыре цифры. Две ветки принесли один номер — перенумеровывает тот, кто сливает вторым;
   повтор и пропуск номера ловит тест цепочки.

@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import SecretStr
 
@@ -29,10 +29,16 @@ _secrets: set[str] = set()
 _MIN_SECRET_LEN = 6
 MASK = "***"
 #: Значения строки, которые Postgres сам кладёт в DETAIL ошибки: `Key (email)=(…)`,
-#: `Failing row contains (…)`. Имена колонок остаются — по ним ищут причину.
+#: `Failing row contains (…)`, исключающее ограничение. Имена колонок остаются — по ним ищут
+#: причину. Значение бывает с переводом строки и с «).» внутри: конец — «).» перед концом строки.
 _PG_VALUES = (
-    re.compile(r"(Key \([^)]*\)=\().*?(\) (?:already exists|is not present|is still ref))"),
-    re.compile(r"(Failing row contains \().*?(\)\.)"),
+    re.compile(
+        r"(Key \([^)]*\)=\().*?(\) (?:already exists|is not present|is still ref"
+        r"|conflicts with existing key))",
+        re.DOTALL,
+    ),
+    re.compile(r"(conflicts with existing key \([^)]*\)=\().*?(\)\.)(?=\n|$)", re.DOTALL),
+    re.compile(r"(Failing row contains \().*?(\)\.)(?=\n|$)", re.DOTALL),
 )
 
 #: Поля, которые `logging` кладёт в запись сам; всё прочее пришло из `extra`.
@@ -47,7 +53,8 @@ def register_secret(value: str) -> None:
 
 
 def register_config_secrets(*domains: config.Settings) -> None:
-    """Отметить секретные настройки доменов; у адреса базы — ещё и пароль отдельно."""
+    """Отметить секретные настройки доменов; у адресов — ещё и пароль отдельно, в записи и
+    раскодированный: `p%40ss` в адресе — это `p@ss` в тексте ошибки."""
     for settings in domains:
         for value in settings.__dict__.values():
             if isinstance(value, SecretStr):
@@ -55,6 +62,7 @@ def register_config_secrets(*domains: config.Settings) -> None:
                 register_secret(secret)
                 if "://" in secret and (password := urlsplit(secret).password):
                     register_secret(password)
+                    register_secret(unquote(password))
 
 
 def redact(text: str) -> str:

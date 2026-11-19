@@ -9,8 +9,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from urllib.parse import unquote, urlsplit
 
 from pydantic import SecretStr
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 from ai_geo_audit import config
 
@@ -18,6 +21,10 @@ from ai_geo_audit import config
 PLACEHOLDER = "CHANGE_ME"
 #: Секрет подписи короче 32 байт перебирается; `openssl rand -hex 32` даёт 64 знака.
 MIN_SECRET_BYTES = 32
+#: Пароль базы в бою — не короче, по знакам после раскодирования процентной записи (A21).
+MIN_DB_PASSWORD = 12
+#: Причина, когда драйвер и `urlsplit` читают адрес базы по-разному: без адреса и его кусков.
+UNENCODED_PASSWORD = "в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23"
 
 Process = Literal["api", "worker", "migrate"]
 
@@ -65,6 +72,40 @@ def _explicit(env_name: str, settings: config.Settings, field: str) -> Problem |
     return None
 
 
+def _decoded(part: str | None) -> str | None:
+    return None if part is None else unquote(part)
+
+
+def _read_by_both(url: str) -> tuple[object, ...] | None:
+    """Имя, пароль, хост, порт и база — как их прочтут драйвер и `urlsplit`; разошлись — None.
+    Хост — без регистра, имя, пароль и база — после раскодирования: иначе годный адрес с
+    заглавными в хосте или `%40` в имени получил бы ложный отказ."""
+    try:
+        driver, plain = make_url(url), urlsplit(url)
+        port = plain.port
+    except (ArgumentError, ValueError):
+        return None
+    by_driver = (driver.username, driver.password, (driver.host or "").lower(), driver.port)
+    by_split = (_decoded(plain.username), _decoded(plain.password), plain.hostname or "", port)
+    database = _decoded(plain.path.removeprefix("/")) or None
+    if (*by_driver, driver.database) != (*by_split, database):
+        return None
+    return (*by_driver, driver.database)
+
+
+def _database(storage: config.StorageSettings) -> Problem | None:
+    """Адрес базы в бою: задан явно, без заглушки, читается одинаково, пароль не короче 12."""
+    if problem := _explicit("DATABASE_URL", storage, "database_url"):
+        return problem
+    parts = _read_by_both(storage.database_url.get_secret_value())
+    if parts is None:
+        return Problem("DATABASE_URL", UNENCODED_PASSWORD)
+    password = parts[1] if isinstance(parts[1], str) else ""
+    if len(password) < MIN_DB_PASSWORD:
+        return Problem("DATABASE_URL", f"пароль базы короче {MIN_DB_PASSWORD} знаков")
+    return None
+
+
 def _master_key(path: str) -> Problem | None:
     purpose = "мастер-ключ шифрования ключей сервисов"
     if missing := _missing("KEYS_MASTER_KEY_FILE", path, purpose):
@@ -88,7 +129,7 @@ def problems(
     storage = storage or config.storage
     secret = (access or config.access).jwt_secret.get_secret_value()
     checks = {
-        "DATABASE_URL": _explicit("DATABASE_URL", storage, "database_url"),
+        "DATABASE_URL": _database(storage),
         "REDIS_URL": _explicit("REDIS_URL", storage, "redis_url"),
         "JWT_SECRET": _secret("JWT_SECRET", secret, "подпись пропусков: openssl rand -hex 32"),
         "KEYS_MASTER_KEY_FILE": _master_key((keys or config.keys).master_key_file),

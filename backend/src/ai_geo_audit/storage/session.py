@@ -5,15 +5,25 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, SessionTransaction
 
 from ai_geo_audit.storage.engine import get_engine
 
 
 class AbortedTransactionError(RuntimeError):
     """Ошибку базы поймали без `step()`: транзакция сорвана, записанное в ней не сохранено."""
+
+
+class ConnectionLostError(RuntimeError):
+    """Соединение с базой потеряно до фиксации: записанное в сессии не сохранено."""
+
+
+def _took_connection(session: Session, _: SessionTransaction, __: Connection) -> None:
+    session.info["took_connection"] = True
 
 
 @asynccontextmanager
@@ -24,6 +34,7 @@ async def session_scope(engine: AsyncEngine | None = None) -> AsyncIterator[Asyn
     """
     maker = async_sessionmaker(engine or get_engine(), expire_on_commit=False)
     async with maker() as session:
+        event.listen(session.sync_session, "after_begin", _took_connection)
         try:
             yield session
             await _still_alive(session)
@@ -49,13 +60,21 @@ async def step(session: AsyncSession) -> AsyncIterator[None]:
 async def _still_alive(session: AsyncSession) -> None:
     """На COMMIT сорванной транзакции Postgres отвечает откатом без ошибки — проверяем до него.
 
-    Сорванная — только `25P02`; другая ошибка базы на выходе уходит как есть: объект не лёг на
-    уникальности — `IntegrityError`, соединение потеряно — ошибка соединения.
+    Сессия, не взявшая соединения, базу не трогает (A28): признак — событие `after_begin`, а не
+    `in_transaction()`, который истинен и без соединения. Сорванная — только `25P02`; обрыв
+    узнаётся по `connection_invalidated`, а не по типу ошибки драйвера (A29); другая ошибка
+    базы уходит как есть: объект не лёг на уникальности — `IntegrityError`.
     """
     try:
         await session.flush()
+        if not session.info.get("took_connection"):
+            return
         await session.execute(text("SELECT 1"))
     except DBAPIError as exc:
+        if exc.connection_invalidated:
+            raise ConnectionLostError(
+                "соединение с базой потеряно до фиксации: записанное в сессии не сохранено"
+            ) from exc
         if getattr(exc.orig, "sqlstate", None) != "25P02":  # транзакция сорвана
             raise
         raise AbortedTransactionError(

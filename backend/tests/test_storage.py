@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import traceback
 
 import asyncpg
 import dbtools
 import pytest
 from dbtools import probe
-from sqlalchemy import func, insert, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import event, func, insert, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ai_geo_audit import config, storage
@@ -239,3 +240,162 @@ def test_a11_process_engine_refuses_a_foreign_loop() -> None:
     asyncio.run(take())
     with pytest.raises(storage.ForeignLoopError, match="в задаче воркера бери движок задачи"):
         asyncio.run(take())
+
+
+KILL = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = :n"
+
+
+async def _connections(name: str, expect: int) -> int:
+    """Соединения с подписью `name`; ждать появления `expect` не дольше 5 с."""
+    count = "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1"
+    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
+    try:
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(5):
+                while await conn.fetchval(count, name) < expect:
+                    await asyncio.sleep(0.05)
+        return await conn.fetchval(count, name)
+    finally:
+        await conn.close()
+
+
+async def test_a11_worker_pool_comes_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A11: процесс `worker`, `DB_POOL_SIZE=3` и `DB_MAX_OVERFLOW=4`; десять сессий разом просят
+    соединение — в `pg_stat_activity` ровно 7 соединений `ai-geo-audit:worker`, три сессии ждут.
+    Пул в одно соединение или без запаса дал бы другое число."""
+    monkeypatch.setenv("DB_POOL_SIZE", "3")
+    monkeypatch.setenv("DB_MAX_OVERFLOW", "4")
+    monkeypatch.setattr(config, "storage", config.StorageSettings(database_url=dbtools.own_url()))
+    engine = storage.get_engine("worker")
+    release, holding = asyncio.Event(), []
+
+    async def hold() -> None:
+        async with session_scope(engine) as s:
+            await s.execute(select(1))
+            holding.append(1)
+            await release.wait()
+
+    tasks = [asyncio.create_task(hold()) for _ in range(10)]
+    try:
+        seen = await _connections("ai-geo-audit:worker", expect=7)
+        await asyncio.sleep(0.3)
+        assert (seen, len(holding)) == (7, 7)
+        assert await _connections("ai-geo-audit:worker", expect=7) == 7
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*tasks), timeout=10)
+    assert len(holding) == 10
+
+
+def _sent(engine: AsyncEngine) -> list[str]:
+    """Команды, реально ушедшие на сервер через этот движок, — а не признак сессии."""
+    sent: list[str] = []
+    event.listen(engine.sync_engine, "before_cursor_execute", lambda *a: sent.append(a[2]))
+    return sent
+
+
+async def test_a24_objects_stay_readable_after_the_scope(committed: AsyncEngine) -> None:
+    """A24: объект, записанный в `session_scope`, после выхода читается без нового запроса к
+    базе: объекты после фиксации не устаревают (порча `expire_on_commit=True` из ревью Ч1.2а)."""
+    async with session_scope(committed) as s:
+        row = dbtools.Probe("a24-row", amount=24)
+        s.add(row)
+    sent = _sent(committed)
+    assert (row.key, row.amount) == ("a24-row", 24)
+    assert sent == []
+
+
+@pytest.mark.parametrize(("echo", "logged"), [(False, False), (True, True)])
+async def test_a25_query_text_is_logged_only_by_the_setting(
+    capsys: pytest.CaptureFixture[str], echo: bool, logged: bool
+) -> None:
+    """A25: `DB_ECHO_SQL` не задан — текста запросов в журнале нет (порча «журнал запросов
+    включён всегда» из ревью Ч1.2а); `true` — текст есть: настройка не игнорируется."""
+    logs.setup_logging(fmt="text")
+    quiet = storage.build_engine(
+        "a25", url=dbtools.own_url(), storage=config.StorageSettings(echo_sql=echo)
+    )
+    try:
+        async with session_scope(quiet) as s:
+            await s.execute(text("SELECT 25 AS a25_marker"))
+    finally:
+        await quiet.dispose()
+        logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.NOTSET)
+    assert ("a25_marker" in capsys.readouterr().err) is logged
+
+
+@pytest.mark.usefixtures("on_test_db")
+async def test_a27_task_engine_survives_a_killed_connection(engine: AsyncEngine) -> None:
+    """A27: соединение движка задачи убито базой посреди задачи — следующая сессия той же задачи
+    работает: проверка соединения действует и у движка задачи (порча П4 из ревью Ч1.2а)."""
+    async with storage.task_engine("a27-task") as task:
+        async with session_scope(task) as s:
+            await s.execute(select(1))
+        async with engine.connect() as conn:
+            killed = await conn.execute(text(KILL), {"n": "ai-geo-audit:a27-task"})
+            assert killed.scalars().all() == [True]
+        async with session_scope(task) as s:
+            assert (await s.execute(select(1))).scalar_one() == 1
+
+
+async def test_a28_empty_session_sends_nothing(engine: AsyncEngine) -> None:
+    """A28: сессия без единой команды на выходе — на сервер не ушло ни одной команды: тест считает
+    отправленные (`before_cursor_execute`), а не верит признаку сессии; соединение не взято."""
+    sent, opened = _sent(engine), []
+    event.listen(engine.sync_engine, "engine_connect", lambda conn: opened.append(conn))
+    async with session_scope(engine):
+        pass
+    assert (sent, opened) == ([], [])
+
+
+async def test_a29_killed_connection_is_named_as_lost(engine: AsyncEngine) -> None:
+    """A29: соединение убито базой (`pg_terminate_backend`), пока сессия простаивает в транзакции,
+    — на выходе `ConnectionLostError`, а не «ошибку базы поймали без step()»."""
+    with pytest.raises(storage.ConnectionLostError) as lost:
+        async with session_scope(engine) as s:
+            pid = (await s.execute(text("SELECT pg_backend_pid()"))).scalar_one()
+            killer = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
+            try:
+                await killer.execute("SELECT pg_terminate_backend($1)", pid)
+            finally:
+                await killer.close()
+    assert str(lost.value).startswith("соединение с базой потеряно до фиксации")
+    assert lost.value.__cause__ is not None and "ошибку базы поймали" not in str(lost.value)
+
+
+#: Ошибки класса данных, где значение стоит в самом сообщении: запрос, значение, что остаётся.
+DATA_ERRORS = [
+    ("CAST(CAST(:x AS text) AS integer)", "tainiy-znak-7781", "invalid input syntax for type"),
+    ("CAST(CAST(:x AS text) AS integer)", "99999999999", "is out of range for type integer"),
+    ("CAST(CAST(:x AS text) AS date)", "2026-13-45", "date/time field value out of range"),
+    ("CAST(CAST(:x AS text) AS uuid)", "secret-not-uuid", "invalid input syntax for type uuid"),
+    ("CAST(CAST(:x AS text) AS boolean)", "secret-maybe", "invalid input syntax for type"),
+    ("CAST(CAST(:x AS text) AS timestamptz)", "secret-time", "invalid input syntax for type"),
+    ("CAST(:x AS integer)", "tainiy-znak-7781", "invalid input for query argument $1"),
+    ("CAST(:x AS uuid)", "abc-secret-77", "invalid input for query argument $1"),
+    ("CAST(:x AS date)", 1234567, "invalid input for query argument $1"),
+]
+
+
+@pytest.mark.parametrize(("expr", "value", "kept"), DATA_ERRORS)
+async def test_a26_data_class_errors_lose_their_values(
+    engine: AsyncEngine,
+    capsys: pytest.CaptureFixture[str],
+    expr: str,
+    value: object,
+    kept: str,
+) -> None:
+    """A26: ошибки класса данных (SQLSTATE 22…), где значение стоит в самом сообщении: двойное
+    приведение на сервере и отказ драйвера — значения нет ни в цепочке исключений, ни в журнале
+    обоих форматов, а вид ошибки и тип колонки или номер аргумента остались."""
+    with pytest.raises(DBAPIError) as caught:
+        async with session_scope(engine) as s:
+            await s.execute(text(f"SELECT {expr}"), {"x": value})
+    chain = "".join(traceback.format_exception(caught.value))
+    assert str(value) not in chain
+    assert kept in chain
+    for fmt in ("json", "text"):
+        logs.setup_logging(fmt=fmt)
+        logging.getLogger("x").error("сбой", exc_info=caught.value)
+        out = capsys.readouterr().err
+        assert str(value) not in out and kept in out

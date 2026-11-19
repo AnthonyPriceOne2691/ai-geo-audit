@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import quote
 
+import dbtools
 import pytest
 
 from ai_geo_audit import config
@@ -100,3 +102,88 @@ def test_outside_prod_checks_are_silent(monkeypatch: pytest.MonkeyPatch, env: st
     """A1: разработка и тесты стартуют без единой настройки."""
     monkeypatch.setenv("APP_ENV", env)
     assert sc.problems("api", app=config.AppSettings()) == []
+
+
+UNENCODED = ["pa@ss-word-123456", "pa#ss-word-123456", "pa?ss-word-123456", "pa/ss-word-123456"]
+PROCESSES: list[sc.Process] = ["api", "worker", "migrate"]
+
+
+def db(password: str | None, rest: str = "db:5432/audit", user: str = "audit") -> str:
+    auth = user if password is None else f"{user}:{password}"
+    return f"postgresql+asyncpg://{auth}@{rest}"
+
+
+@pytest.mark.parametrize("password", UNENCODED)
+@pytest.mark.parametrize("process", PROCESSES)
+def test_a21_unencoded_sign_in_the_db_password_is_refused(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process, password: str
+) -> None:
+    """A21: в бою в пароле базы не закодирован `@`, `#`, `?` или `/` — `api`, `worker` и `migrate`
+    не стартуют со своей причиной, а не «короче 12»; ни адреса, ни куска пароля в отказе нет."""
+    found = prod(monkeypatch, process, **full_env(master_key) | {"DATABASE_URL": db(password)})
+    assert found == [sc.Problem("DATABASE_URL", sc.UNENCODED_PASSWORD)]
+    assert "ss-word" not in sc.UNENCODED_PASSWORD and "audit" not in sc.UNENCODED_PASSWORD
+
+
+GOOD = [
+    db("pass-word-123456", "DB.Internal:5432/audit"),
+    db("pass-word-123456", "[::1]:5432/audit"),
+    db("pass-word-123456", "db/audit"),
+    db("pass-word-123456", "db:5432/audit?ssl=require"),
+    db("pa%40ss-word-123456"),
+    db("pass-word-123456", "db:5432/au%2Fdit", user="au%40dit"),
+    db(quote("пароль-длин1")),
+]
+
+
+@pytest.mark.parametrize("url", GOOD)
+def test_a21_good_db_urls_pass_both_parsers(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    """A21: годные адреса — заглавные в имени хоста, IPv6 в скобках, без порта, параметры после
+    «?», `%40` в пароле, имя и база в процентной записи, пароль кириллицей в 12 знаков — старт:
+    сверка двух разборщиков не даёт ложного отказа."""
+    assert prod(monkeypatch, "migrate", DATABASE_URL=url) == []
+
+
+SHORT = sc.Problem("DATABASE_URL", f"пароль базы короче {sc.MIN_DB_PASSWORD} знаков")
+
+
+@pytest.mark.parametrize("process", PROCESSES)
+def test_a21_db_password_of_11_signs_is_refused_and_12_starts(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process
+) -> None:
+    """A21: в бою пароль базы 11 знаков — `api`, `worker` и `migrate` не стартуют с причиной
+    «пароль базы короче 12 знаков»; 12 — старт."""
+    env = full_env(master_key)
+    assert prod(monkeypatch, process, **env | {"DATABASE_URL": db("a" * 11)}) == [SHORT]
+    assert prod(monkeypatch, process, **env | {"DATABASE_URL": db("a" * 12)}) == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        db("ab%40cdefghij"),
+        db(quote("пароль-длин")),
+        db(None),
+        "postgresql+asyncpg://audit:audit@localhost:5462/audit",
+    ],
+    ids=["percent-13-is-11", "cyrillic-11-is-22-bytes", "no-password", "dev-compose-password"],
+)
+def test_a21_short_db_passwords_are_counted_after_decoding(
+    monkeypatch: pytest.MonkeyPatch, url: str
+) -> None:
+    """A21: длина — по знакам после раскодирования: `ab%40cdefghij` (13 в записи, 11 знаков),
+    кириллица из 11 знаков (22 байта), адрес без пароля и публичный пароль разработки из
+    `docker-compose.dev.yml` — отказ «короче 12»."""
+    assert prod(monkeypatch, "migrate", DATABASE_URL=url) == [SHORT]
+
+
+def test_a21_migrate_refuses_an_unencoded_password_without_printing_it() -> None:
+    """A21: процесс `migrate` в бою с паролем `pa@ss-word-123456` — код не 0, причина словами, без
+    трассировки: слова причины стоят и в последней строке трассировки (порча E10 проверяющего);
+    ни куска пароля в журнале нет."""
+    url = db("pa@ss-word-123456", f"127.0.0.1:5462/{dbtools.own_name()}")
+    run = dbtools.alembic("upgrade", "head", extra={"APP_ENV": "prod", "DATABASE_URL": url})
+    assert run.returncode != 0
+    assert sc.UNENCODED_PASSWORD in run.stderr
+    assert "Traceback" not in run.stderr, run.stderr[-1500:]
+    assert "ss-word-123456" not in run.stderr

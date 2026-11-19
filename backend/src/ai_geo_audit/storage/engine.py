@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+import re
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import event
@@ -37,9 +38,9 @@ def build_engine(
 ) -> AsyncEngine:
     """Движок сервиса: имя `<сервис>:<name>` в `pg_stat_activity`, пояс UTC, проверка соединения
     перед выдачей. Параметры запроса в ошибках и журнале не печатаются, значения строки из DETAIL
-    ошибок Postgres вырезаются. Предел: в ошибке данных значение стоит в самом сообщении сервера
-    или драйвера (`invalid input …`) и пока не прячется — Ч1.2в. `DB_ECHO_SQL` пишет запросы через
-    общий журнал. `pool_size=0` — без пула: соединение на каждую сессию.
+    ошибок Postgres вырезаются, у ошибок класса данных — и значения в самом сообщении (A26).
+    `DB_ECHO_SQL` пишет запросы через общий журнал. `pool_size=0` — без пула: соединение на каждую
+    сессию.
     """
     storage = storage or config.storage
     if storage.echo_sql:
@@ -60,11 +61,41 @@ def build_engine(
     return engine
 
 
+#: Значение в сообщении ошибки класса данных: в кавычках — у сервера и в причине у драйвера;
+#: без кавычек — `repr` аргумента у драйвера (число, дата) между номером и скобкой причины.
+_QUOTED = (re.compile(r'"[^"]*"'), re.compile(r"'[^']*'"))
+_ARGUMENT = re.compile(r"(invalid input for query argument \$\d+: ).*?( \()")
+
+
+def _cut_values(text: str) -> str:
+    text = _ARGUMENT.sub(r"\g<1>***\g<2>", text)
+    return _QUOTED[1].sub("'***'", _QUOTED[0].sub('"***"', text))
+
+
+def _chain(error: BaseException | None) -> Iterator[BaseException]:
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        yield error
+        error = error.__cause__ or error.__context__
+
+
 def _without_row_values(context: ExceptionContext) -> None:
-    """Значения строки из DETAIL ошибки Postgres — не в текст исключений; `constraint_name` цел."""
+    """Значения строки — не в текст исключений: DETAIL ошибки Postgres снимается,
+    `constraint_name` цел. У ошибки класса данных (SQLSTATE 22…) значение стоит в самом
+    сообщении сервера или драйвера: по всей цепочке вырезается всё в кавычках и значение
+    аргумента, вид ошибки и тип или номер аргумента остаются."""
     error = context.original_exception.__cause__
     if getattr(error, "detail", None):
         error.detail = None  # type: ignore[union-attr]
+    if not str(getattr(context.original_exception, "sqlstate", "") or "").startswith("22"):
+        return
+    for exc in (context.sqlalchemy_exception, *_chain(context.original_exception)):
+        if exc is None:
+            continue
+        exc.args = tuple(_cut_values(a) if isinstance(a, str) else a for a in exc.args)
+        if isinstance(getattr(exc, "message", None), str):
+            exc.message = _cut_values(exc.message)  # type: ignore[attr-defined]
 
 
 def get_engine(process: str = "api") -> AsyncEngine:

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import re
+import typing
+from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 
 from ai_geo_audit import config
 from ai_geo_audit.config.startup_checks import PLACEHOLDER
@@ -15,11 +18,11 @@ ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
 
 
 def test_a1_dev_works_out_of_the_box() -> None:
-    """A1: без `.env` и переменных — рабочий набор разработчика."""
+    """A1: без `.env` и переменных — рабочий набор разработчика; адрес Redis — секрет (A21)."""
     storage = config.StorageSettings()
     assert config.AppSettings().env == "dev"
     assert storage.database_url.get_secret_value().startswith("postgresql+asyncpg://")
-    assert storage.redis_url == "redis://localhost:6379/0"
+    assert storage.redis_url.get_secret_value() == "redis://localhost:6379/0"
     assert config.AccessSettings().jwt_ttl_hours == 12
     assert config.LogSettings().format == "text"
 
@@ -34,6 +37,8 @@ CASES = [
     ("DB_POOL_SIZE", "7", config.StorageSettings, "pool_size", 7),
     ("DB_MAX_OVERFLOW", "0", config.StorageSettings, "max_overflow", 0),
     ("DB_TASK_POOL_SIZE", "3", config.StorageSettings, "task_pool_size", 3),
+    ("MIGRATION_LOCK_WAIT_SECONDS", "300", config.StorageSettings, "migration_lock_wait_seconds",
+     300),
     ("JWT_SECRET", "s" * 40, config.AccessSettings, "jwt_secret", None),
     ("JWT_TTL_HOURS", "24", config.AccessSettings, "jwt_ttl_hours", 24),
     ("JWT_ALGORITHM", "HS256", config.AccessSettings, "jwt_algorithm", "HS256"),
@@ -86,18 +91,76 @@ def test_a8_env_example_lists_every_setting_and_nothing_else() -> None:
     assert sorted(_example()) == config.env_names()
 
 
+#: Имя переменной, по которому настройка — секрет, как бы её ни объявили.
+SECRET_NAME = re.compile(r"_(KEY|SECRET|PASSWORD|TOKEN|LOGIN|DSN)$")
+
+
+def _is_secret(annotation: object) -> bool:
+    """`SecretStr` и `SecretStr | None`: необязательный секрет — тоже секрет."""
+    return annotation is SecretStr or SecretStr in typing.get_args(annotation)
+
+
+def _placeholder(value: str) -> bool:
+    """Заглушка — метка `CHANGE_ME`; у секрета-адреса — сам пароль внутри адреса."""
+    if "://" in value:
+        return urlsplit(value).password == PLACEHOLDER
+    return value.startswith(PLACEHOLDER)
+
+
+def sample_problems(
+    example: dict[str, str], domains: Iterable[type[config.Settings]]
+) -> tuple[list[str], int]:
+    """Что не так с секретами образца, и сколько переменных просмотрено."""
+    problems: list[str] = []
+    checked = 0
+    for domain in domains:
+        for field in domain.model_fields.values():
+            name, checked = str(field.validation_alias), checked + 1
+            secret = _is_secret(field.annotation)
+            if SECRET_NAME.search(name) and not secret:
+                problems.append(f"{name}: имя секрета, а тип не SecretStr — его напечатает repr")
+            if secret and not _placeholder(example.get(name, "")):
+                problems.append(f"{name}: в образце не заглушка {PLACEHOLDER}")
+    return problems, checked
+
+
 def test_a8_secrets_in_env_example_are_placeholders() -> None:
-    """A8: секреты и путь к мастер-ключу в примере — заглушки, которые бой отвергает."""
-    secrets = [
-        str(f.validation_alias)
-        for d in config.DOMAINS
-        for f in d.model_fields.values()
-        if f.annotation is SecretStr
-    ]
-    assert secrets, "секретных настроек нет — тест ничего не проверил бы"
-    example = _example()
-    for name in [*secrets, "KEYS_MASTER_KEY_FILE"]:
-        assert PLACEHOLDER in example[name], name
+    """A8: секреты и путь к мастер-ключу в образце — заглушки, которые бой отвергает; у адресов
+    базы и Redis заглушка стоит на месте пароля. Число просмотренных переменных — в выводе."""
+    problems, checked = sample_problems(_example(), config.DOMAINS)
+    print(f"A8: просмотрено переменных: {checked}")
+    assert checked == len(config.env_names())
+    assert problems == []
+    assert PLACEHOLDER in _example()["KEYS_MASTER_KEY_FILE"]
+
+
+class _Probe(config.Settings):
+    """Подставные настройки: необязательный секрет, секрет-адрес и имя секрета без типа."""
+
+    token: SecretStr | None = Field(None, validation_alias="PROBE_TOKEN")
+    url: SecretStr = Field(SecretStr(""), validation_alias="PROBE_URL")
+    api_token: str = Field("", validation_alias="PROBE_API_TOKEN")
+
+
+def test_a8_optional_secret_and_real_password_in_a_secret_url_are_caught() -> None:
+    """A8: у необязательного секрета в образце не заглушка; у секрета-адреса настоящий пароль, а
+    метка `CHANGE_ME` стоит в другом месте адреса — оба случая красные."""
+    example = {
+        "PROBE_TOKEN": "tok-looks-real-123",
+        "PROBE_URL": "redis://:real-pass-123456@localhost:6379/CHANGE_ME",
+        "PROBE_API_TOKEN": PLACEHOLDER,
+    }
+    problems, checked = sample_problems(example, [_Probe])
+    assert checked == 3
+    assert "PROBE_TOKEN: в образце не заглушка CHANGE_ME" in problems
+    assert "PROBE_URL: в образце не заглушка CHANGE_ME" in problems
+
+
+def test_a8_setting_named_as_a_secret_must_be_secret_str() -> None:
+    """A8: настройка с именем секрета (`…_TOKEN`) объявлена не `SecretStr` — красный сам по себе,
+    даже с заглушкой в образце: такую настройку печатает `repr`."""
+    problems, _ = sample_problems({"PROBE_API_TOKEN": PLACEHOLDER}, [_Probe])
+    assert "PROBE_API_TOKEN: имя секрета, а тип не SecretStr — его напечатает repr" in problems
 
 
 COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.dev.yml"
