@@ -110,8 +110,8 @@ asserts_without_example: 0
 
 ## Исполнение рисковых путей
 
-`backend/src/ai_geo_audit/api/` — живой сервер. Прогон S3 в том же клоне на `b398e2f`, в
-2026-11-19T13:33:57Z: сервер разработки `python -m ai_geo_audit.api`, затем `SIGTERM`. Вывод
+`backend/src/ai_geo_audit/api/` — живой сервер. Прогон S3 в том же клоне на `b398e2f`,
+at=2026-11-19T13:33:57Z: сервер разработки `python -m ai_geo_audit.api`, затем `SIGTERM`. Вывод
 дословный:
 
 ```
