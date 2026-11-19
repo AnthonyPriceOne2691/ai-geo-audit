@@ -9,71 +9,279 @@
 ## Прогон в чистом клоне
 
 Локальные гейты обходятся, поэтому доказательство — прогон на склонированном состоянии (§10.4).
-База диффа — `origin/main` клона (`2bdf4d9`, поставка Ч1.2в). Вершина — слияние main в ветку
-`1e8e676`; дерево `frontend/` на нём равно дереву до слияния (`7e15ed7`).
+База диффа — `origin/main` клона (`2bdf4d9`, поставка Ч1.2в).
 
-Прогон на `1e8e676` вёл субагент исполнителя, с 2026-11-19T11:53:25Z по 12:03:14Z. Клон лежал
-во временной папке, команды в нём шли подоболочкой (L20), после прогона клон удалён.
+Итоговый прогон — на `0942eed`, моим прогоном с 2026-11-19T12:15:03Z по 12:19:08Z. Клон лежал во
+временной папке, команды в нём шли подоболочкой (L20), после прогона клон удалён. Вывод ниже —
+дословный, только путь клона заменён на `<клон>`.
 
 ```
 $ git clone -b ch1-04b-front-theme <репозиторий> <клон> && cd <клон>
-$ git log --format='%h %p' -1 && git merge-base HEAD origin/main
-1e8e676 7e15ed7 2bdf4d9
+$ git log --format='%h %p %s' -3 && git merge-base HEAD origin/main && git diff --stat 1e8e676 HEAD
+0942eed 828d1b7 docs(delivery): Ч1.4б — фаза verify, отчёт сверки, цена двух решений
+828d1b7 1e8e676 test(frontend): Ч1.4б — радио и контурный флажок в тесте темы F11
+1e8e676 7e15ed7 2bdf4d9 merge: main (Ч1.2в) в ветку Ч1.4б перед вердиктом
 2bdf4d968c5dad788b6c0bfc4ae2e97296f25a9a
-$ git diff --stat 7e15ed7 HEAD -- frontend/
-(пусто)
-$ python3 scripts/delivery_check.py --diff-base origin/main
-breakers: files=16 net_loc=1168 (+1186/-18), excluded=9 (…), limits={'max_files_touched': 25, 'max_loc_diff': 1200, 'max_runtime_paths': 1, 'max_unsigned_irreversible': 0}
+ delivery/active/STATUS.md         |  13 +-
+ delivery/active/decisions.md      |   8 +-
+ delivery/active/eval-smoke.md     |   7 +-
+ delivery/active/tasks.md          |   6 +-
+ delivery/active/verify-report.md  | 273 ++++++++++++++++++++++++++++++++++++++
+ frontend/src/theme/theme.test.tsx |   9 +-
+ 6 files changed, 301 insertions(+), 15 deletions(-)
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+breakers: files=16 net_loc=1175 (+1193/-18), excluded=10 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scripts/delivery_|scripts/okf_|.claude/|docs/canon/|.pre-commit-config.yaml|.github/workflows/|.gitlab-ci.yml|scripts/check_irreversible_signature.sh|scripts/sign_irreversible.sh|stack_selftest.py|selftest_sizes.py|extract_payload.py|scripts/stack_selftest.py|scripts/selftest_sizes.py|scripts/extract_payload.py|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lockb|poetry.lock|uv.lock|Pipfile.lock|Cargo.lock|go.sum|Gemfile.lock|composer.lock|Podfile.lock), limits={'max_files_touched': 25, 'max_loc_diff': 1200, 'max_runtime_paths': 1, 'max_unsigned_irreversible': 0}
 наблюдение §13.1: поставок в архиве 6, окон со сроком 6, истекших без observed.md 0
-WARNING: acceptance-примеры без ссылки в тестах/eval-smoke: F13, F19 (§3.1d) — …
-WARNING: class M: ни одного реляционного оракула с генератором входов (§6.5) — … `fc.property` (fast-check). …
+WARNING: class M: asserts_reviewed_by deferred — ещё никем не подписано (§2.2b); долг закрывается до handoff
+WARNING: acceptance-примеры без ссылки в тестах/eval-smoke: F13, F19 (§3.1d) — пометь тест id примера в комментарии или в начале докстринга; строка, целиком равная id, и %-код ссылкой не считаются
+WARNING: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given` (hypothesis); `fc.property` (fast-check). Отношение на фиксированном корпусе (паритет, метаморфное без генератора) сюда не идёт: входы в нём выбрал автор. Инвариант, round-trip, идемпотентность, метаморфное отношение или differential: в них нет ожидаемого значения, поэтому в них нельзя спрятать неверное ожидание. Один инвариант обычно ловит больше десяти тестов-значений, потому что раннер перебирает входы, о которых автор не думал. Проверь заодно, что mutation-гейт у тебя не пропускается: иначе слабое свойство (`assert result is not None`) пройдёт
 WARNING: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
-delivery_check: 0 error(s), 3 warning(s)
+delivery_check: 0 error(s), 4 warning(s)
 exit=0
-$ cd frontend && node --version && npm --version && npm ci && npm run check
+$ cd frontend && node --version && npm --version && npm ci && npm run check; echo "exit=$?"
 v24.12.0
 11.11.1
+npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated eslint@9.39.5: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
 added 409 packages, and audited 410 packages in 8s
+
+145 packages are looking for funding
+  run `npm fund` for details
+
 7 moderate severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues, run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+> ai-geo-audit-frontend@0.1.0 check
+> npm run lint && npm run format:check && npm run typecheck && npm test && npm run build && npm run check:dist
+
+
+> ai-geo-audit-frontend@0.1.0 lint
+> eslint .
+
+
+> ai-geo-audit-frontend@0.1.0 format:check
+> prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!
+
+> ai-geo-audit-frontend@0.1.0 typecheck
+> tsc --noEmit
+
+
+> ai-geo-audit-frontend@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.3 <клон>/frontend
+
+
  Test Files  4 passed (4)
       Tests  72 passed (72)
-✓ built in 737ms
+   Start at  15:15:16
+   Duration  1.41s (tests 51%, import 22%, environment 14%, setup 9%, transform 4%)
+
+
+> ai-geo-audit-frontend@0.1.0 build
+> vite build
+
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 755 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                              0.40 kB │ gzip:  0.27 kB
+dist/assets/geologica-cyrillic-wght-normal-DbeVG3Ps.woff2   16.43 kB
+dist/assets/geologica-latin-wght-normal-BBL8hQxZ.woff2      24.94 kB
+dist/assets/index-DZcS4GCz.css                             205.79 kB │ gzip: 30.75 kB
+dist/assets/index-dl4BN3-e.js                              314.26 kB │ gzip: 96.59 kB
+✓ built in 726ms
+
+> ai-geo-audit-frontend@0.1.0 check:dist
+> node scripts/check-dist.mjs
+
 проверено 5 файлов
 exit=0
 $ git status --porcelain | wc -l
-0
+       0
 ```
 
+- **Первый прогон** — на `1e8e676`, субагентом исполнителя, с 11:53:25Z по 12:03:14Z. Гейт — 0
+  ошибок и 3 предупреждения, 16 файлов, 1168 строк; цепочка — 72 теста, «проверено 5 файлов»;
+  на нём же сняты снимки и замерена ширина. Отчёта в том клоне ещё не было, а фаза в
+  `STATUS.md` была `implement`, поэтому проверок фазы verify гейт там не делал. После него —
+  правка теста по двум выжившим порчам проверяющего (`828d1b7`) и документы сверки (`0942eed`).
+  Сборка на `0942eed` дала те же имена файлов с хешем, что на `1e8e676`: `index-DZcS4GCz.css`,
+  `index-dl4BN3-e.js`, — страница та же.
+- **Гейт в рабочей копии до коммита документов** дал ещё два предупреждения §12.2a: у двух записей
+  `decisions.md` цена была без числа и без ссылки на код. Цена названа, на `0942eed` их нет.
+- **WARNING «asserts_reviewed_by deferred»** — подпись владельца под утверждениями просит и вносит
+  проверяющий после своего вердикта.
 - **WARNING «F13, F19 без ссылки»** — примеры среза 2. Они ушли по шву в поставку «Схема и цвета
   компонентов» с теми же номерами («Spec coverage gaps»).
 - **WARNING «реляционный оракул»** — долг на волну В1, как у прошлых поставок.
 - **WARNING «ci-oracles: weak»** — CI нет до волны В1. Вместо ссылки — этот прогон.
-- Этого отчёта в клоне ещё не было, а фаза в `STATUS.md` клона — ещё `implement`. Проверок фазы
-  verify прогон не видел: подписи под утверждениями и цены решений по §12.2a. Их видит гейт на
-  вершине с отчётом. В рабочей копии до коммита он дал два предупреждения §12.2a — у двух
-  записей `decisions.md` цена была без числа и без ссылки на код. Цена названа, после правки —
-  0 ошибок и 4 предупреждения: к трём выше добавилась отложенная подпись под утверждениями.
-- Тесты по файлам: оракул сборки — 33, тема — 24, инструменты — 10, заглушка — 5. Пропусков 0.
-  Линтер прошёл 12 файлов: 0 ошибок, 0 предупреждений.
-- Сборка — 5 файлов: `index.html`, JS, CSS и два файла шрифта (латиница 24,94 kB, кириллица
-  16,43 kB). `npm ci` предупреждает о снятых с поддержки `eslint` 9.39.5 и `whatwg-encoding`
-  3.1.1, как в Ч1.4а.
-- **Возраст версий** — `lock_age.py` по реестру npm: 457 пар lock (имён 442), моложе 14 суток
-  (раньше 2026-11-05T11:54:46Z) — 0.
-- **`npm audit`** — 7 находок средней тяжести, высокой и критической 0. В дереве без
-  dev-зависимостей — 0. Причина одна: GHSA-g3hv-75wg-m249, `minimatch` 10.2.6 внутри
-  `typescript-eslint` 8.70.0. Исправленный `typescript-eslint` 8.73.0 вышел 2026-11-16, правило
-  14 суток пустит его с 2026-11-30 — это срок решения проверяющего в Ч1.4а.
+- Тесты по файлам — оракул сборки 33, тема 24, инструменты 10, заглушка 5; пропусков 0. Правка
+  `828d1b7` добавила утверждения в тест темы, а не тесты.
+- Сборка — 5 файлов: `index.html`, JS, CSS и два файла шрифта. `npm ci` предупреждает о снятых с
+  поддержки `eslint` 9.39.5 и `whatwg-encoding` 3.1.1, как в Ч1.4а.
+
+### Возраст версий и `npm audit`
+
+Тот же клон, с 12:15:31Z по 12:19:08Z. Инструмент возраста — `docs/deliveries/front-tools/
+lock_age.py`, вне git; граница — 14 суток до прогона.
+
+```
+$ python3 -I lock_age.py <клон>/frontend/package-lock.json 2026-11-05T12:15:31Z
+сверено пар: 457, имён: 442, моложе 2026-11-05T12:15:31Z: 0
+exit=0
+$ cd frontend && npm audit; echo "exit=$?"
+# npm audit report
+
+minimatch  7.0.0 - 11.0.0
+Severity: moderate
+minimatch has potential denial of service via globparts amplification - https://github.com/advisories/GHSA-g3hv-75wg-m249
+fix available via `npm audit fix --force`
+Will install typescript-eslint@8.73.0, which is outside the stated dependency range
+node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch
+  @typescript-eslint/typescript-estree  6.16.0 - 8.72.2
+  Depends on vulnerable versions of minimatch
+  node_modules/@typescript-eslint/typescript-estree
+    @typescript-eslint/parser  6.16.0 - 8.72.2
+    Depends on vulnerable versions of @typescript-eslint/typescript-estree
+    node_modules/@typescript-eslint/parser
+      typescript-eslint  <=8.72.2
+      Depends on vulnerable versions of @typescript-eslint/eslint-plugin
+      Depends on vulnerable versions of @typescript-eslint/parser
+      Depends on vulnerable versions of @typescript-eslint/typescript-estree
+      Depends on vulnerable versions of @typescript-eslint/utils
+      node_modules/typescript-eslint
+    @typescript-eslint/type-utils  6.16.0 - 8.72.2
+    Depends on vulnerable versions of @typescript-eslint/typescript-estree
+    Depends on vulnerable versions of @typescript-eslint/utils
+    node_modules/@typescript-eslint/type-utils
+    @typescript-eslint/utils  6.16.0 - 8.72.2
+    Depends on vulnerable versions of @typescript-eslint/typescript-estree
+    node_modules/@typescript-eslint/utils
+      @typescript-eslint/eslint-plugin  6.16.0 - 8.72.2
+      Depends on vulnerable versions of @typescript-eslint/type-utils
+      Depends on vulnerable versions of @typescript-eslint/utils
+      node_modules/@typescript-eslint/eslint-plugin
+
+7 moderate severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues, run:
+  npm audit fix --force
+exit=1
+$ npm audit --omit=dev; echo "exit=$?"
+found 0 vulnerabilities
+exit=0
+```
+
+- **Возраст** — по реестру npm: из 457 пар lock (имён 442) моложе 14 суток — 0.
+- **`npm audit`** — 7 находок средней тяжести, высокой и критической 0; без dev-зависимостей — 0.
+  Причина одна: GHSA-g3hv-75wg-m249, `minimatch` 10.2.6 внутри `typescript-eslint` 8.70.0.
+  Исправленный `typescript-eslint` 8.73.0 вышел 2026-11-16, правило 14 суток пустит его с
+  2026-11-30 — это срок решения проверяющего в Ч1.4а.
 
 ## Дайджест утверждений
 
 `assert_digest.sh` взят из полезной нагрузки канона, положен в клон и после прогона убран (CQG в
 репозитории ещё нет). Маски тестов — `*test*.ts *test*.tsx *test*.mjs` (L25). База —
-`origin/main`.
+`origin/main`. Прогон на `0942eed`, 2026-11-19T12:15:31Z, вывод — дословно:
 
-Прогон на `1e8e676`, 2026-11-19T11:57:08Z.
-- Новых и изменённых утверждений — 50, без ссылки на пример этой спеки — 3.
-- По примерам: F11 — 19, F15 — 15, F20 — 6, F10 — 3, F14 — 3, F18 — 1.
+````text
+$ BASE=origin/main LINT_TEST_GLOB="*test*.ts *test*.tsx *test*.mjs" bash scripts/lint/assert_digest.sh; echo "exit=$?"
+## Assertion digest (ревью ожиданий, не кода)
+
+База: `origin/main` · сгенерировано `assert_digest.sh`
+
+Новых/изменённых утверждений: **52**, из них без ссылки на пример спеки:
+**3**. Вопрос к каждому непривязанному один: **откуда взято ожидаемое
+значение — из спеки или придумано под реализацию?**
+
+```
+-	expect(out.trim()).toBe('проверено 7 файлов');
+-	expect(screen.getByText('Сейчас здесь проверка сборки и образцы вида')).toBeInTheDocument();
+-	expect(document.body.textContent).not.toMatch(/скоро/i);
+F20	expect(paper, 'заголовок образцов не на карточке').not.toBeNull();
+F20	expect(card.getByText(samples.text).style.color).toBe('');
+F20	expect(card.getByText(samples.muted).style.color).toBe('var(--mantine-color-dimmed)');
+F20	expect(link.getAttribute('href')).toBe(`#${screen.getByRole('table').id}`);
+F20	expect(statuses).toEqual([
+F20	expect(cells.map((cell) => cell.style.textAlign)).toEqual(Array(12).fill('center'));
+F10	expect(textColorVar('Проверено страниц')).toBe('currentColor');
+F10	expect(textColorVar('Отказ')).toBe(cssVar('crit'));
+F10	expect(screen.getByText('Подпись колонки').style.color).toBe('var(--mantine-color-dimmed)');
+F11	expect(Object.keys(colors.light)).toHaveLength(20);
+F11	expect(Object.keys(colors.dark).sort()).toEqual(Object.keys(colors.light).sort());
+F11	expect(PAIRS).toHaveLength(29);
+F11	expect(unknown).toEqual([]);
+F11	expect(low).toEqual([]);
+F11	expect(outside.map(([role, value]) => `${role}: ${value}`)).toEqual([]);
+F11	expect(resolved[scheme], `схема ${scheme}`).toEqual(Object.fromEntries(want));
+F11	expect(Object.values(ROLE_TABLE).filter((role) => !(role in colors.light))).toEqual([]);
+F11	expect(low).toEqual([]);
+F11	expect(variantColorResolver(input('filled')).color).toBe(cssVar('onPrimary'));
+F11	expect(variantColorResolver(one)).toEqual(defaultVariantColorsResolver(one));
+F11	expect(button.style.getPropertyValue('--button-color')).toBe(cssVar('onPrimary'));
+F11	expect(viaTheme(read('.mantine-Checkbox-root', '--checkbox-color'))).toBe(cssVar('primary'));
+F11	expect(read('.mantine-Checkbox-root', '--checkbox-icon-color')).toBe(cssVar('onPrimary'));
+F11	expect(read('.mantine-Radio-root', '--radio-icon-color')).toBe(cssVar('onPrimary'));
+F11	expect((outline as HTMLElement).style.getPropertyValue('--checkbox-icon-color')).toBe('');
+F11	expect(viaTheme(read('.mantine-Tabs-root', '--tabs-color'))).toBe(cssVar('primary'));
+F11	expect(text).toContain(`--mantine-color-body: ${cssVar('surface')}`);
+F11	expect(text).toContain(`--mantine-color-${P}-filled: ${cssVar('primary')}`);
+F11	expect(roles).toContain('--mantine-primary-color-filled-hover');
+F11	expect(bare, `схема ${scheme}: роли Mantine без токена`).toEqual([]);
+F14	expect(seen.at(-1)).toEqual({});
+F14	expect(durations.length).toBeGreaterThan(0);
+F14	expect(after).toEqual(Object.fromEntries(durations.map((name) => [name, '0ms'])));
+F15	expect(durations.sort()).toEqual(['120ms', '180ms', '260ms']);
+F15	expect(curves.map(byValue)).toEqual([byValue('cubic-bezier(.2, .8, .2, 1)')]);
+F15	expect([root['--audit-radius-card'], root['--audit-radius-control']]).toEqual(['16px', '10px']);
+F15	expect(merged.radius[String(merged.defaultRadius)]).toBe(cssVar('radiusControl'));
+F15	expect(merged.radius[step]).toBe(cssVar('radiusCard'));
+F15	expect(steps).toEqual(new Set([cssVar('radiusCard'), cssVar('radiusControl')]));
+F15	expect(root['--audit-font']).toMatch(/^'Geologica Variable', /);
+F15	expect([merged.fontFamily, merged.headings.fontFamily]).toEqual([
+F15	expect(page['font-family']).toBe(cssVar('font'));
+F15	expect(page['font-variant-numeric']).toBe('tabular-nums');
+F15	expect([root['--audit-workspace'], root['--audit-gutter']]).toEqual(['1360px', '28px']);
+F15	expect(area.style.getPropertyValue('--container-size')).toBe(cssVar('workspace'));
+F15	expect(area.style.paddingInline).toBe(cssVar('gutter'));
+F18	expect(cells.map((cell) => cell.style.textAlign)).toEqual(Array(4).fill('center'));
+F15	expect(drift(rules, tokenCells())).toEqual([]);
+F15	expect(numbers.map(byValue)).toEqual(
+```
+
+Примеры спеки (`delivery/active/spec.md`): A23 F10 F11 F12 F13 F14 F15 F18 F19 F20 F6.
+
+Привязаны к примерам: **F10 F11 F14 F15 F18 F20**. Остальные 3 — нет.
+
+Читать нужно **только строки с `-` в первой колонке**: их ожидание
+ничем не подписано. Подпись: `asserts_reviewed_by: human:… at=…`.
+
+asserts_without_example: 3
+exit=0
+$ rm scripts/lint/assert_digest.sh && rmdir scripts/lint && git status --porcelain | wc -l
+0
+````
+
+- Новых и изменённых утверждений — 52, без ссылки на пример этой спеки — 3.
+- По примерам: F11 — 21, F15 — 15, F20 — 6, F10 — 3, F14 — 3, F18 — 1. Два новых у F11 — радио
+  и контурный флажок (`828d1b7`).
 - Без ссылки — три строки. Они стоят под номерами примеров Ч1.4а, которых в таблице этой спеки
   нет. Откуда взято ожидание:
   - `frontend/scripts/check-dist.test.mjs:128`, F5: «проверено 7 файлов» вместо пяти. В образец
@@ -141,8 +349,9 @@ asserts_without_example: 3
   равна main `2bdf4d9`: архив ветка не трогает. Файлы подписи необратимого в `active/` — те же
   байты, что в архиве 4а.
 - **Объём** — 1168 строк по гейту на `a947725` и на `1e8e676` при пределе 1200 и пороге 1100.
-  Проверяющему названо до сдачи, принято как итоговое (2026-11-19T11:47Z). Срез 2 «Схема» ушёл
-  по шву: после среза 4 — 1024, больше 860.
+  Проверяющему названо до сдачи, принято как итоговое (2026-11-19T11:47Z). Правка теста по двум
+  порчам проверяющего — плюс 7, итог на `0942eed` — 1175: проверяющий разрешил её до 1190. Срез 2
+  «Схема» ушёл по шву: после среза 4 — 1024, больше 860.
 
 ## Исполнение рисковых путей
 
@@ -165,7 +374,8 @@ asserts_without_example: 3
   окна. Атрибут схемы и фон страницы — схемы снимка; элементов управления на странице 0.
 
   Снимки — `docs/deliveries/ch1-04b-shots/`, вне git, инструмент —
-  `docs/deliveries/front-tools/shots.sh`. Код страницы после снимков не менялся.
+  `docs/deliveries/front-tools/shots.sh`. Код страницы после снимков не менялся: после `1e8e676`
+  правился только тест темы, и сборка на `0942eed` — с теми же именами файлов с хешем.
 
 ## Shape oracles
 - [x] n/a — CQG не развёрнут (волна В1). Руками: `npm run lint` (`eslint .`) — 0 ошибок,
@@ -204,18 +414,18 @@ asserts_without_example: 3
         подпись на заливке — на чужих токенах.
 
 ## Product oracles
-- [x] PASS — A23: сканер слов и поясов РФ и РБ по новым и изменённым файлам поставки.
-      - Код — 17 файлов: `frontend/` и README, на `1e8e676`, прогон субагента в 11:59:08Z. Одно
-        совпадение: буквы «VK» внутри строки `integrity` пакета `@eslint/object-schema` 2.1.7 в
-        `frontend/package-lock.json`. Такие строки по A23 пропускаются, та же строка есть на
-        main. Вне исключений — 0.
-      - Все 26 файлов поставки, с документами в `delivery/active/` и этим отчётом, — моим
-        прогоном в 2026-11-19T12:10:34Z. Совпадений 7, в коде 0:
-        - пять — слова «РФ и РБ» в самом правиле A23: в `spec.md`, `plan.md`, `tasks.md`,
-          `eval-smoke.md` и в этом отчёте;
-        - одно — буквы в строке `integrity` lock (выше);
-        - одно — те же буквы, процитированные в этом отчёте.
+- [x] PASS — A23: сканер слов и поясов РФ и РБ по всем 26 новым и изменённым файлам поставки.
+      Это 17 файлов кода в `frontend/` и README и 9 документов в `delivery/active/`, с этим
+      отчётом. Последний прогон — по рабочей копии перед коммитом отчёта, в 2026-11-19T12:21:45Z:
+      совпадений 6, в коде 0.
+      - Одно — в lock: две буквы названия сервиса внутри base64-строки `integrity` пакета
+        `@eslint/object-schema` 2.1.7. Такие строки по A23 пропускаются; та же строка есть на
+        main и была находкой Ч1.4а.
+      - Пять — слова самого правила A23: в `spec.md`, `plan.md`, `tasks.md`, `eval-smoke.md` и в
+        первой строке этого пункта.
       - `lang="ru"` сканер не берёт: это язык страницы.
+      - Прогон субагента на `1e8e676`, только код — 17 файлов, в 11:59:08Z: одно совпадение, то
+        же в lock.
 - [x] PASS — eval-smoke:
   - F6, F10–F15, F18–F20 — на Node 24 `npm ci && npm run check`: шесть шагов зелёные, 72 теста,
     пропусков 0; после цепочки `git status --porcelain` пуст;
@@ -257,17 +467,18 @@ asserts_without_example: 3
 
 | Metric | Value |
 |---|---|
-| files_touched / loc_diff | 17 code (+8 process docs) / +1196/-18 (net +1178); гейт без lock — 16 файлов, 1168 строк |
-| commits | 16 |
+| files_touched / loc_diff | 17 code (+9 process docs) / +1203/-18 (net +1185); гейт без lock — 16 файлов, 1175 строк |
+| commits | 19 — с коммитом этого отчёта |
 | time_to_accepted_spec | 0.0h — спеку подписал владелец до открытия ветки (08:59Z) |
 | rework_after_done | 0 (handoff not declared yet) |
 | harness_hardened | yes — расчёт контраста `frontend/src/test/contrast.ts`; тест темы с таблицей ролей Mantine целиком; оракул сборки: фон и цвет текста схем (F12), наборы знаков шрифта (F6) |
 | implement_retries | 4 — по журналу сессии: `?raw` у Vitest пустой (срез 1); типы кортежей в `cssVariablesResolver` — дважды; предупреждение линтера о длине блока тестов |
-| verify_fails_before_green | 1 — ранняя приёмка проверяющего на `5cd724a`: две находки по цветам библиотеки и 5 выживших порч из 31; закрыто до сдачи |
+| verify_fails_before_green | 2 — ранняя приёмка проверяющего: на `5cd724a` две находки по цветам библиотеки и 5 выживших порч из 31; на `1e8e676` 2 выживших из 41 (P7, P8); закрыто до сдачи |
 | est_token_or_cost | n/a — работа по подписке, расход сессии не измерялся |
 
 MANUAL-поля заполняет агент/человек на handoff. Если `verify_fails_before_green >= 2` при `harness_hardened: no` — по §9.2 добавь oracle/breaker/hook в этой же поставке.
 
-**Убрано (CONSTITUTION, п. 10):** клон сверки и клон опытов исполнителя — во временной папке, вне
-репозитория; временные профили Chrome. После слияния — рабочая копия `.claude/worktrees/ch1-04b`
-и ветка `ch1-04b-front-theme`.
+**Убрано (CONSTITUTION, п. 10):** клоны сверки и порч — удалены после прогона; временные профили
+Chrome и сервер `vite preview` — сняты. Клоны опытов исполнителя во временной папке, вне
+репозитория, — после вердикта. После слияния — рабочая копия `.claude/worktrees/ch1-04b` и
+ветка `ch1-04b-front-theme`.
