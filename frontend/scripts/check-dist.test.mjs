@@ -72,6 +72,7 @@ function oracle(spoil = () => undefined) {
   return { code: run.status, out: run.stdout + run.stderr };
 }
 
+// F5: порча краснит оракул, и он называет свою причину строкой «файл: причина».
 function expectRed(spoil, line) {
   const { code, out } = oracle(spoil);
   expect(out).toContain(line);
@@ -170,6 +171,9 @@ describe('оракул сборки', () => {
     ['классический', '<script>window.x = 1;</script>'],
     ['модуль', '<script type="module">import "/assets/x.js";</script>'],
   ])('F7: встроенный скрипт (%s) — красный', (_kind, text) => {
-    expectRedAt('head', text, 'встроенных скриптов: 1');
+    const [file, put] = PLACES.head;
+    const { code, out } = oracle((dist) => edit(dist, file, (old) => put(old, text)));
+    expect(out).toContain(`${file}: встроенных скриптов: 1`);
+    expect(code).toBe(1);
   });
 });
