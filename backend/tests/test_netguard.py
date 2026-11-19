@@ -63,12 +63,14 @@ RESOLVERS = [
 
 
 @pytest.mark.parametrize("resolve", RESOLVERS)
-@pytest.mark.parametrize("host", ["example.com", "api.localhost"])
+@pytest.mark.parametrize("host", ["example.com", "api.localhost", "db"])
 def test_a30_names_outside_loopback_are_refused_before_dns(
     monkeypatch: pytest.MonkeyPatch, resolve: Callable[[str], object], host: str
 ) -> None:
-    """A30: имя `example.com` и `api.localhost` — `socket.gaierror` словами у всех четырёх
-    способов, до любого запроса к распознавателю системы; распознаётся только `localhost`."""
+    """A30: имя `example.com`, `api.localhost` и имя без точки `db` — так зовутся сервисы compose
+    и машины в сети — `socket.gaierror` словами у всех четырёх способов, до любого запроса к
+    распознавателю системы; распознаётся только `localhost`. `db` держит порчу G11 проверяющего
+    «имя без точки идёт в распознаватель»."""
     calls: list[object] = []
     for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex"):
         monkeypatch.setitem(netguard.REAL, name, lambda *a, **_: calls.append(a))
@@ -79,11 +81,59 @@ def test_a30_names_outside_loopback_are_refused_before_dns(
     assert calls
 
 
+def _guarded(*names: str) -> None:
+    """Подмена стоит: иначе тест сам ушёл бы в DNS настоящим распознавателем."""
+    for name in names:
+        assert getattr(socket, name).__module__ == netguard.__name__, f"{name} не под запретом"
+
+
+async def _loop_nameinfo(host: str) -> object:
+    return await asyncio.get_running_loop().getnameinfo((host, 443))
+
+
+REVERSE = [
+    lambda h: socket.gethostbyaddr(h),
+    lambda h: socket.getnameinfo((h, 443), 0),
+    lambda h: asyncio.run(_loop_nameinfo(h)),
+]
+
+
+@pytest.mark.parametrize("lookup", REVERSE)
+@pytest.mark.parametrize("host", ["198.51.100.7", "example.com", "::ffff:8.8.8.8"])
+def test_a30_reverse_lookups_outside_loopback_are_refused_before_dns(
+    monkeypatch: pytest.MonkeyPatch, lookup: Callable[[str], object], host: str
+) -> None:
+    """A30: обратный запрос — `gethostbyaddr`, `getnameinfo` и `getnameinfo` цикла событий — на
+    198.51.100.7, `example.com` и `::ffff:8.8.8.8`: `socket.gaierror` словами до распознавателя.
+    Запрос PTR ушёл бы в DNS и для строгой записи адреса; петля проходит."""
+    _guarded("gethostbyaddr", "getnameinfo")
+    calls: list[object] = []
+    for name in ("gethostbyaddr", "getnameinfo"):
+        monkeypatch.setitem(netguard.REAL, name, lambda *a, **_: calls.append(a) or ("lo", []))
+    refusal = f"тест ходит только на петлю: обратный запрос '{host}'"
+    with pytest.raises(socket.gaierror, match=refusal):
+        lookup(host)
+    assert calls == []
+    lookup("127.0.0.1")
+    assert calls
+
+
+def test_a30_getfqdn_does_not_reach_the_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A30: `socket.getfqdn("example.com")` зовёт `gethostbyaddr` из модуля `socket`, получает
+    отказ и возвращает имя как есть: настоящий распознаватель не вызван."""
+    _guarded("gethostbyaddr")
+    calls: list[object] = []
+    monkeypatch.setitem(netguard.REAL, "gethostbyaddr", lambda *a, **_: calls.append(a))
+    assert socket.getfqdn("example.com") == "example.com"
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     ("kind", "address"),
     [
         (socket.SOCK_STREAM, ("example.com", 443)),
         (socket.SOCK_DGRAM, ("example.com", 53)),
+        (socket.SOCK_STREAM, ("db", 5432)),
         (socket.SOCK_STREAM, ("127.1", 443)),
         (socket.SOCK_STREAM, ("2130706433", 443)),
     ],
@@ -92,8 +142,9 @@ def test_a30_names_outside_loopback_are_refused_before_dns(
 def test_a30_names_and_loose_forms_in_the_socket_are_refused(
     kind: int, address: tuple[str, int], call: str
 ) -> None:
-    """A30: имя и нестрогие записи петли прямо в сокете (`connect`, `connect_ex`, `sendto`) —
-    отказ: всё, что не разобралось как адрес петли или `localhost`, — мимо `getaddrinfo` нельзя."""
+    """A30: имя, имя без точки `db` и нестрогие записи петли прямо в сокете (`connect`,
+    `connect_ex`, `sendto`) — отказ: всё, что не разобралось как адрес петли или `localhost`, —
+    мимо `getaddrinfo` нельзя."""
     with socket.socket(socket.AF_INET, kind) as sock, pytest.raises(OSError, match="на петлю"):
         if call == "sendto":
             sock.sendto(b"x", address)

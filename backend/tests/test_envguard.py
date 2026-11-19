@@ -10,6 +10,54 @@ import sys
 from pathlib import Path
 
 import dbtools
+import envguard
+
+PROBE = dbtools.BACKEND / "tests" / "env_probe" / "probe_env.py"
+
+
+def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: Path) -> None:
+    """A31: в рабочем каталоге запуска лежит `.env` с `APP_ENV=prod`, адресом базы с паролем-меткой
+    и ключом провайдера, `ENV_FILE` в окружении нет — внутри `dev`, адрес базы по умолчанию, меток
+    в выводе нет: `ENV_FILE` ставится в `/dev/null`, и умолчание `.env` не читается. Держит порчу
+    «строка `ENV_FILE=/dev/null` убрана» (порча N6 проверяющего); настоящий `backend/` не
+    трогается."""
+    (tmp_path / ".env").write_text(
+        "APP_ENV=prod\n"
+        "DATABASE_URL=postgresql+asyncpg://audit:dotenv-pass-5150@db:5432/audit\n"
+        "OPENAI_API_KEY=sk-dotenv-mark-5150\n",
+        encoding="utf-8",
+    )
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONUTF8": "1",
+        "TEST_DATABASE_URL": dbtools.server_url().render_as_string(hide_password=False),
+    }
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
+        + [str(PROBE)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    out = run.stdout + run.stderr
+    assert run.returncode == 0, out[-1500:]
+    found = re.search(r"A31-PROBE (\{.*\})", run.stdout)
+    assert found, out[-1500:]
+    seen = json.loads(found.group(1))
+    assert (seen["env"], seen["default_db"]) == ("dev", True)
+    assert "dotenv-pass-5150" not in out and "sk-dotenv-mark-5150" not in out
+
+
+def test_a31_test_database_url_stays_even_in_the_sample_names() -> None:
+    """A31: имя `TEST_DATABASE_URL` попало в список имён образца окружения — вычистка его
+    оставляет: его читает `dbtools`, без него тесты молча ушли бы на сервер по умолчанию; соседнее
+    имя из того же списка уходит. Держит порчу «`KEEP` пуст» (порча N1 проверяющего)."""
+    known = frozenset({"TEST_DATABASE_URL", "APP_ENV"})
+    assert envguard._dirty("TEST_DATABASE_URL", known) is False
+    assert envguard._dirty("APP_ENV", known) is True
 
 
 def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
