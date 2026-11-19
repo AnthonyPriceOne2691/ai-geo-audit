@@ -14,20 +14,11 @@ from dataclasses import dataclass, field
 import api_probes as probes
 import dbtools
 import pytest
-from pydantic import SecretStr
 
-from ai_geo_audit import config
 from ai_geo_audit.api import contract, health
 from ai_geo_audit.logs import setup as log_setup
 
 UNAVAILABLE = probes.sample("unavailable")
-
-
-def use_database(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
-    """Движок процесса смотрит в эту базу: настройка подменяется до первого вызова движка."""
-    storage = config.StorageSettings()
-    monkeypatch.setattr(storage, "database_url", SecretStr(url))
-    monkeypatch.setattr(config, "storage", storage)
 
 
 def closed_port_url() -> str:
@@ -75,7 +66,7 @@ def warnings_of(err: str) -> Iterator[dict[str, object]]:
 async def test_a38_health_is_ok_and_says_nothing_else(monkeypatch: pytest.MonkeyPatch) -> None:
     """A38: тестовая база отвечает; `GET /api/health` без заголовков — 200, тело ровно
     `{"status": "ok"}`: ни версий, ни адресов, ни ревизии миграций."""
-    use_database(monkeypatch, dbtools.own_url())
+    probes.use_database(monkeypatch, dbtools.own_url())
     async with probes.client(probes.build()) as http:
         response = await http.get("/api/health")
     assert (response.status_code, response.json()) == (200, {"status": "ok"})
@@ -88,9 +79,10 @@ async def test_a39_closed_database_is_unavailable_in_words(
     `unavailable`, без адреса, порта и имени. В журнале — одна запись WARNING «здоровье: база не
     ответила» с `error` — `ConnectionRefusedError` (проба 1), без текста ошибки драйвера."""
     url = closed_port_url()
-    use_database(monkeypatch, url)
+    probes.use_database(monkeypatch, url)
+    app = probes.build()
     log_setup.setup_logging(fmt="json")
-    async with probes.client(probes.build()) as http:
+    async with probes.client(app) as http:
         response = await http.get("/api/health")
     port = url.rsplit(":", 1)[1].split("/")[0]
     assert (response.status_code, response.json()) == (503, UNAVAILABLE["body"])
@@ -108,10 +100,11 @@ async def test_a40_silent_database_is_cut_by_the_limit(
     """A40: «база» молчит; предел 0,5 с — 503 `unavailable` не позже 1 с, запись WARNING с
     `error` — `TimeoutError` и `limit_seconds` — 0.5. Без подмены предел в коде — 3.0."""
     assert health.HEALTH_DB_LIMIT_SECONDS == 3.0
-    use_database(monkeypatch, silent_db.url)
+    probes.use_database(monkeypatch, silent_db.url)
     monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
+    app = probes.build()
     log_setup.setup_logging(fmt="json")
-    async with probes.client(probes.build()) as http:
+    async with probes.client(app) as http:
         started = time.monotonic()
         response = await asyncio.wait_for(http.get("/api/health"), 2)
         took = time.monotonic() - started
@@ -127,7 +120,7 @@ async def test_a41_requests_without_database_need_do_not_touch_it(
     """A41: молчащий сервер вместо базы; без пропуска `/api/nope`, закрытая проба, `OPTIONS
     /api/health`; с пропуском — закрытая проба: 403, 403, 405 и 200 с именем вошедшего, сервер
     «базы» не принял ни одного соединения. После `GET /api/health` — 503 и ровно одно."""
-    use_database(monkeypatch, silent_db.url)
+    probes.use_database(monkeypatch, silent_db.url)
     monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
     async with probes.client(probes.build()) as http:
         codes = [
@@ -150,7 +143,9 @@ CONTRACT_HEADERS = ("content-type", "x-access-refusal", "allow")
 async def answer(kind: str, monkeypatch: pytest.MonkeyPatch) -> object:
     """Запрос из `when` образца: по одному на вид."""
     token = {"X-Access-Token": probes.PASS}
-    use_database(monkeypatch, closed_port_url() if kind == "unavailable" else dbtools.own_url())
+    probes.use_database(
+        monkeypatch, closed_port_url() if kind == "unavailable" else dbtools.own_url()
+    )
     async with probes.client(probes.build()) as http:
         if kind in ("health-ok", "unavailable"):
             return await http.get("/api/health")

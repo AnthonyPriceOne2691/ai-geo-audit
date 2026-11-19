@@ -23,7 +23,7 @@
 
 ## Slice 1 — здоровье и одна форма
 - [x] T2: тесты сначала красные — `tests/test_api_health.py`: A38–A41, A43; фикстура движка
-      процесса на тестовую базу копии — помощником `use_database` в файле теста (decisions).
+      процесса на тестовую базу копии — помощником `use_database` (decisions).
       Красный — `cbce0bc`: сбор падает на отсутствующем `ai_geo_audit.api.health`.
 - [x] T3: `api/health.py` — `SELECT 1` своим соединением под `HEALTH_DB_LIMIT_SECONDS` = 3.0,
       WARNING «здоровье: база не ответила» с `error` и `limit_seconds`, 503 `unavailable`;
