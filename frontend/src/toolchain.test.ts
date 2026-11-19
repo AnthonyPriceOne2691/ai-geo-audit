@@ -146,4 +146,8 @@ describe('пакеты фронта', () => {
     const approved = readJson<Approved>('approved-packages.json');
     expect([...new Set(withScripts)].sort()).toEqual(Object.keys(approved.installScripts).sort());
   });
+
+  it('F17: версии моложе 14 суток установка не берёт — настройкой в .npmrc', () => {
+    expect(npmrc().get('min-release-age')).toBe('14');
+  });
 });
