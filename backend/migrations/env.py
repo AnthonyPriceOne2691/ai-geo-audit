@@ -19,6 +19,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 
 from ai_geo_audit import config
+from ai_geo_audit.config import startup_checks
 from ai_geo_audit.logs import setup as logs
 from ai_geo_audit.storage import build_engine, locks, models
 
@@ -87,6 +88,7 @@ if context.is_offline_mode():
     raise SystemExit("миграции без базы (--sql) не поддерживаются: только по адресу базы")
 logs.setup_logging()
 try:
+    startup_checks.check_startup("migrate")
     asyncio.run(_online())
-except MigrationRefused as refused:
+except (startup_checks.ConfigError, MigrationRefused) as refused:
     raise SystemExit(str(refused)) from None

@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import SecretStr
 
@@ -47,7 +47,8 @@ def register_secret(value: str) -> None:
 
 
 def register_config_secrets(*domains: config.Settings) -> None:
-    """Отметить секретные настройки доменов; у адреса базы — ещё и пароль отдельно."""
+    """Отметить секретные настройки доменов; у адресов — ещё и пароль отдельно, в записи и
+    раскодированный: `p%40ss` в адресе — это `p@ss` в тексте ошибки."""
     for settings in domains:
         for value in settings.__dict__.values():
             if isinstance(value, SecretStr):
@@ -55,6 +56,7 @@ def register_config_secrets(*domains: config.Settings) -> None:
                 register_secret(secret)
                 if "://" in secret and (password := urlsplit(secret).password):
                     register_secret(password)
+                    register_secret(unquote(password))
 
 
 def redact(text: str) -> str:
