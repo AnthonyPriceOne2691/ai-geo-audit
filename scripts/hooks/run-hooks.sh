@@ -17,13 +17,14 @@ if [[ ! -f "$root/.pre-commit-config.yaml" ]]; then
 fi
 
 python="$root/backend/.venv/bin/python3"
-if [[ ! -x "$python" ]]; then
-  echo "хуки не запущены: в этой копии нет окружения backend/.venv — выполните:" >&2
-  echo "  cd backend && uv sync" >&2
+# Окружение собрано до слияния гейтов — pre_commit в нём нет: та же строка, что и без окружения.
+if [[ ! -x "$python" ]] || ! "$python" -c 'import pre_commit' 2>/dev/null; then
+  echo "хуки не запущены: в этой копии нет окружения backend/.venv с pre-commit — выполните:" >&2
+  echo "  cd backend && uv sync --frozen" >&2
   exit 1
 fi
 
 cd "$root"
-hooks_dir=$(cd "$(git rev-parse --git-common-dir)/hooks" && pwd)
+hooks_dir=$(cd "$(git rev-parse --git-path hooks)" && pwd)
 exec "$python" -m pre_commit hook-impl --config=.pre-commit-config.yaml \
   --hook-type="$hook_type" --hook-dir "$hooks_dir" -- "$@"

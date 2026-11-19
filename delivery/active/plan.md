@@ -223,7 +223,7 @@
 - Хуки — заглушками в общем `.git/hooks`, только по строке проверяющему: `exec "$(git rev-parse
   --show-toplevel)/scripts/hooks/run-hooks.sh" <тип> "$@"`. Пускатель берёт `pre-commit` из
   `backend/.venv` той копии, где идёт коммит или push. Нет `.pre-commit-config.yaml` — пропуск со
-  строкой; конфиг есть, окружения нет — красный с командой `cd backend && uv sync`.
+  строкой; конфиг есть, окружения нет — красный с командой `cd backend && uv sync --frozen`.
   `pre-commit install` в общий каталог не ставится: он пишет путь к Python одной копии.
 - `README.md` — как гонять гейты; команды настроек GitHub для проверяющего, без адресов.
   `AGENTS.md` — указатель на CQG.
