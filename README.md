@@ -36,3 +36,4 @@ React с Vite и Mantine, pytest, docker compose.
 - Node 24 (`frontend/.nvmrc`); пакеты — `cd frontend && npm ci`: только по lock, скрипты
   установки выключены.
 - Проверка — `npm run check`: линтер, формат, типы, тесты, сборка и оракул сборки.
+- Браузеры — Chrome и Edge 111+, Firefox 121+, Safari 15.4+; почему — в `frontend/UI_RULES.md`.
