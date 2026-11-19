@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
-  <!-- T11 — сверка в чистом клоне 2026-11-19T08:17Z, отчёт — verify-report.md; сдача —
-       T12, вердикт ставит проверяющий. -->
+- **phase:** handoff
+  <!-- Вердикт проверяющего READY FOR HANDOFF — `cb5ad52`; подпись владельца под
+       утверждениями — `f855ec5` (2026-11-19T08:28Z), тем же словом — публикация. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-18T15:34Z)
@@ -57,8 +57,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** на тестовом выкате (Ч1.6): контейнер `migrate` проходит `alembic upgrade head` с пустой схемы, `alembic check` — код 0, `alembic_version` — голова цепочки; повторный выкат ничего не меняет; строки миграции идут журналом сервиса, без значений строк
+- **observe_until:** 2026-11-27
 - **circuit_breakers:** max_loc_diff=1200
   <!-- Настройка проекта по слову владельца ведущей сессии 2026-11-18T13:49Z: «давай 1200
        строк вместе с тестами». Гейт считает и тесты, а они у нас — около 70% правки.
