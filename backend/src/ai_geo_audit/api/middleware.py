@@ -73,17 +73,18 @@ class EntryLayer:
                 if status is None:
                     refusal = refusal_response("internal", request_id=request_id)
                     await refusal(scope, receive, send_numbered)
-            client = scope.get("client") or ("", 0)
-            access_log.info(
-                "запрос",
-                extra={
-                    "method": scope["method"],
-                    "path": quote(scope["path"]),
-                    "status": status,
-                    "duration_ms": int((time.monotonic() - began) * 1000),
-                    "client": client[0],
-                },
-            )
+            finally:
+                client = scope.get("client") or ("", 0)
+                access_log.info(
+                    "запрос",
+                    extra={
+                        "method": scope["method"],
+                        "path": quote(scope["path"]),
+                        "status": status,
+                        "duration_ms": int((time.monotonic() - began) * 1000),
+                        "client": client[0],
+                    },
+                )
 
     async def _gate(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["path"] not in self.open_paths:

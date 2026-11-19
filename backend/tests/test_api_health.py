@@ -60,10 +60,11 @@ async def silent_db() -> AsyncIterator[Silent]:
 @dataclass
 class Relay:
     """Посредник TCP перед тестовой базой: по флагу перестаёт пересылать байты, соединений не
-    рвёт; считает открытые соединения."""
+    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; считает открытые соединения."""
 
     url: str = ""
     frozen: bool = False
+    freeze_on: bytes = b""
     open: int = 0
 
 
@@ -73,9 +74,13 @@ async def relay() -> AsyncIterator[Relay]:
     found = Relay()
     links: list[asyncio.StreamWriter] = []
 
-    async def pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def pump(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter, watch: bool = False
+    ) -> None:
         with contextlib.suppress(ConnectionError):
             while data := await reader.read(65536):
+                if watch and found.freeze_on and found.freeze_on in data:
+                    found.frozen = True
                 while found.frozen:
                     await asyncio.sleep(0.02)
                 writer.write(data)
@@ -87,7 +92,7 @@ async def relay() -> AsyncIterator[Relay]:
         upstream_reader, upstream = await asyncio.open_connection(real.host, real.port)
         links.extend([writer, upstream])
         try:
-            await asyncio.gather(pump(reader, upstream), pump(upstream_reader, writer))
+            await asyncio.gather(pump(reader, upstream, True), pump(upstream_reader, writer))
         finally:
             found.open -= 1
 
@@ -161,30 +166,31 @@ async def test_a40_silent_database_is_cut_by_the_limit(
     assert [(r["error"], r["limit_seconds"]) for r in records] == [("TimeoutError", 0.5)]
 
 
-async def test_a40_database_frozen_on_a_pooled_connection_is_cut_too(
-    monkeypatch: pytest.MonkeyPatch, relay: Relay
+@pytest.mark.parametrize("freeze_on", [b"", b"SELECT 1"], ids=["между проверками", "посреди"])
+async def test_a40_frozen_database_is_cut_by_the_limit_too(
+    monkeypatch: pytest.MonkeyPatch, relay: Relay, freeze_on: bytes
 ) -> None:
-    """A40, строже показанного: база замёрзла на соединении, которое уже лежит в пуле, — посредник
-    перестал пересылать байты, соединений не рвёт. Первый запрос — 200; при заморозке второй —
-    503 не позже предела плюс 1 с, и соединение обрывается, а не возвращается в пул; после
-    разморозки — 200, у посредника открыто одно соединение: оборванное не утекло."""
+    """A40, строже показанного: база замерзает — посредник перестаёт пересылать байты, соединений
+    не рвёт: между проверками и посреди проверки, на уже установленном соединении, когда клиент
+    шлёт `SELECT 1`. Первый запрос — 200; второй — 503 не позже предела плюс 1 с; после
+    разморозки — 200. Соединений у посредника в конце 0: оборванное не утекло, пула нет."""
     probes.use_database(monkeypatch, relay.url)
     monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
     async with probes.client(probes.build()) as http, asyncio.timeout(5):
         first = await http.get("/api/health")
-        relay.frozen = True
+        relay.frozen, relay.freeze_on = not freeze_on, freeze_on
         started = time.monotonic()
         second = await http.get("/api/health")
         took = time.monotonic() - started
-        relay.frozen = False
+        relay.frozen, relay.freeze_on = False, b""
         third = await http.get("/api/health")
         for _ in range(50):
-            if relay.open == 1:
+            if relay.open == 0:
                 break
             await asyncio.sleep(0.02)
     assert [first.status_code, second.status_code, third.status_code] == [200, 503, 200]
     assert took <= 1.5, took
-    assert relay.open == 1
+    assert relay.open == 0
 
 
 async def test_a41_requests_without_database_need_do_not_touch_it(
