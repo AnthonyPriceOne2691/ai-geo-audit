@@ -82,7 +82,7 @@ def test_a30_names_outside_loopback_are_refused_before_dns(
 
 
 def _guarded(*names: str) -> None:
-    """Подмена стоит: иначе тест сам ушёл бы в DNS настоящим распознавателем."""
+    """A30: подмена стоит — иначе тест сам ушёл бы в DNS настоящим распознавателем."""
     for name in names:
         assert getattr(socket, name).__module__ == netguard.__name__, f"{name} не под запретом"
 
