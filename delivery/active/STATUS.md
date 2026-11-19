@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
-  <!-- Срез 5 Ч1.2в (`dd8e15d`) ушёл сюда на контрольной точке T11 Ч1.2в. Подпись владельца под
-       примерами A30 и A31 — `c2ac133`; перенос среза — T1, обратные запросы и выжившие — T2, T3. -->
+- **phase:** verify
+  <!-- T5 — сверка в чистом клоне 2026-11-19T11:50:39Z на `33df6e5`, отчёт — verify-report.md;
+       сдача — T6, вердикт ставит проверяющий. Подпись под примерами — `c2ac133`. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T08:59Z)
