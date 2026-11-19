@@ -7,8 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
-  <!-- Подпись владельца под примерами — 5b42582; код идёт срезами по tasks.md. -->
+- **phase:** verify
+  <!-- Код — срезами 1–3 (ced147b, 9d01ca9, cfb7b0f); сверка в чистом клоне — verify-report.md.
+       Порчи проверяющего (L18) — до его вердикта. -->
 - **builder:** agent:front-session
   <!-- Код пишет исполнитель полосы фронта — своя сессия с 2026-11-19 (роль назвал владелец),
        в рабочей копии полосы. -->
