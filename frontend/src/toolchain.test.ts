@@ -102,7 +102,9 @@ describe('инструменты фронта', () => {
     });
     expect(ignored.trim().split('\n')).toEqual(paths);
   });
+});
 
+describe('пакеты фронта', () => {
   it('F17: каждый пакет lock — из реестра npm и с integrity', () => {
     const entries = lockEntries();
     expect(entries.length).toBeGreaterThan(0);
