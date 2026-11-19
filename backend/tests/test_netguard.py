@@ -12,6 +12,7 @@ import pytest
 
 FAR = ("198.51.100.7", 443)
 FAR_TEXT = "тест ходит только на петлю: 198.51.100.7:443"
+HINT = "запишите ответ или поднимите сервер на 127.0.0.1"
 
 
 @pytest.fixture(scope="session")
@@ -70,11 +71,13 @@ def test_a30_names_outside_loopback_are_refused_before_dns(
     """A30: имя `example.com`, `api.localhost` и имя без точки `db` — так зовутся сервисы compose
     и машины в сети — `socket.gaierror` словами у всех четырёх способов, до любого запроса к
     распознавателю системы; распознаётся только `localhost`. `db` держит порчу G11 проверяющего
-    «имя без точки идёт в распознаватель»."""
+    «имя без точки идёт в распознаватель». В отказе — и что делать: держит порчу G14 «отказ
+    имени без подсказки»."""
     calls: list[object] = []
     for name in ("getaddrinfo", "gethostbyname", "gethostbyname_ex"):
         monkeypatch.setitem(netguard.REAL, name, lambda *a, **_: calls.append(a))
-    with pytest.raises(socket.gaierror, match=f"тест ходит только на петлю: имя '{host}'"):
+    refusal = f"тест ходит только на петлю: имя '{host}' — {HINT}"
+    with pytest.raises(socket.gaierror, match=refusal):
         resolve(host)
     assert calls == []
     resolve("localhost")
@@ -104,13 +107,14 @@ def test_a30_reverse_lookups_outside_loopback_are_refused_before_dns(
     monkeypatch: pytest.MonkeyPatch, lookup: Callable[[str], object], host: str
 ) -> None:
     """A30: обратный запрос — `gethostbyaddr`, `getnameinfo` и `getnameinfo` цикла событий — на
-    198.51.100.7, `example.com` и `::ffff:8.8.8.8`: `socket.gaierror` словами до распознавателя.
-    Запрос PTR ушёл бы в DNS и для строгой записи адреса; петля проходит."""
+    198.51.100.7, `example.com` и `::ffff:8.8.8.8`: `socket.gaierror` словами и с тем, что
+    делать, до распознавателя. Запрос PTR ушёл бы в DNS и для строгой записи адреса; петля
+    проходит."""
     _guarded("gethostbyaddr", "getnameinfo")
     calls: list[object] = []
     for name in ("gethostbyaddr", "getnameinfo"):
         monkeypatch.setitem(netguard.REAL, name, lambda *a, **_: calls.append(a) or ("lo", []))
-    refusal = f"тест ходит только на петлю: обратный запрос '{host}'"
+    refusal = f"тест ходит только на петлю: обратный запрос '{host}' — {HINT}"
     with pytest.raises(socket.gaierror, match=refusal):
         lookup(host)
     assert calls == []

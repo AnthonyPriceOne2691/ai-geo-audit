@@ -11,6 +11,7 @@ from pathlib import Path
 
 import dbtools
 import envguard
+import pytest
 
 PROBE = dbtools.BACKEND / "tests" / "env_probe" / "probe_env.py"
 
@@ -58,6 +59,38 @@ def test_a31_test_database_url_stays_even_in_the_sample_names() -> None:
     known = frozenset({"TEST_DATABASE_URL", "APP_ENV"})
     assert envguard._dirty("TEST_DATABASE_URL", known) is False
     assert envguard._dirty("APP_ENV", known) is True
+
+
+#: Имя — уходит ли оно без списка образца: по имени на каждую из семи приставок провайдеров, одно
+#: `PG…`, четыре прокси, `ENV_FILE` и строчная запись; обратная сторона — имена процесса.
+LISTED = [
+    ("OPENAI_API_KEY", True),
+    ("ANTHROPIC_API_KEY", True),
+    ("DATAFORSEO_LOGIN", True),
+    ("AHREFS_API_KEY", True),
+    ("GEMINI_API_KEY", True),
+    ("GOOGLE_API_KEY", True),
+    ("PERPLEXITY_API_KEY", True),
+    ("PGPASSWORD", True),
+    ("HTTP_PROXY", True),
+    ("HTTPS_PROXY", True),
+    ("ALL_PROXY", True),
+    ("NO_PROXY", True),
+    ("ENV_FILE", True),
+    ("http_proxy", True),
+    ("PATH", False),
+    ("HOME", False),
+    ("PYTHONUTF8", False),
+]
+
+
+@pytest.mark.parametrize(("name", "gone"), LISTED)
+def test_a31_every_listed_name_is_cleaned_and_process_names_stay(name: str, gone: bool) -> None:
+    """A31: без списка образца уходит каждое имя, названное в In scope: по имени на каждую из семи
+    приставок провайдеров, `PGPASSWORD`, четыре прокси, `ENV_FILE` и строчная `http_proxy`;
+    `PATH`, `HOME` и `PYTHONUTF8` остаются. Держит порчи N8–N11 проверяющего: убраны приставки
+    `PERPLEXITY_` и `DATAFORSEO_`, прокси `ALL_PROXY` и `HTTP_PROXY`."""
+    assert envguard._dirty(name, frozenset()) is gone
 
 
 def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
