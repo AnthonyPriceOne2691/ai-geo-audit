@@ -158,6 +158,20 @@ def test_a19_migrate_does_not_start_with_the_setting_out_of_bounds() -> None:
     assert "Traceback" not in run.stderr, run.stderr[-1500:]
 
 
+def test_a19_refusal_of_a_bad_setting_does_not_repeat_the_input() -> None:
+    """A19: `MIGRATION_LOCK_WAIT_SECONDS` — не число, а метка: pydantic сам повторил бы ввод в
+    своём тексте. `migrate` не стартует, называет настройку, без трассировки, и метки нет во
+    всём выводе. Держит порчи «причина — `str(invalid)`» и «в строку причины добавлен ввод»
+    (порча N3 проверяющего)."""
+    mark = "lockwait-mark-7d1f"
+    run = dbtools.alembic("upgrade", "head", extra={"MIGRATION_LOCK_WAIT_SECONDS": mark})
+    out = run.stdout + run.stderr
+    assert run.returncode != 0
+    assert "MIGRATION_LOCK_WAIT_SECONDS" in out, out[-1500:]
+    assert "Traceback" not in out, out[-1500:]
+    assert mark not in out, out[-1500:]
+
+
 def test_a19_lock_keys_come_from_one_registry_and_differ() -> None:
     """A19: ключ замка миграций — из реестра; ключи реестра различны. Что `env.py` берёт именно
     этот ключ, держат тесты с держателем замка: другой ключ не ждал бы держателя."""
