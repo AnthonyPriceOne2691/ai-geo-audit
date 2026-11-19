@@ -13,16 +13,16 @@ L19, L20; суть и куда лёг каждый — в `plan.md`, разде�
     2026-11-19T09:03Z.
 
 ## Slice 1 — замок и пределы
-- [ ] T2: реестр ключей замков `storage/locks.py`; настройка `MIGRATION_LOCK_WAIT_SECONDS`
+- [x] T2: реестр ключей замков `storage/locks.py`; настройка `MIGRATION_LOCK_WAIT_SECONDS`
       (120 с, от 1 до 3600) — в конфиге, `.env.example` и тесте образца. A19.
-- [ ] T3: `env.py` внутри `begin_transaction()` до `run_migrations()`: `lock_timeout` = предел
+- [x] T3: `env.py` внутри `begin_transaction()` до `run_migrations()`: `lock_timeout` = предел
       замка → блокирующий замок → `lock_timeout` = 10 с; 55P03 на замке и в ревизиях — два
       отказа словами. A19, A20.
-- [ ] T4: тесты A19 и A20:
+- [x] T4: тесты A19 и A20:
   - A19 — держатель в тесте, держатель упал, четыре процесса, предел 1 с — отказ раньше 5 с,
     настройка вне границ, реестр;
   - A20 — чужая транзакция, `current_setting('lock_timeout')` внутри ревизии.
-- [ ] T5: README — пределы, тексты отказов и запрос держателя замка (`pg_locks` и
+- [x] T5: README — пределы, тексты отказов и запрос держателя замка (`pg_locks` и
       `pg_stat_activity`: pid, `application_name`, `xact_start`).
 
 ## Slice 2 — пароли и секреты

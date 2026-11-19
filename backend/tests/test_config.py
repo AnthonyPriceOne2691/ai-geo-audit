@@ -34,6 +34,8 @@ CASES = [
     ("DB_POOL_SIZE", "7", config.StorageSettings, "pool_size", 7),
     ("DB_MAX_OVERFLOW", "0", config.StorageSettings, "max_overflow", 0),
     ("DB_TASK_POOL_SIZE", "3", config.StorageSettings, "task_pool_size", 3),
+    ("MIGRATION_LOCK_WAIT_SECONDS", "300", config.StorageSettings, "migration_lock_wait_seconds",
+     300),
     ("JWT_SECRET", "s" * 40, config.AccessSettings, "jwt_secret", None),
     ("JWT_TTL_HOURS", "24", config.AccessSettings, "jwt_ttl_hours", 24),
     ("JWT_ALGORITHM", "HS256", config.AccessSettings, "jwt_algorithm", "HS256"),
