@@ -176,4 +176,28 @@ describe('оракул сборки', () => {
     expect(out).toContain(`${file}: встроенных скриптов: 1`);
     expect(code).toBe(1);
   });
+
+  // Для политики содержимого обработчик в разметке и адрес javascript: — тоже встроенный
+  // скрипт: в разработке страница работает, в бою под политикой — пустая.
+  it.each([
+    [
+      'обработчик у <body>',
+      (html) => html.replace('<body>', '<body onload="x()">'),
+      'onload у <body>',
+    ],
+    [
+      'обработчик у <img>',
+      (html) => html.replace('</body>', '<img src="/a.png" ONERROR="x()"></body>'),
+      'onerror у <img>',
+    ],
+    [
+      'адрес javascript:',
+      (html) => html.replace('</body>', '<a href=" javascript:x()">a</a></body>'),
+      'javascript: у <a href>',
+    ],
+  ])('F7: встроенный скрипт в разметке (%s) — красный', (_kind, change, reason) => {
+    const { code, out } = oracle((dist) => edit(dist, 'index.html', change));
+    expect(out).toContain(`index.html: встроенный скрипт — ${reason}`);
+    expect(code).toBe(1);
+  });
 });
