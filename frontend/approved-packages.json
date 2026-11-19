@@ -1,0 +1,34 @@
+{
+  "_": "Прямые зависимости фронта, одобренные владельцем, и зачем каждая. Новый пакет — строка здесь и строка new_dependency в delivery/active/STATUS.md одной правкой; тест F17 сверяет список с package.json в обе стороны.",
+  "dependencies": {
+    "@mantine/core": "компоненты и тема интерфейса",
+    "@mantine/hooks": "хуки Mantine, без них не работает @mantine/core",
+    "react": "библиотека интерфейса",
+    "react-dom": "отрисовка React в браузере"
+  },
+  "devDependencies": {
+    "@eslint/js": "базовые правила eslint шаблона канона",
+    "@testing-library/jest-dom": "проверки DOM в тестах",
+    "@testing-library/react": "рендер компонентов в тестах",
+    "@types/node": "типы Node для конфигов и теста инструментов",
+    "@types/react": "типы React",
+    "@types/react-dom": "типы react-dom",
+    "@vitejs/plugin-react": "JSX и React в сборке Vite",
+    "eslint": "линтер по шаблону канона",
+    "eslint-config-prettier": "снимает стилевые правила eslint, которые спорят с prettier",
+    "eslint-plugin-import": "правила импортов шаблона eslint канона",
+    "eslint-plugin-react": "правила React шаблона eslint канона",
+    "eslint-plugin-react-hooks": "правила хуков React шаблона eslint канона",
+    "globals": "имена глобальных объектов браузера и Node для eslint",
+    "jsdom": "среда DOM для тестов",
+    "prettier": "форма кода по шаблону канона",
+    "typescript": "проверка типов tsc --noEmit",
+    "typescript-eslint": "правила TypeScript шаблона eslint канона",
+    "vite": "сборка и сервер разработки",
+    "vitest": "тесты"
+  },
+  "installScripts": {
+    "esbuild": "скрипт только проверяет двоичный файл и подменяет им обёртку; сам файл приходит пакетом своей платформы, сборка работает без скрипта",
+    "fsevents": "слежение за файлами на macOS для сервера разработки; готовый модуль лежит в пакете, сборка из исходников не нужна"
+  }
+}

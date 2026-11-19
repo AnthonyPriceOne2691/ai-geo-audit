@@ -24,3 +24,7 @@ frontend/dist/
 
 # Система
 .DS_Store
+
+# Фронт: следы инструментов (F4)
+*.tsbuildinfo
+frontend/coverage/
