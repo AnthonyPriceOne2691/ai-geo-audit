@@ -29,13 +29,11 @@ def create_app(
 ) -> FastAPI:
     """Собрать приложение; в бою без нужных настроек — `ConfigError` до сборки (A32).
 
-    Проверку пропуска и список открытых тесты передают свои; список лежит и в состоянии
-    приложения — его читает обход маршрутов (Ч1.3б)."""
+    Проверку пропуска и список открытых тесты передают свои."""
     check_startup("api")
     app = FastAPI(
         openapi_url=None, docs_url=None, redoc_url=None, swagger_ui_oauth2_redirect_url=None
     )
-    app.state.open_paths = dict(open_paths)
     app.add_exception_handler(HTTPException, contract.on_http_exception)
     app.add_exception_handler(RequestValidationError, contract.on_validation_error)
     app.add_middleware(EntryLayer, visitor_for=visitor_for, open_paths=open_paths)

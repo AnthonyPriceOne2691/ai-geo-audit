@@ -15,7 +15,7 @@ from typing import Annotated, Any
 
 import dbtools
 import httpx
-from fastapi import APIRouter, FastAPI, Security
+from fastapi import APIRouter, FastAPI, HTTPException, Security
 
 from ai_geo_audit.api import access
 from ai_geo_audit.api.app import create_app
@@ -26,6 +26,8 @@ BASIC = "Basic " + base64.b64encode(b"user:proxy-pass-words").decode()
 CLOSED = "/api/probe/closed"
 BODY = "/api/probe/body"
 BOOM = "/api/probe/boom"
+UNAUTHORIZED = "/api/probe/unauthorized"
+BARE_503 = "/api/probe/bare-503"
 #: Вызовы закрытой пробы: по ним видно, дошёл ли запрос до обработчика.
 CALLS: list[str] = []
 SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_text("utf-8"))
@@ -60,6 +62,16 @@ async def body(item: ProbeBody) -> dict[str, str]:
 @probes.get("/boom")
 async def boom() -> None:
     raise RuntimeError("marker-c0ffee")
+
+
+@probes.get("/unauthorized")
+async def unauthorized() -> None:
+    raise HTTPException(401, headers={"WWW-Authenticate": "Bearer"})
+
+
+@probes.get("/bare-503")
+async def bare_503() -> None:
+    raise HTTPException(503, detail="bare-503-mark-5e1f")
 
 
 async def known_pass(token: str) -> access.Visitor | None:

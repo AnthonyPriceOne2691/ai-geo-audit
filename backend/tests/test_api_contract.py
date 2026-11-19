@@ -152,6 +152,15 @@ def test_a42_schema_names_only_the_pass_header() -> None:
     assert schema["paths"][probes.CLOSED]["get"]["security"] == [{next(iter(schemes)): []}]
 
 
+async def test_a42_bare_401_of_the_library_is_signed_out() -> None:
+    """A42: голый 401 библиотеки с `WWW-Authenticate` — ответ по образцу `signed-out`: 403, с
+    признаком, без `WWW-Authenticate`. 401 сервис не отвечает: на него браузер стирает пароль
+    сайта. Строже показанного — замечание проверяющего 2026-11-19T13:18Z."""
+    async with probes.client(probes.build()) as http:
+        response = await http.get(probes.UNAUTHORIZED, headers={"X-Access-Token": probes.PASS})
+    assert refused_signed_out(response) == []
+
+
 INVALID = probes.sample("invalid")["body"]
 
 
@@ -203,6 +212,31 @@ async def test_a44_bare_library_400_is_invalid_with_empty_errors() -> None:
     assert response.status_code == 400
     assert response.json() == {**INVALID, "errors": []}
     assert "There was an error parsing the body" not in response.text
+
+
+BARE = [
+    ("POST", probes.CLOSED, 405, "method-not-allowed"),
+    ("GET", probes.BARE_503, 500, "internal"),
+]
+
+
+@pytest.mark.parametrize(("method", "path", "status", "kind"), BARE)
+async def test_a44_bare_405_and_5xx_of_the_library_take_the_contract_form(
+    method: str, path: str, status: int, kind: str
+) -> None:
+    """A44: голый `HTTPException` библиотеки — в форме договора. `POST` закрытой пробы с
+    пропуском — 405 с `Allow` по образцу `method-not-allowed`; `HTTPException(503)` с меткой —
+    500 `internal` с номером из `X-Request-ID`, метки в ответе нет."""
+    async with probes.client(probes.build()) as http:
+        response = await http.request(method, path, headers={"X-Access-Token": probes.PASS})
+    sample, body = probes.sample(kind)["body"], response.json()
+    assert (response.status_code, body["kind"]) == (status, kind)
+    if kind == "internal":
+        number = response.headers["x-request-id"]
+        assert body == {**sample, "detail": sample["detail"].replace("0" * 32, number)}
+        assert "bare-503-mark-5e1f" not in response.text
+    else:
+        assert (response.headers.get("allow"), body) == ("GET", sample)
 
 
 async def test_a45_crash_is_a_500_in_form_and_one_error_record(

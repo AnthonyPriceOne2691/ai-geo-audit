@@ -1,7 +1,8 @@
 """Договор отказов API: один вид — одна форма `{"detail", "kind", "retry"}`, текст — для
 человека, признак доступа — в заголовке `X-Access-Refusal`. Образцы — `contracts/api-refusals.json`.
 
-Голый `HTTPException` библиотеки становится видом договора: 404 — `not-found`, 405 —
+Голый `HTTPException` библиотеки становится видом договора: 401 — `signed-out` (на 401 браузер
+стирает пароль сайта, поэтому 401 сервис не отвечает), 404 — `not-found`, 405 —
 `method-not-allowed` с `Allow`, прочий 4xx — `invalid` со своим кодом и пустым `errors`, 5xx —
 `internal`; текста исключения в ответе нет. В 422 наружу — только `loc` и `type` каждой ошибки.
 """
@@ -84,7 +85,9 @@ async def on_http_exception(request: Request, exc: Exception) -> JSONResponse:
     """`HTTPException` — в вид договора; текст исключения наружу не идёт."""
     assert isinstance(exc, HTTPException)
     if isinstance(exc, Refusal):
-        return refusal_response(exc.kind, headers=exc.headers)
+        return refusal_response(exc.kind, request_id=request_id_of(request), headers=exc.headers)
+    if exc.status_code == 401:
+        return refusal_response("signed-out")
     if exc.status_code == 404:
         return refusal_response("not-found")
     if exc.status_code == 405:
