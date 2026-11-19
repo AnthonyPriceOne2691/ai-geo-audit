@@ -12,7 +12,35 @@ import viteConfig from '../vite.config';
 const FRONT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = join(FRONT, '..');
 const REGISTRY = 'https://registry.npmjs.org/';
-const CHAIN = ['lint', 'format:check', 'typecheck', 'test', 'build', 'check:dist'];
+// Скрипты — договор целиком: флаг мимо конфига (`--maxWorkers`), «|| true», суженная проверка
+// формата или новый `pre…`, который под `ignore-scripts` молча не исполнится, — правка этой
+// таблицы, а не тихая правка `package.json` (F3).
+const SCRIPTS = {
+  dev: 'vite',
+  preview: 'vite preview',
+  lint: 'eslint .',
+  format: 'prettier --write .',
+  'format:check': 'prettier --check .',
+  typecheck: 'tsc --noEmit',
+  test: 'vitest run',
+  build: 'vite build',
+  'check:dist': 'node scripts/check-dist.mjs',
+  check:
+    'npm run lint && npm run format:check && npm run typecheck && npm test && npm run build' +
+    ' && npm run check:dist',
+};
+// Поля `package.json`: новое поле — правка этого списка. Так не проходит мимо F17 `overrides`,
+// которым вложенный пакет подменяется псевдонимом, и зависимости в других полях.
+const PACKAGE_FIELDS = [
+  'dependencies',
+  'devDependencies',
+  'engines',
+  'name',
+  'private',
+  'scripts',
+  'type',
+  'version',
+];
 
 interface PackageJson {
   engines?: { node?: string };
@@ -22,6 +50,8 @@ interface PackageJson {
 }
 
 interface LockEntry {
+  name?: string;
+  version?: string;
   resolved?: string;
   integrity?: string;
   hasInstallScript?: boolean;
@@ -73,16 +103,8 @@ describe('инструменты фронта', () => {
     expect(Number(max)).toBeLessThanOrEqual(2);
   });
 
-  it('F3: npm run check — шесть шагов по порядку, каждый шаг есть в scripts', () => {
-    const scripts = readJson<PackageJson>('package.json').scripts ?? {};
-    const steps = (scripts.check ?? '')
-      .split('&&')
-      .map((part) => part.trim().replace(/^npm (run )?/, ''));
-    expect(steps).toEqual(CHAIN);
-    const missing = CHAIN.filter((step) => !scripts[step]);
-    expect(missing, 'шаги цепочки без своего скрипта').toEqual([]);
-    expect(scripts.typecheck).toBe('tsc --noEmit');
-    expect(scripts.build).toBe('vite build');
+  it('F3: npm run check — шесть шагов по порядку, скрипты package.json ровно по таблице', () => {
+    expect(readJson<PackageJson>('package.json').scripts).toEqual(SCRIPTS);
   });
 
   it('F4: следы инструментов игнорирует git — node_modules, dist, tsbuildinfo, coverage', () => {
@@ -118,6 +140,27 @@ describe('пакеты фронта', () => {
       unsigned.map(([path]) => path),
       'записи lock без integrity',
     ).toEqual([]);
+  });
+
+  it('F17: запись lock — тот самый пакет: имя и версия из пути совпадают с адресом архива', () => {
+    // Подмена через тот же реестр: под доверенным именем — адрес и integrity чужого архива.
+    // Адрес — реестр, integrity сходится с архивом, и проверки выше её не видят.
+    const wrong = lockEntries().filter(([path, e]) => {
+      const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
+      const file = name.slice(name.lastIndexOf('/') + 1);
+      const expected = `${REGISTRY}${name}/-/${file}-${e.version ?? ''}.tgz`;
+      return e.name !== undefined || e.version === undefined || e.resolved !== expected;
+    });
+    expect(
+      wrong.map(([path]) => path),
+      'записи lock с чужим адресом, без версии или с полем name',
+    ).toEqual([]);
+  });
+
+  it('F17: поля package.json ровно по списку — без overrides и зависимостей в других полях', () => {
+    expect(Object.keys(readJson<Record<string, unknown>>('package.json')).sort()).toEqual(
+      PACKAGE_FIELDS,
+    );
   });
 
   it('F17: прямые зависимости — точными версиями и ровно по одобренному списку', () => {
