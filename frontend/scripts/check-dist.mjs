@@ -1,6 +1,6 @@
-// Оракул сборки фронта (F5, F7, F12): страница не ссылается на несуществующее, в сборке нет карт,
-// адресов разработки, чужих узлов и встроенных скриптов — CSP для скриптов обойдётся без хешей;
-// фон и цвет текста обеих схем — в CSS сборки. Запуск из `frontend/`: node scripts/check-dist.mjs
+// Оракул сборки фронта (F5, F6, F7, F12): страница не ссылается на несуществующее, в сборке нет
+// карт, адресов разработки, чужих узлов и встроенных скриптов — CSP для скриптов обойдётся без
+// хешей; шрифт — только наборами латиницы и кириллицы; фон и цвет текста обеих схем — в CSS сборки. Запуск из `frontend/`: node scripts/check-dist.mjs
 // [папка сборки = dist] [файл имени = src/brand.ts] [файл токенов = src/theme/tokens.css].
 // Без зависимостей: оракул работает и тогда, когда сломаны пакеты.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -183,6 +183,25 @@ function checkPaint(files) {
   }
 }
 
+// Шрифт (F6): файлы двух наборов знаков, как их называет пакет, с хешем Vite.
+const FONT = /\.(woff2?|ttf|otf|eot)$/i;
+const FONT_FILE = /^assets\/geologica-(latin|cyrillic)-wght-normal-[\w-]{8}\.woff2$/;
+const FONT_SETS = new Map([
+  ['latin', 'латиницей'],
+  ['cyrillic', 'кириллицей'],
+]);
+
+/** Шрифт отдаётся только наборами латиницы и кириллицы, и оба набора на месте (F6). */
+function checkFonts(files) {
+  const sets = new Set();
+  for (const rel of files.filter((file) => FONT.test(file))) {
+    const set = FONT_FILE.exec(rel)?.[1];
+    if (set) sets.add(set);
+    else say(join(dist, rel), 'шрифт не из наборов латиницы и кириллицы');
+  }
+  for (const [set, word] of FONT_SETS) if (!sets.has(set)) say(dist, `нет файла шрифта с ${word}`);
+}
+
 /** «файл», «файла» или «файлов» — по числу. */
 function filesWord(n) {
   const [ten, hundred] = [n % 10, n % 100];
@@ -200,6 +219,7 @@ else {
   checkPage(files, name);
   files.forEach(checkFile);
   checkPaint(files);
+  checkFonts(files);
 }
 
 if (problems.length > 0) {
