@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
@@ -14,6 +15,8 @@ from ai_geo_audit.config._base import Settings
 _DEV_DATABASE_URL = "postgresql+asyncpg://audit:audit@localhost:5462/audit"
 _DEV_REDIS_URL = "redis://localhost:6379/0"
 Level = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+#: Самая широкая сеть доверенных прокси по версии адреса: шире — это уже чужие машины.
+_WIDEST_PROXY_NET = {4: 16, 6: 64}
 
 
 class AppSettings(Settings):
@@ -65,3 +68,47 @@ class LogSettings(Settings):
 
     format: Literal["text", "json"] = Field("text", validation_alias="LOG_FORMAT")
     level: Level = Field("INFO", validation_alias="LOG_LEVEL")
+
+
+def _proxy_problem(element: str) -> str | None:
+    """Причина отказа элемента `API_TRUSTED_PROXIES`; годный элемент — None."""
+    if not element:
+        return "пустой элемент — назовите адреса прокси через запятую"
+    if element == "*":
+        return "`*` нельзя: назовите адреса прокси"
+    try:
+        ipaddress.ip_address(element)
+    except ValueError:
+        pass
+    else:
+        return None
+    try:
+        network = ipaddress.ip_network(element)
+    except ValueError:
+        return f"«{element}» — не адрес и не сеть"
+    if network.prefixlen < _WIDEST_PROXY_NET[network.version]:
+        return f"«{element}» — сеть шире /16 для IPv4 и шире /64 для IPv6 нельзя"
+    return None
+
+
+class ApiSettings(Settings):
+    """Вход API: адрес и порт процесса `api`; доверенные прокси — чьему заголовку с адресом
+    клиента верит uvicorn. Поле — строка со своим разбором, а не список: список из окружения
+    pydantic-settings разобрал бы как JSON. Список отдаёт свойство."""
+
+    host: str = Field("127.0.0.1", validation_alias="API_HOST")
+    port: int = Field(8107, ge=1, le=65535, validation_alias="API_PORT")
+    trusted_proxies_text: str = Field("127.0.0.1", validation_alias="API_TRUSTED_PROXIES")
+
+    @field_validator("trusted_proxies_text")
+    @classmethod
+    def _trusted_proxies_are_narrow(cls, value: str) -> str:
+        for element in (part.strip() for part in value.split(",")):
+            if why := _proxy_problem(element):
+                raise ValueError(why)
+        return value
+
+    @property
+    def trusted_proxies(self) -> list[str]:
+        """Адреса и сети прокси списком — так их ждёт uvicorn."""
+        return [part.strip() for part in self.trusted_proxies_text.split(",")]

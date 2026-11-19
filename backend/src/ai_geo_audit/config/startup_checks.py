@@ -28,9 +28,11 @@ UNENCODED_PASSWORD = "в пароле незакодированные знак�
 
 Process = Literal["api", "worker", "migrate"]
 
-#: Миграциям не нужен секрет входа, воркеру — тоже.
+#: Миграциям не нужен секрет входа, воркеру — тоже; адреса прокси нужны только api.
 _NEEDS: dict[Process, frozenset[str]] = {
-    "api": frozenset({"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE"}),
+    "api": frozenset(
+        {"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE", "API_TRUSTED_PROXIES"}
+    ),
     "worker": frozenset({"DATABASE_URL", "REDIS_URL", "KEYS_MASTER_KEY_FILE"}),
     "migrate": frozenset({"DATABASE_URL"}),
 }
@@ -122,6 +124,7 @@ def problems(
     storage: config.StorageSettings | None = None,
     access: config.AccessSettings | None = None,
     keys: config.KeySettings | None = None,
+    api: config.ApiSettings | None = None,
 ) -> list[Problem]:
     """Все негодные настройки процесса в боевом режиме; вне `prod` — пустой список."""
     if (app or config.app).env != "prod":
@@ -133,6 +136,9 @@ def problems(
         "REDIS_URL": _explicit("REDIS_URL", storage, "redis_url"),
         "JWT_SECRET": _secret("JWT_SECRET", secret, "подпись пропусков: openssl rand -hex 32"),
         "KEYS_MASTER_KEY_FILE": _master_key((keys or config.keys).master_key_file),
+        "API_TRUSTED_PROXIES": _explicit(
+            "API_TRUSTED_PROXIES", api or config.api, "trusted_proxies_text"
+        ),
     }
     return [p for name, p in checks.items() if name in _NEEDS[process] and p is not None]
 

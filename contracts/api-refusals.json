@@ -1,0 +1,74 @@
+{
+  "_": "Ответы сервиса: бэкенд сверяет ответ на when, фронт — чтение; незнакомый вид — красный.",
+  "samples": [
+    {
+      "id": "health-ok",
+      "when": "GET /api/health без пропуска, база отвечает",
+      "status": 200,
+      "headers": {"content-type": "application/json"},
+      "body": {"status": "ok"}
+    },
+    {
+      "id": "signed-out",
+      "when": "путь вне списка открытых без годного пропуска: GET /api/nope",
+      "status": 403,
+      "headers": {"content-type": "application/json", "x-access-refusal": "signed-out"},
+      "body": {"detail": "Нужен вход — войдите заново", "kind": "signed-out", "retry": false}
+    },
+    {
+      "id": "not-found",
+      "when": "вошедший, такого адреса нет: GET /api/nope с годным пропуском",
+      "status": 404,
+      "headers": {"content-type": "application/json"},
+      "body": {"detail": "Такого адреса нет", "kind": "not-found", "retry": false}
+    },
+    {
+      "id": "method-not-allowed",
+      "when": "открытый путь, лишний метод: POST /api/health без пропуска",
+      "status": 405,
+      "headers": {"content-type": "application/json", "allow": "GET"},
+      "body": {
+        "detail": "Это действие здесь не поддерживается",
+        "kind": "method-not-allowed",
+        "retry": false
+      }
+    },
+    {
+      "id": "invalid",
+      "when": "вошедший, тело не по схеме: нет обязательного поля name",
+      "status": 422,
+      "headers": {"content-type": "application/json"},
+      "errors_item_keys": ["loc", "type"],
+      "body": {
+        "detail": "Запрос заполнен неверно — проверьте данные",
+        "kind": "invalid",
+        "retry": false,
+        "errors": [{"loc": ["body", "name"], "type": "missing"}]
+      }
+    },
+    {
+      "id": "internal",
+      "when": "вошедший, обработчик упал; запрос без X-Request-ID",
+      "status": 500,
+      "headers": {"content-type": "application/json"},
+      "header_patterns": {"x-request-id": "^[0-9a-f]{32}$"},
+      "detail_pattern": "^Сбой на нашей стороне\\. Номер запроса: ([0-9a-f]{32})$",
+      "body": {
+        "detail": "Сбой на нашей стороне. Номер запроса: 00000000000000000000000000000000",
+        "kind": "internal",
+        "retry": false
+      }
+    },
+    {
+      "id": "unavailable",
+      "when": "GET /api/health без пропуска, база не отвечает",
+      "status": 503,
+      "headers": {"content-type": "application/json"},
+      "body": {
+        "detail": "Сервис временно недоступен — повторите позже",
+        "kind": "unavailable",
+        "retry": true
+      }
+    }
+  ]
+}

@@ -44,6 +44,9 @@ _PG_VALUES = (
 #: Поля, которые `logging` кладёт в запись сам; всё прочее пришло из `extra`.
 _STANDARD = frozenset(logging.LogRecord("", 0, "", 0, "", None, None).__dict__) | {"message"}
 _NOISY_LOGGERS = ("httpx", "httpcore")
+#: Поля записи, которые в вывод не идут: `color_message` — копия сообщения uvicorn с цветом,
+#: управляющими знаками терминала.
+_DROPPED = frozenset({"color_message"})
 
 
 def register_secret(value: str) -> None:
@@ -110,7 +113,8 @@ def _utc(record: logging.LogRecord) -> str:
 
 def _extra(record: logging.LogRecord) -> dict[str, object]:
     fields = record.__dict__.items()
-    return {k: v for k, v in fields if k not in _STANDARD and not k.startswith("_")}
+    dropped = _STANDARD | _DROPPED
+    return {k: v for k, v in fields if k not in dropped and not k.startswith("_")}
 
 
 def _scrub(value: object) -> object:
