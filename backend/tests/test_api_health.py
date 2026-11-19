@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import socket
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 import api_probes as probes
 import dbtools
 import pytest
+from sqlalchemy.engine import make_url
 
 from ai_geo_audit.api import contract, health
 from ai_geo_audit.logs import setup as log_setup
@@ -50,6 +52,51 @@ async def silent_db() -> AsyncIterator[Silent]:
     found.url = f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
     yield found
     for writer in found.accepted:
+        writer.close()
+    server.close()
+    await asyncio.wait_for(server.wait_closed(), 2)
+
+
+@dataclass
+class Relay:
+    """Посредник TCP перед тестовой базой: по флагу перестаёт пересылать байты, соединений не
+    рвёт; считает открытые соединения."""
+
+    url: str = ""
+    frozen: bool = False
+    open: int = 0
+
+
+@pytest.fixture
+async def relay() -> AsyncIterator[Relay]:
+    real = make_url(dbtools.own_url())
+    found = Relay()
+    links: list[asyncio.StreamWriter] = []
+
+    async def pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        with contextlib.suppress(ConnectionError):
+            while data := await reader.read(65536):
+                while found.frozen:
+                    await asyncio.sleep(0.02)
+                writer.write(data)
+                await writer.drain()
+        writer.close()
+
+    async def link(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        found.open += 1
+        upstream_reader, upstream = await asyncio.open_connection(real.host, real.port)
+        links.extend([writer, upstream])
+        try:
+            await asyncio.gather(pump(reader, upstream), pump(upstream_reader, writer))
+        finally:
+            found.open -= 1
+
+    server = await asyncio.start_server(link, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    found.url = real.set(host="127.0.0.1", port=port).render_as_string(hide_password=False)
+    yield found
+    found.frozen = False
+    for writer in links:
         writer.close()
     server.close()
     await asyncio.wait_for(server.wait_closed(), 2)
@@ -112,6 +159,32 @@ async def test_a40_silent_database_is_cut_by_the_limit(
     assert took <= 1.0, took
     records = list(warnings_of(capsys.readouterr().err))
     assert [(r["error"], r["limit_seconds"]) for r in records] == [("TimeoutError", 0.5)]
+
+
+async def test_a40_database_frozen_on_a_pooled_connection_is_cut_too(
+    monkeypatch: pytest.MonkeyPatch, relay: Relay
+) -> None:
+    """A40, строже показанного: база замёрзла на соединении, которое уже лежит в пуле, — посредник
+    перестал пересылать байты, соединений не рвёт. Первый запрос — 200; при заморозке второй —
+    503 не позже предела плюс 1 с, и соединение обрывается, а не возвращается в пул; после
+    разморозки — 200, у посредника открыто одно соединение: оборванное не утекло."""
+    probes.use_database(monkeypatch, relay.url)
+    monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
+    async with probes.client(probes.build()) as http, asyncio.timeout(5):
+        first = await http.get("/api/health")
+        relay.frozen = True
+        started = time.monotonic()
+        second = await http.get("/api/health")
+        took = time.monotonic() - started
+        relay.frozen = False
+        third = await http.get("/api/health")
+        for _ in range(50):
+            if relay.open == 1:
+                break
+            await asyncio.sleep(0.02)
+    assert [first.status_code, second.status_code, third.status_code] == [200, 503, 200]
+    assert took <= 1.5, took
+    assert relay.open == 1
 
 
 async def test_a41_requests_without_database_need_do_not_touch_it(

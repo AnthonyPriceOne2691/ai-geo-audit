@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -28,9 +29,26 @@ def json_records(err: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in err.splitlines() if line.startswith("{")]
 
 
+def asgi_scope(path: str, headers: list[tuple[bytes, bytes]], method: str = "GET") -> Scope:
+    """Область запроса ASGI: заголовки — как есть, байтами."""
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"host", b"test"), *headers],
+        "client": ("127.0.0.1", 40000),
+        "server": ("test", 80),
+    }
+
+
 async def bare_call(app: ASGIApp, headers: list[tuple[bytes, bytes]]) -> str:
-    """`GET /api/nope` прямо в приложение ASGI: заголовки области — как есть, байтами; номер
-    запроса из ответа."""
+    """`GET /api/nope` прямо в приложение ASGI; номер запроса из ответа."""
     sent: list[Message] = []
 
     async def receive() -> Message:
@@ -39,21 +57,7 @@ async def bare_call(app: ASGIApp, headers: list[tuple[bytes, bytes]]) -> str:
     async def send(message: Message) -> None:
         sent.append(message)
 
-    scope: Scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": "GET",
-        "scheme": "http",
-        "path": "/api/nope",
-        "raw_path": b"/api/nope",
-        "query_string": b"",
-        "root_path": "",
-        "headers": [(b"host", b"test"), *headers],
-        "client": ("127.0.0.1", 40000),
-        "server": ("test", 80),
-    }
-    await app(scope, receive, send)
+    await app(asgi_scope("/api/nope", headers), receive, send)
     start = next(m for m in sent if m["type"] == "http.response.start")
     return str(dict(start["headers"])[b"x-request-id"].decode())
 
@@ -200,3 +204,29 @@ async def test_a47_path_keeps_percents_and_one_record_is_one_line(
         assert "path=/api/a%0Ab%0Dc" in access[0]
     starts = (lambda line: line.startswith("{")) if fmt == "json" else TEXT_RECORD.match
     assert [line for line in lines if not starts(line)] == []
+
+
+async def test_a47_cancelled_request_still_writes_its_access_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A47, строже показанного: задача запроса отменена посреди чтения тела — так её снимает
+    остановка по пределу мягкой остановки; строка доступа всё равно одна, с путём и без кода."""
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    hold = asyncio.Event()
+
+    async def receive() -> Message:
+        await hold.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        return None
+
+    headers = [(b"x-access-token", probes.PASS.encode()), (b"content-length", b"10")]
+    task = asyncio.create_task(app(asgi_scope(probes.BODY, headers, "POST"), receive, send))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    records = [r for r in json_records(capsys.readouterr().err) if r["logger"] == ACCESS]
+    assert [(r["path"], r["status"]) for r in records] == [(probes.BODY, None)]
