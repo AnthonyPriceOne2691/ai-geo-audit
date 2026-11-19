@@ -7,9 +7,10 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
-  <!-- T15 — сверка в чистом клоне 2026-11-19T11:10:10Z на `4c40f12`, отчёт — verify-report.md;
-       сдача — T16, вердикт ставит проверяющий. Срез 5 ушёл в Ч1.2г (T11). -->
+- **phase:** handoff
+  <!-- Вердикт проверяющего READY FOR HANDOFF — `cfecfdc`; подпись владельца под
+       утверждениями — `5820caa` (2026-11-19T11:32Z), тем же словом — публикация в main.
+       Срез 5 (A30, A31) ушёл в Ч1.2г (T11). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T08:59Z)
@@ -65,8 +66,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** на тестовом выкате (Ч1.6): два `migrate` разом — второй ждёт замок и выходит с кодом 0, в `alembic_version` одна строка; пока замок занят, `pg_locks` показывает ждущего с ключом 1001; негодная настройка и слабый пароль базы в бою — отказ словами, без трассировки и введённого значения; в журнале выката нет паролей базы и Redis
+- **observe_until:** 2026-11-27
 - **circuit_breakers:** max_loc_diff=1200
   <!-- Настройка проекта по слову владельца ведущей сессии 2026-11-18T13:49Z: «давай 1200
        строк вместе с тестами». Остальные предохранители — по умолчанию из
