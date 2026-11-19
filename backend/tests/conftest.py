@@ -1,26 +1,35 @@
-"""Тесты не читают `.env` разработчика и не видят его переменных окружения.
+"""Тесты не ходят дальше петли, не читают `.env` разработчика и не видят его окружения.
 
 База тестов — своя у рабочей копии (`dbtools`); без Postgres прогон останавливается один раз.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import os
-from collections.abc import AsyncIterator, Iterator
+# Запрет сети — до любого импорта сервиса и до фикстур уровня сессии (A30); вычистка окружения —
+# до первого импорта пакета: конфиг читает окружение при импорте (A31).
+import netguard  # isort: skip
 
-import pytest
+netguard.install()
+import envguard  # noqa: E402  # isort: skip
 
-# До первого импорта пакета: `config/_base.py` берёт путь к `.env` при импорте.
-os.environ["ENV_FILE"] = os.devnull
+CLEANED = envguard.clean()
+
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+from collections.abc import AsyncIterator, Iterator  # noqa: E402
 
 import dbtools  # noqa: E402
+import pytest  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession  # noqa: E402
 
 from ai_geo_audit import config  # noqa: E402
 from ai_geo_audit.logs import setup as log_setup  # noqa: E402
 from ai_geo_audit.storage import build_engine, dispose_engine  # noqa: E402
+
+
+def pytest_report_header() -> str:
+    """В шапке прогона — число вычищенных имён окружения, без значений (A31)."""
+    return f"окружение тестов: вычищено имён — {len(CLEANED)}; сеть — только петля"
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
