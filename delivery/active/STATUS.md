@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** tasks
-  <!-- Пробы T1 сделаны 2026-11-19, итог — в decisions. Код — после подписи владельца под
-       примерами: её вносит проверяющий своим коммитом. -->
+- **phase:** implement
+  <!-- Пробы T1 сделаны 2026-11-19, итог — в decisions. Подпись владельца под примерами —
+       2026-11-19T08:59Z; код идёт срезами, срез 5 — после контрольной точки (T11). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T08:59Z)

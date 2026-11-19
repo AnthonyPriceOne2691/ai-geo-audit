@@ -11,6 +11,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import time
 from collections.abc import AsyncIterator
 from datetime import datetime
 from enum import StrEnum
@@ -152,10 +153,11 @@ async def prepare() -> None:
         await engine.dispose()
 
 
-def alembic_env() -> dict[str, str]:
+def alembic_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Окружение подпроцесса alembic — с нуля: адрес своей тестовой базы, без `.env`, переменные
     разработчика не доходят. `COVERAGE_*` проходят по приставке: так покрытие подпроцесса увидит
-    ревизии. Адрес не своей тестовой базы — отказ до подпроцесса."""
+    ревизии. `extra` — настройки, которые тест задаёт явно. Адрес не своей тестовой базы — отказ
+    до подпроцесса."""
     url = own_url()
     name = make_url(url).database or ""
     if not name.startswith(PREFIX):
@@ -163,24 +165,117 @@ def alembic_env() -> dict[str, str]:
     env = {"PATH": os.environ.get("PATH", ""), "ENV_FILE": os.devnull, "DATABASE_URL": url}
     env["PYTHONUTF8"] = "1"  # журнал на русском при пустом окружении локали
     env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
-    return env
+    return env | (extra or {})
+
+
+def _alembic_command(args: tuple[str, ...], config: Path | None) -> list[str]:
+    cli = Path(sys.executable).with_name("alembic")
+    return [str(cli), *(["-c", str(config)] if config else []), *args]
 
 
 def alembic(
-    *args: str, config: Path | None = None, timeout: float = ALEMBIC_TIMEOUT
+    *args: str,
+    config: Path | None = None,
+    timeout: float = ALEMBIC_TIMEOUT,
+    extra: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """`alembic <args>` подпроцессом из backend/ — та же команда, что в бою."""
-    cli = Path(sys.executable).with_name("alembic")
-    command = [str(cli), *(["-c", str(config)] if config else []), *args]
     return subprocess.run(
-        command,
+        _alembic_command(args, config),
         cwd=BACKEND,
-        env=alembic_env(),
+        env=alembic_env(extra),
         capture_output=True,
         text=True,
         timeout=timeout,
         check=False,
     )
+
+
+def alembic_start(
+    *args: str, config: Path | None = None, extra: dict[str, str] | None = None
+) -> subprocess.Popen[str]:
+    """`alembic <args>` подпроцессом без ожидания: несколько `migrate` разом, ждущий замка."""
+    return subprocess.Popen(
+        _alembic_command(args, config),
+        cwd=BACKEND,
+        env=alembic_env(extra),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def finish(proc: subprocess.Popen[str], timeout: float = ALEMBIC_TIMEOUT) -> tuple[int, str]:
+    """Код выхода и журнал подпроцесса; зависший дольше предела убит и назван."""
+    try:
+        _, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        _, err = proc.communicate()
+        raise AssertionError(f"alembic висит дольше {timeout} с:\n{err[-1500:]}") from None
+    return proc.returncode, err
+
+
+async def lock_waiters(key: int, at_least: int = 1, timeout: float = 10) -> int:
+    """Сколько соединений своей базы ждут advisory-замок `key` (строки `pg_locks` с
+    `granted=false`); ждать появления `at_least` не дольше `timeout`, а не «сном на глаз»."""
+    conn = await asyncpg.connect(_raw(own_url()))
+    query = (
+        "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
+        " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+        " AND classid::bigint = $1 AND objid::bigint = $2 AND objsubid = 1"
+    )
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            found: int = await conn.fetchval(query, key >> 32, key & 0xFFFFFFFF)
+            if found >= at_least or time.monotonic() > deadline:
+                return found
+            await asyncio.sleep(0.05)
+    finally:
+        await conn.close()
+
+
+def ini_for(tmp_path: Path, scenario: str) -> Path:
+    """`alembic.ini` с каталогом ревизий-проб поверх настоящего: команда та же, что в бою."""
+    versions = f"{BACKEND / 'migrations' / 'versions'}{os.pathsep}"
+    versions += str(Path(__file__).parent / "probe_revisions" / scenario)
+    ini = tmp_path / "alembic.ini"
+    script = BACKEND / "migrations"
+    body = f"[alembic]\nscript_location = {script}\nversion_locations = {versions}\n"
+    ini.write_text(body + "path_separator = os\n", encoding="utf-8")
+    return ini
+
+
+async def public_tables() -> set[str]:
+    conn = await asyncpg.connect(_raw(own_url()))
+    try:
+        found = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+        return {row["tablename"] for row in found}
+    finally:
+        await conn.close()
+
+
+async def version() -> str:
+    conn = await asyncpg.connect(_raw(own_url()))
+    try:
+        return await conn.fetchval("SELECT version_num FROM alembic_version")
+    finally:
+        await conn.close()
+
+
+#: Таблицы ревизий-проб: после теста их нет, что бы в нём ни случилось.
+PROBE_TABLES = ("probe_rev", "probe_half", "probe_target", "probe_setting")
+
+
+async def back_to_start(ini: Path) -> None:
+    """Вернуть цепочку на `0001` и снести таблицы проб, что бы ни случилось в тесте."""
+    alembic("downgrade", "0001", config=ini)
+    conn = await asyncpg.connect(_raw(own_url()))
+    try:
+        await conn.execute(f"DROP TABLE IF EXISTS {', '.join(PROBE_TABLES)}")
+    finally:
+        await conn.close()
 
 
 async def rows(engine: AsyncEngine, key: str | None = None) -> int:

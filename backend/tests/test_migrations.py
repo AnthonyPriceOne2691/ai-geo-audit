@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 import asyncpg
 import dbtools
 import pytest
+from dbtools import back_to_start, ini_for, public_tables, version
 from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
@@ -211,34 +211,6 @@ def test_a17_check_command_compares_server_defaults(monkeypatch: pytest.MonkeyPa
         asyncio.run(execute(f"DROP TABLE IF EXISTS {CMP}"))
 
 
-def ini_for(tmp_path: Path, scenario: str) -> Path:
-    """`alembic.ini` с каталогом ревизий-проб поверх настоящего: команда та же, что в бою."""
-    versions = f"{dbtools.BACKEND / 'migrations' / 'versions'}{os.pathsep}"
-    versions += str(Path(__file__).parent / "probe_revisions" / scenario)
-    ini = tmp_path / "alembic.ini"
-    script = dbtools.BACKEND / "migrations"
-    body = f"[alembic]\nscript_location = {script}\nversion_locations = {versions}\n"
-    ini.write_text(body + "path_separator = os\n", encoding="utf-8")
-    return ini
-
-
-async def public_tables() -> set[str]:
-    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
-    try:
-        found = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-        return {row["tablename"] for row in found}
-    finally:
-        await conn.close()
-
-
-async def version() -> str:
-    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
-    try:
-        return await conn.fetchval("SELECT version_num FROM alembic_version")
-    finally:
-        await conn.close()
-
-
 async def up_down_up(ini: Path) -> list[str]:
     """Вверх, вниз, вверх: после отката таблиц ревизии нет, подъём снова проходит."""
     before = await public_tables()
@@ -250,16 +222,6 @@ async def up_down_up(ini: Path) -> list[str]:
     problems = [f"после отката осталась таблица {name}" for name in left]
     steps = (("вверх", first), ("вниз", down), ("снова вверх", again))
     return problems + [f"{what}: код {run.returncode}" for what, run in steps if run.returncode]
-
-
-async def back_to_start(ini: Path) -> None:
-    """Вернуть цепочку на `0001` и снести таблицы проб, что бы ни случилось в тесте."""
-    dbtools.alembic("downgrade", "0001", config=ini)
-    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
-    try:
-        await conn.execute("DROP TABLE IF EXISTS probe_rev, probe_half")
-    finally:
-        await conn.close()
 
 
 async def test_a18_up_down_up_passes_with_an_honest_downgrade(tmp_path: Path) -> None:
