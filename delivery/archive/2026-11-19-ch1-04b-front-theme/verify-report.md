@@ -26,9 +26,127 @@
 ## Прогон в чистом клоне
 
 Локальные гейты обходятся, поэтому доказательство — прогон на склонированном состоянии (§10.4).
+
+### На коммите сдачи `6499019`
+
+Один прогон после слияния main с Ч1.2г (`98f7f69`) и коммита сдачи, с 2026-11-19T12:38:44Z по
+12:38:54Z. База диффа — `origin/main` клона, `cf66625` (Ч1.2г). Клон свежий, во временной папке,
+команды в нём — подоболочкой (L20), после прогона удалён. Вывод — дословный, только путь клона
+заменён на `<клон>`. Коммит после `6499019` меняет только этот отчёт: этот блок, строку A23 и
+счёт коммитов в метриках.
+
+```
+$ git clone -b ch1-04b-front-theme <репозиторий> <клон> && cd <клон>
+$ git log --format='%h %p %s' -3 && git rev-parse --short origin/main && git merge-base HEAD origin/main && git rev-parse HEAD:frontend HEAD:backend
+6499019 98f7f69 chore(delivery): handoff Ч1.4б — фаза, метрики, наблюдение, уроки L39–L41, перенос в архив
+98f7f69 e7eebd7 cf66625 merge: main (Ч1.2г) в ветку Ч1.4б перед сдачей
+cf66625 a01c800 chore(delivery): handoff Ч1.2г — фаза, метрики, наблюдение, уроки L35–L38, перенос в архив
+cf66625
+cf6662573987bbd3869c8b362fc0dd2e99fba70c
+ba5fbba81a45b1b1675af41869063bfed4f63601
+9a9dab9f776e56f752cb23a3c0f0d2d53c4ff1c2
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно cf6662573987..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-19-ch1-04b-front-theme (phase=handoff)
+debt: снимков долга на HEAD не прочитано — таять нечему
+breakers: files=16 net_loc=1175 (+1193/-18), excluded=11 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scripts/delivery_|scripts/okf_|.claude/|docs/canon/|.pre-commit-config.yaml|.github/workflows/|.gitlab-ci.yml|scripts/check_irreversible_signature.sh|scripts/sign_irreversible.sh|stack_selftest.py|selftest_sizes.py|extract_payload.py|scripts/stack_selftest.py|scripts/selftest_sizes.py|scripts/extract_payload.py|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lockb|poetry.lock|uv.lock|Pipfile.lock|Cargo.lock|go.sum|Gemfile.lock|composer.lock|Podfile.lock), limits={'max_files_touched': 25, 'max_loc_diff': 1200, 'max_runtime_paths': 1, 'max_unsigned_irreversible': 0}
+наблюдение §13.1: поставок в архиве 8, окон со сроком 8, истекших без observed.md 0
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Создай STATUS по шаблону A.2
+WARNING: delivery/archive/2026-11-19-ch1-04b-front-theme: acceptance-примеры без ссылки в тестах/eval-smoke: F13, F19 (§3.1d) — пометь тест id примера в комментарии или в начале докстринга; строка, целиком равная id, и %-код ссылкой не считаются
+WARNING: delivery/archive/2026-11-19-ch1-04b-front-theme: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given` (hypothesis); `fc.property` (fast-check). Отношение на фиксированном корпусе (паритет, метаморфное без генератора) сюда не идёт: входы в нём выбрал автор. Инвариант, round-trip, идемпотентность, метаморфное отношение или differential: в них нет ожидаемого значения, поэтому в них нельзя спрятать неверное ожидание. Один инвариант обычно ловит больше десяти тестов-значений, потому что раннер перебирает входы, о которых автор не думал. Проверь заодно, что mutation-гейт у тебя не пропускается: иначе слабое свойство (`assert result is not None`) пройдёт
+WARNING: delivery/archive/2026-11-19-ch1-04b-front-theme: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+delivery_check: 0 error(s), 4 warning(s)
+exit=0
+$ cd frontend && node --version && npm --version && npm ci && npm run check; echo "exit=$?"
+v24.12.0
+11.11.1
+npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated eslint@9.39.5: This version is no longer supported. Please see https://eslint.org/version-support for other options.
+
+added 409 packages, and audited 410 packages in 2s
+
+145 packages are looking for funding
+  run `npm fund` for details
+
+7 moderate severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues, run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+
+> ai-geo-audit-frontend@0.1.0 check
+> npm run lint && npm run format:check && npm run typecheck && npm test && npm run build && npm run check:dist
+
+
+> ai-geo-audit-frontend@0.1.0 lint
+> eslint .
+
+
+> ai-geo-audit-frontend@0.1.0 format:check
+> prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!
+
+> ai-geo-audit-frontend@0.1.0 typecheck
+> tsc --noEmit
+
+
+> ai-geo-audit-frontend@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.3 <клон>/frontend
+
+
+ Test Files  4 passed (4)
+      Tests  72 passed (72)
+   Start at  15:38:52
+   Duration  1.17s (tests 51%, import 21%, environment 15%, setup 9%, transform 3%)
+
+
+> ai-geo-audit-frontend@0.1.0 build
+> vite build
+
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 755 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                              0.40 kB │ gzip:  0.27 kB
+dist/assets/geologica-cyrillic-wght-normal-DbeVG3Ps.woff2   16.43 kB
+dist/assets/geologica-latin-wght-normal-BBL8hQxZ.woff2      24.94 kB
+dist/assets/index-DZcS4GCz.css                             205.79 kB │ gzip: 30.75 kB
+dist/assets/index-dl4BN3-e.js                              314.26 kB │ gzip: 96.59 kB
+✓ built in 635ms
+
+> ai-geo-audit-frontend@0.1.0 check:dist
+> node scripts/check-dist.mjs
+
+проверено 5 файлов
+exit=0
+$ git status --porcelain | wc -l
+       0
+```
+
+- **Деревья на `6499019`:** `frontend/` — `ba5fbba`, как на вердикте `85293dd`; `backend/` —
+  `9a9dab9`, как на main `cf66625`.
+- **Гейт** судит поставку, которую архивирует дифф (`phase=handoff`): 0 ошибок, 4 предупреждения.
+  «idle» — после переноса в архив активной поставки нет; F13 и F19 ушли в «Схему и цвета
+  компонентов»; реляционного оракула и CI нет до волны В1. Счёт — 16 файлов, 1175 строк, как на
+  вердикте.
+- **Цепочка** — 72 теста, сборка с теми же именами файлов с хешем, «проверено 5 файлов»; рабочее
+  дерево после неё чистое.
+
+### На `0942eed`, до слияния с Ч1.2г
+
 База диффа — `origin/main` клона (`2bdf4d9`, поставка Ч1.2в).
 
-Итоговый прогон — на `0942eed`, моим прогоном с 2026-11-19T12:15:03Z по 12:19:08Z. Клон лежал во
+Прогон на `0942eed` — моим прогоном с 2026-11-19T12:15:03Z по 12:19:08Z. Клон лежал во
 временной папке, команды в нём шли подоболочкой (L20), после прогона клон удалён. Вывод ниже —
 дословный, только путь клона заменён на `<клон>`.
 
@@ -443,6 +561,8 @@ asserts_without_example: 3
       - `lang="ru"` сканер не берёт: это язык страницы.
       - Прогон субагента на `1e8e676`, только код — 17 файлов, в 11:59:08Z: одно совпадение, то
         же в lock.
+      - На коммите сдачи — те же 26 файлов, документы уже в архиве поставки: совпадений 7, в коде
+        0. Седьмое — слова правила в вердикте проверяющего ниже.
 - [x] PASS — eval-smoke:
   - F6, F10–F15, F18–F20 — на Node 24 `npm ci && npm run check`: шесть шагов зелёные, 72 теста,
     пропусков 0; после цепочки `git status --porcelain` пуст;
@@ -551,7 +671,7 @@ asserts_without_example: 3
 | Metric | Value |
 |---|---|
 | files_touched / loc_diff | 17 code (+9 process docs) / +1203/-18 (net +1185); гейт без lock — 16 файлов, 1175 строк |
-| commits | 23 — с вердиктом и подписью проверяющего, двумя слияниями main и коммитом сдачи |
+| commits | 24 — с вердиктом и подписью проверяющего, двумя слияниями main, коммитом сдачи и вставкой прогона на нём |
 | time_to_accepted_spec | 0.0h — спеку подписал владелец до открытия ветки (08:59Z) |
 | rework_after_done | 0 |
 | harness_hardened | yes — расчёт контраста `frontend/src/test/contrast.ts`; тест темы с таблицей ролей Mantine целиком; оракул сборки: фон и цвет текста схем (F12), наборы знаков шрифта (F6) |
