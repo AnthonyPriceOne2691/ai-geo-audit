@@ -6,6 +6,9 @@
 Замок миграций (A19) и пределы ожидания (A20) — внутри транзакции alembic, до чтения версии.
 Команда к соединению до `context.configure` открыла бы транзакцию сама: alembic счёл бы её
 внешней, `upgrade` вышел бы с кодом 0, а ревизии откатились бы при закрытии соединения.
+
+Все отказы — словами, без трассировки. Настройки собираются при импорте конфига, поэтому
+негодное значение ловится на импорте: имя переменной и причина, без введённого значения.
 """
 
 from __future__ import annotations
@@ -14,14 +17,22 @@ import asyncio
 import time
 
 from alembic import context
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 
-from ai_geo_audit import config
-from ai_geo_audit.config import startup_checks
-from ai_geo_audit.logs import setup as logs
-from ai_geo_audit.storage import build_engine, locks, models
+try:
+    from ai_geo_audit import config
+    from ai_geo_audit.config import startup_checks
+    from ai_geo_audit.logs import setup as logs
+    from ai_geo_audit.storage import build_engine, locks, models
+except ValidationError as invalid:
+    reasons = "\n".join(
+        f"  {'.'.join(map(str, error['loc']))} — {error['msg'].removeprefix('Value error, ')}"
+        for error in invalid.errors(include_url=False, include_input=False)
+    )
+    raise SystemExit(f"Процесс «migrate» не стартует, негодные настройки:\n{reasons}") from None
 
 #: Предел ожидания блокировки таблицы на время ревизий — константа без настройки (decisions).
 TABLE_WAIT_SECONDS = 10
