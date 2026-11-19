@@ -60,6 +60,38 @@ $ cd backend && uv sync --frozen && uv run pytest -q -p no:cacheprovider -W erro
 - Тестовая база клона — своя, снимается после гейта на коммите сдачи.
 - Между этим прогоном и вершиной — только коммит документов сверки.
 
+### На коммите сдачи `4542403`
+
+Один прогон после коммита сдачи `b44087e` и отметки прогона S3 `4542403`, с 2026-11-19T13:44:27Z
+по 13:44:55Z. База диффа — `origin/main` клона, `77d411c` (Ч1.4б). Клон свежий, его тестовая
+база снята перед клоном; команды в нём — подоболочкой (L20); после прогона клон и база удалены.
+Вывод — дословный. Коммит после `4542403` меняет только этот отчёт: этот блок и счёт коммитов в
+метриках.
+
+```
+$ git clone -b ch1-03-api-entry <репозиторий> <клон> && cd <клон>
+$ git log --format='%h %p %s' -3 && git rev-parse --short origin/main && git merge-base HEAD origin/main && git rev-parse HEAD:backend
+4542403 b44087e docs(delivery): Ч1.3 — отметка прогона S3 at= в блоке исполнения (§12.6)
+b44087e 6857e55 chore(delivery): handoff Ч1.3 — фаза, метрики, наблюдение, уроки L42–L44, перенос в архив
+6857e55 b4d49f5 docs(delivery): Ч1.3 — подпись владельца под утверждениями
+77d411c
+77d411c40127b6a03ef67ca8164c103225d16264
+6d1cff3f868490f696fd74a38967b115fb420e76
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно 77d411c40127..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-19-ch1-03-api-entry (phase=handoff)
+debt: снимков долга на HEAD не прочитано — таять нечему
+breakers: files=21 net_loc=1170 (+1184/-14), excluded=11 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scripts/delivery_|scripts/okf_|.claude/|docs/canon/|.pre-commit-config.yaml|.github/workflows/|.gitlab-ci.yml|scripts/check_irreversible_signature.sh|scripts/sign_irreversible.sh|stack_selftest.py|selftest_sizes.py|extract_payload.py|scripts/stack_selftest.py|scripts/selftest_sizes.py|scripts/extract_payload.py|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml|bun.lockb|poetry.lock|uv.lock|Pipfile.lock|Cargo.lock|go.sum|Gemfile.lock|composer.lock|Podfile.lock), limits={'max_files_touched': 25, 'max_loc_diff': 1200, 'max_runtime_paths': 1, 'max_unsigned_irreversible': 0}
+наблюдение §13.1: поставок в архиве 9, окон со сроком 9, истекших без observed.md 0
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Создай STATUS по шаблону A.2
+WARNING: delivery/archive/2026-11-19-ch1-03-api-entry: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given` (hypothesis); `fc.property` (fast-check). Отношение на фиксированном корпусе (паритет, метаморфное без генератора) сюда не идёт: входы в нём выбрал автор. Инвариант, round-trip, идемпотентность, метаморфное отношение или differential: в них нет ожидаемого значения, поэтому в них нельзя спрятать неверное ожидание. Один инвариант обычно ловит больше десяти тестов-значений, потому что раннер перебирает входы, о которых автор не думал. Проверь заодно, что mutation-гейт у тебя не пропускается: иначе слабое свойство (`assert result is not None`) пройдёт
+WARNING: delivery/archive/2026-11-19-ch1-03-api-entry: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+delivery_check: 0 error(s), 3 warning(s)
+exit=0
+$ cd backend && uv sync --frozen -q && uv run pytest -q -p no:cacheprovider -W error | tail -1
+305 passed in 23.46s
+```
+
 ## Дайджест утверждений
 
 `assert_digest.sh` из полезной нагрузки канона положен в клон, база — `origin/main`. Первый
@@ -314,7 +346,7 @@ A43 следующей поставки, до неё `/api/health` без мар
 | Metric | Value |
 |---|---|
 | files_touched / loc_diff | 22 code (+9 process docs) / +1329/-14 (net +1315); гейт на итоговой вершине — 21 файл, 1170 строк: `backend/uv.lock` (+145) гейт не считает |
-| commits | 25 — с вердиктом и подписью проверяющего, со слияниями main |
+| commits | 27 — с вердиктом и подписью проверяющего, со слияниями main, с коммитом сдачи и прогоном на нём |
 | time_to_accepted_spec | 0.1h |
 | rework_after_done | 0 (handoff not declared yet) |
 | harness_hardened | yes — backend/tests/api_probes.py (новый оракул), backend/tests/test_api_app.py (новый оракул), backend/tests/test_api_contract.py (новый оракул) |
