@@ -178,10 +178,12 @@ def test_a21_short_db_passwords_are_counted_after_decoding(
 
 
 def test_a21_migrate_refuses_an_unencoded_password_without_printing_it() -> None:
-    """A21: процесс `migrate` в бою с паролем `pa@ss-word-123456` — код не 0, причина словами;
+    """A21: процесс `migrate` в бою с паролем `pa@ss-word-123456` — код не 0, причина словами, без
+    трассировки: слова причины стоят и в последней строке трассировки (порча E10 проверяющего);
     ни куска пароля в журнале нет."""
     url = db("pa@ss-word-123456", f"127.0.0.1:5462/{dbtools.own_name()}")
     run = dbtools.alembic("upgrade", "head", extra={"APP_ENV": "prod", "DATABASE_URL": url})
     assert run.returncode != 0
     assert sc.UNENCODED_PASSWORD in run.stderr
+    assert "Traceback" not in run.stderr, run.stderr[-1500:]
     assert "ss-word-123456" not in run.stderr

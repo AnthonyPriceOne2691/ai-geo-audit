@@ -109,8 +109,8 @@ async def test_a19_four_upgrades_at_once_all_succeed() -> None:
 
 async def test_a19_lock_limit_refuses_in_words() -> None:
     """A19: замок занят дольше предела ожидания (`MIGRATION_LOCK_WAIT_SECONDS=1`) — код ≠ 0
-    раньше 5 с от запуска и причина «миграции уже идут»: сколько ждали и какой предел. Порча
-    «предел таблицы поставлен до замка» дала бы отказ на 10-й секунде."""
+    раньше 5 с от запуска и причина «миграции уже идут»: сколько ждали и какой предел, без
+    трассировки. Порча «предел таблицы поставлен до замка» дала бы отказ на 10-й секунде."""
     conn, held = await hold_lock()
     started = time.monotonic()
     proc = dbtools.alembic_start("upgrade", "head", extra={"MIGRATION_LOCK_WAIT_SECONDS": "1"})
@@ -124,6 +124,7 @@ async def test_a19_lock_limit_refuses_in_words() -> None:
     assert code != 0
     assert took < 5, f"отказ через {took:.1f} с: предел замка не сработал"
     assert re.search(r"миграции уже идут: ждали \d+ с, предел 1 с", err), err[-1500:]
+    assert "Traceback" not in err, err[-1500:]
 
 
 @pytest.mark.parametrize("value", ["0", "3601"])
@@ -149,10 +150,12 @@ def test_a19_lock_wait_inside_bounds_starts(
 
 
 def test_a19_migrate_does_not_start_with_the_setting_out_of_bounds() -> None:
-    """A19: процесс `migrate` с `MIGRATION_LOCK_WAIT_SECONDS=0` не стартует и называет настройку."""
+    """A19: процесс `migrate` с `MIGRATION_LOCK_WAIT_SECONDS=0` не стартует и называет настройку,
+    без трассировки."""
     run = dbtools.alembic("upgrade", "head", extra={"MIGRATION_LOCK_WAIT_SECONDS": "0"})
     assert run.returncode != 0
     assert "MIGRATION_LOCK_WAIT_SECONDS" in run.stderr and "от 1 до 3600 с" in run.stderr
+    assert "Traceback" not in run.stderr, run.stderr[-1500:]
 
 
 def test_a19_lock_keys_come_from_one_registry_and_differ() -> None:
@@ -166,8 +169,9 @@ async def test_a20_revision_gives_up_on_a_table_held_by_another_transaction(
     tmp_path: Path,
 ) -> None:
     """A20: таблицу, которую меняет ревизия-проба, держит чужая открытая транзакция, —
-    `upgrade` выходит с кодом ≠ 0 не раньше 10 с и не позже 15 с, причина словами, а не кодом
-    55P03; база на прежней ревизии. Ждёт 10 с: предел таблицы — константа без настройки."""
+    `upgrade` выходит с кодом ≠ 0 не раньше 10 с и не позже 15 с, причина словами, без
+    трассировки и кода 55P03; база на прежней ревизии. Ждёт 10 с: предел таблицы — константа без
+    настройки."""
     ini = ini_for(tmp_path, "locked_table")
     other = await connect()
     try:
@@ -186,6 +190,7 @@ async def test_a20_revision_gives_up_on_a_table_held_by_another_transaction(
     assert code != 0
     assert 10 <= took <= 15, f"отказ через {took:.1f} с, а не по пределу таблицы 10 с"
     assert "таблицу держит другая транзакция дольше 10 с" in err, err[-1500:]
+    assert "Traceback" not in err, err[-1500:]
     assert "55P03" not in err
     assert current == "0001"
 
