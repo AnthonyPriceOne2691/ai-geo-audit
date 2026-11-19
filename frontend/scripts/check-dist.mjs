@@ -1,7 +1,8 @@
-// Оракул сборки фронта (F5, F7): страница не ссылается на несуществующее, в сборке нет карт,
-// адресов разработки, чужих узлов и встроенных скриптов — CSP для скриптов обойдётся без хешей.
-// Запуск из `frontend/`: node scripts/check-dist.mjs [папка сборки = dist] [файл имени =
-// src/brand.ts]. Без зависимостей: оракул работает и тогда, когда сломаны пакеты.
+// Оракул сборки фронта (F5, F7, F12): страница не ссылается на несуществующее, в сборке нет карт,
+// адресов разработки, чужих узлов и встроенных скриптов — CSP для скриптов обойдётся без хешей;
+// фон и цвет текста обеих схем — в CSS сборки. Запуск из `frontend/`: node scripts/check-dist.mjs
+// [папка сборки = dist] [файл имени = src/brand.ts] [файл токенов = src/theme/tokens.css].
+// Без зависимостей: оракул работает и тогда, когда сломаны пакеты.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, sep } from 'node:path';
 
@@ -21,7 +22,16 @@ const HASHED = /^assets\/[^/]+-[\w-]{8}\.\w+$/;
 const ATTR = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 const CODE = new Set(['.html', '.js', '.mjs', '.css']);
 
-const [dist = 'dist', brand = 'src/brand.ts'] = process.argv.slice(2);
+// Блок цветов схемы у корня — как его ставит Mantine; минификатор снимает кавычки.
+const SCHEME = /^(?::root)?\[data-mantine-color-scheme=['"]?(light|dark)['"]?\]$/;
+const PAINT = ['--audit-bg', '--audit-ink'];
+const PAGE_PAINT = [
+  ['background-color', 'var(--audit-bg)'],
+  ['color', 'var(--audit-ink)'],
+];
+
+const [dist = 'dist', brand = 'src/brand.ts', tokens = 'src/theme/tokens.css'] =
+  process.argv.slice(2);
 const page = join(dist, 'index.html');
 const problems = [];
 const say = (file, reason) => problems.push(`${file}: ${reason}`);
@@ -113,6 +123,66 @@ function checkFile(rel) {
   }
 }
 
+/** Свойства блока CSS; у блока с вложенными блоками (`@media`) — `null`. */
+function propsOf(body) {
+  if (body.includes('{')) return null;
+  const at = (part) => part.indexOf(':');
+  return new Map(body.split(';').map((p) => [p.slice(0, at(p)).trim(), p.slice(at(p) + 1).trim()]));
+}
+
+/** Блоки CSS верхнего уровня: [селектор, свойства]. */
+function topBlocks(css) {
+  const text = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const blocks = [];
+  let [depth, start, open] = [0, 0, 0];
+  for (let at = 0; at < text.length; at += 1) {
+    if (text[at] === '{' && depth++ === 0) open = at;
+    if (text[at] === '}' && --depth === 0) {
+      blocks.push([text.slice(start, open).trim(), propsOf(text.slice(open + 1, at))]);
+      start = at + 1;
+    }
+  }
+  return blocks;
+}
+
+/** Свойства блоков схемы у корня: схема → свойство → значение. */
+function schemeProps(blocks) {
+  const values = { light: new Map(), dark: new Map() };
+  for (const [selector, props] of blocks) {
+    const scheme = SCHEME.exec(selector)?.[1];
+    if (scheme && props) for (const [key, value] of props) values[scheme].set(key, value);
+  }
+  return values;
+}
+
+// Минификатор пишет числа по-своему (`0.020` → `.02`) — они сравниваются значением.
+const byValue = (text) => text.replace(/\d*\.?\d+/g, (n) => String(Number(n))).replace(/\s+/g, ' ');
+
+/** Фон и цвет текста обеих схем стоят в CSS сборки до запуска приложения (F12): значения схем —
+ *  из файла токенов, и правило страницы красит ими. */
+function checkPaint(files) {
+  const source = read(tokens);
+  if (source === null) return say(tokens, 'файла токенов нет');
+  const want = schemeProps(topBlocks(source));
+  const css = files.filter((rel) => extname(rel) === '.css');
+  const built = css.flatMap((rel) => topBlocks(read(join(dist, rel)) ?? ''));
+  const have = schemeProps(built);
+  for (const scheme of ['light', 'dark']) {
+    for (const name of PAINT) {
+      const value = want[scheme].get(name);
+      if (value === undefined) say(tokens, `нет ${name} схемы ${scheme}`);
+      else if (byValue(have[scheme].get(name) ?? '') !== byValue(value)) {
+        say(dist, `в CSS сборки нет ${name} схемы ${scheme} из токенов: ${value}`);
+      }
+    }
+  }
+  const paints = ([selector, props]) =>
+    /(^|[\s,>])body$/.test(selector) && PAGE_PAINT.every(([key, v]) => props?.get(key) === v);
+  if (!built.some(paints)) {
+    say(dist, 'в CSS сборки нет правила страницы — фон var(--audit-bg), текст var(--audit-ink)');
+  }
+}
+
 /** «файл», «файла» или «файлов» — по числу. */
 function filesWord(n) {
   const [ten, hundred] = [n % 10, n % 100];
@@ -129,6 +199,7 @@ else if (files.length === 0) say(dist, 'папка сборки пуста');
 else {
   checkPage(files, name);
   files.forEach(checkFile);
+  checkPaint(files);
 }
 
 if (problems.length > 0) {

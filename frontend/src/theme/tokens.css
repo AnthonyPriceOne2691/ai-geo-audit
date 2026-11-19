@@ -1,0 +1,81 @@
+/* Токены «Фарфор и лазурь» — единственный источник цвета, формы, шрифта и движения фронта.
+   Значения — из правил вида проекта. Тема Mantine ссылается на них переменными, тест контраста
+   читает этот файл разбором из tokens.ts. Файл входит в CSS сборки и красит страницу до запуска
+   React (F12). Приставка `--audit-` — чтобы имя не совпало с переменной расширения браузера. */
+
+:root {
+  --audit-radius-card: 16px;
+  --audit-radius-control: 10px;
+  --audit-font: 'Geologica Variable', system-ui, sans-serif;
+  /* Отклик под курсором, смена состояния, появление и бегунок вкладок. */
+  --audit-motion-fast: 120ms;
+  --audit-motion-base: 180ms;
+  --audit-motion-slow: 260ms;
+  --audit-motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --audit-workspace: 1360px;
+  --audit-gutter: 28px;
+}
+
+:root[data-mantine-color-scheme='light'] {
+  --audit-bg: oklch(97% 0.006 250);
+  --audit-surface: oklch(100% 0 0);
+  --audit-sunken: oklch(95.5% 0.008 250);
+  --audit-line: oklch(90% 0.01 250);
+  --audit-edge: oklch(63% 0.02 250);
+  --audit-ink: oklch(23% 0.02 255);
+  --audit-soft: oklch(41% 0.02 255);
+  --audit-faint: oklch(51% 0.02 255);
+  --audit-primary: oklch(52% 0.152 252);
+  --audit-on-primary: oklch(99% 0 0);
+  --audit-primary-edge: oklch(52% 0.152 252);
+  --audit-accent: oklch(48% 0.14 252);
+  --audit-tint: oklch(95% 0.022 250);
+  --audit-ok: oklch(43% 0.11 152);
+  --audit-ok-tint: oklch(95% 0.04 152);
+  --audit-warn: oklch(46% 0.096 70);
+  --audit-warn-tint: oklch(95% 0.05 88);
+  --audit-crit: oklch(46% 0.17 27);
+  --audit-crit-tint: oklch(95.5% 0.02 27);
+  --audit-ring: oklch(52% 0.152 252);
+}
+
+:root[data-mantine-color-scheme='dark'] {
+  --audit-bg: oklch(17% 0.012 255);
+  --audit-surface: oklch(21% 0.014 255);
+  --audit-sunken: oklch(25% 0.016 255);
+  --audit-line: oklch(31% 0.018 255);
+  --audit-edge: oklch(56% 0.02 255);
+  --audit-ink: oklch(95% 0.006 250);
+  --audit-soft: oklch(81% 0.01 250);
+  --audit-faint: oklch(70% 0.012 250);
+  --audit-primary: oklch(78% 0.114 250);
+  --audit-on-primary: oklch(18% 0.03 255);
+  --audit-primary-edge: oklch(78% 0.114 250);
+  --audit-accent: oklch(78% 0.114 250);
+  --audit-tint: oklch(29% 0.06 252);
+  --audit-ok: oklch(80% 0.13 152);
+  --audit-ok-tint: oklch(28% 0.05 152);
+  --audit-warn: oklch(83% 0.12 82);
+  --audit-warn-tint: oklch(29% 0.05 82);
+  --audit-crit: oklch(75% 0.14 25);
+  --audit-crit-tint: oklch(28% 0.06 25);
+  --audit-ring: oklch(78% 0.114 250);
+}
+
+/* «Меньше движения» в системе: не движется ничего (F14). Отклик цветом остаётся, но сразу. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --audit-motion-fast: 0ms;
+    --audit-motion-base: 0ms;
+    --audit-motion-slow: 0ms;
+  }
+}
+
+/* Страница — токенами с первой отрисовки. `:root` сильнее правила `body` библиотеки при любом
+   порядке файлов. */
+:root body {
+  background-color: var(--audit-bg);
+  color: var(--audit-ink);
+  font-family: var(--audit-font);
+  font-variant-numeric: tabular-nums;
+}

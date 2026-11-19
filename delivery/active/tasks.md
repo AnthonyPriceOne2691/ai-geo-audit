@@ -18,13 +18,13 @@ handoff); суть и куда лёг каждый — в `plan.md`, разде�
       - токены и таблица `frontend/UI_RULES.md` — ровно, в обе стороны, с 120, 180, 260 мс и общей
         кривой в таблице (F15);
       - таблица Mantine по центру из темы (F18).
-- [ ] T3: `src/theme/tokens.css`, `src/theme/tokens.ts`, `src/theme/theme.ts`, `src/test/contrast.ts`.
+- [x] T3: `src/theme/tokens.css`, `src/theme/tokens.ts`, `src/theme/theme.ts`, `src/test/contrast.ts`.
       - `tokens.css` — единственный источник: цвета двух схем, скругления, шрифт, движение,
         рабочая область, фон и цвет текста страницы по атрибуту схемы;
       - `tokens.ts` — его разбор, один у темы и у тестов;
       - `theme.ts` — `cssVariablesResolver`, `respectReducedMotion`, щит `Text`, стили `Table`.
       F10, F11, F14, F15, F18.
-- [ ] T4: оракул сборки — фон и цвет текста обеих схем стоят в CSS сборки (F12, часть).
+- [x] T4: оракул сборки — фон и цвет текста обеих схем стоят в CSS сборки (F12, часть).
 
 ## Slice 2 — схема
 - [ ] T5: тесты сначала красные:
