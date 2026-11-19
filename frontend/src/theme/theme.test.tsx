@@ -11,6 +11,7 @@ import {
   Checkbox,
   Container,
   DEFAULT_THEME,
+  Radio,
   Table,
   Tabs,
   Text,
@@ -207,11 +208,13 @@ describe('роли Mantine', () => {
 });
 
 describe('тема на странице', () => {
-  it('F11: кнопка, флажок и вкладки без пропсов красятся токенами', () => {
+  it('F11: кнопка, флажок, радио и вкладки без пропсов красятся токенами', () => {
     const { container } = renderWithProviders(
       <>
         <Button>Новый аудит</Button>
         <Checkbox label="Флажок" defaultChecked />
+        <Checkbox label="Контурный флажок" variant="outline" defaultChecked />
+        <Radio label="Радио" defaultChecked />
         <Tabs defaultValue="all">
           <Tabs.List>
             <Tabs.Tab value="all">Все</Tabs.Tab>
@@ -228,6 +231,10 @@ describe('тема на странице', () => {
     expect(button.style.getPropertyValue('--button-color')).toBe(cssVar('onPrimary'));
     expect(viaTheme(read('.mantine-Checkbox-root', '--checkbox-color'))).toBe(cssVar('primary'));
     expect(read('.mantine-Checkbox-root', '--checkbox-icon-color')).toBe(cssVar('onPrimary'));
+    expect(read('.mantine-Radio-root', '--radio-icon-color')).toBe(cssVar('onPrimary'));
+    // Под контурным значком — поверхность, не заливка: цвет значку даёт правило Mantine.
+    const outline = screen.getByLabelText('Контурный флажок').closest('.mantine-Checkbox-root');
+    expect((outline as HTMLElement).style.getPropertyValue('--checkbox-icon-color')).toBe('');
     expect(viaTheme(read('.mantine-Tabs-root', '--tabs-color'))).toBe(cssVar('primary'));
   });
 
