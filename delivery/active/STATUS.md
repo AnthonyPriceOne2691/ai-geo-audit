@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** tasks
-  <!-- Срез 5 Ч1.2в (`dd8e15d`) ушёл сюда на контрольной точке T11 Ч1.2в. Код — после коммита
-       проверяющего с подписью владельца под примерами A30 и A31 (из Ч1.2в, 08:59Z). -->
+- **phase:** implement
+  <!-- Срез 5 Ч1.2в (`dd8e15d`) ушёл сюда на контрольной точке T11 Ч1.2в. Подпись владельца под
+       примерами A30 и A31 — `c2ac133`; перенос среза — T1, обратные запросы и выжившие — T2, T3. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T08:59Z)

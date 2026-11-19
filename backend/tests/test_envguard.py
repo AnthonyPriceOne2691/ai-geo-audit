@@ -1,0 +1,56 @@
+"""Окружение машины до тестов не доходит (A31): подпроцесс pytest с грязным окружением."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import dbtools
+
+
+def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
+    """A31: в окружении запуска `APP_ENV=prod` и `app_env=prod` строчными, `ENV_FILE` с
+    `APP_ENV=prod`, адрес базы с паролем, ключи провайдеров, `LOG_FORMAT=json`, `PGSSLMODE`,
+    прокси и `TEST_DATABASE_URL` — внутри `dev`, адрес базы по умолчанию, остаётся только
+    `TEST_DATABASE_URL`; проба соединяется с базой, хотя `PGSSLMODE=require`. В выводе — число
+    вычищенных имён, без значений."""
+    prod_env = tmp_path / "prod.env"
+    prod_env.write_text("APP_ENV=prod\n", encoding="utf-8")
+    dirty = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONUTF8": "1",
+        "APP_ENV": "prod",
+        "app_env": "prod",
+        "ENV_FILE": str(prod_env),
+        "DATABASE_URL": "postgresql+asyncpg://audit:env-pass-123456@db:5432/audit",
+        "OPENAI_API_KEY": "sk-test-not-a-real-key-1",
+        "ANTHROPIC_API_KEY": "ak-test-not-a-real-key-1",
+        "GEMINI_API_KEY": "gm-test-not-a-real-key-1",
+        "LOG_FORMAT": "json",
+        "PGSSLMODE": "require",
+        "HTTPS_PROXY": "http://127.0.0.1:9",
+        "TEST_DATABASE_URL": dbtools.server_url().render_as_string(hide_password=False),
+    }
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
+        + ["tests/env_probe/probe_env.py"],
+        cwd=dbtools.BACKEND,
+        env=dirty,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout[-1500:] + run.stderr[-1500:]
+    found = re.search(r"A31-PROBE (\{.*\})", run.stdout)
+    assert found, run.stdout[-1500:]
+    seen = json.loads(found.group(1))
+    assert seen == {"env": "dev", "default_db": True, "left": ["TEST_DATABASE_URL"]} | {
+        "cleaned": seen["cleaned"]
+    }
+    assert seen["cleaned"] >= 10
+    assert "env-pass-123456" not in run.stdout + run.stderr
