@@ -7,21 +7,39 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
 
 from ai_geo_audit import config
+from ai_geo_audit.api import access, contract
+from ai_geo_audit.api.middleware import EntryLayer
 from ai_geo_audit.config.startup_checks import check_startup
 
 #: Мягкая остановка: запросы в работе доживают до этого предела, затем процесс кончается.
 GRACEFUL_SHUTDOWN_SECONDS = 20
 
 
-def create_app() -> FastAPI:
-    """Собрать приложение; в бою без нужных настроек — `ConfigError` до сборки (A32)."""
+def create_app(
+    *,
+    visitor_for: access.VisitorCheck = access.visitor_for,
+    open_paths: Mapping[str, str] = access.OPEN_PATHS,
+) -> FastAPI:
+    """Собрать приложение; в бою без нужных настроек — `ConfigError` до сборки (A32).
+
+    Проверку пропуска и список открытых тесты передают свои; список лежит и в состоянии
+    приложения — его читает обход маршрутов (Ч1.3б)."""
     check_startup("api")
-    return FastAPI(
+    app = FastAPI(
         openapi_url=None, docs_url=None, redoc_url=None, swagger_ui_oauth2_redirect_url=None
     )
+    app.state.open_paths = dict(open_paths)
+    app.add_exception_handler(HTTPException, contract.on_http_exception)
+    app.add_exception_handler(RequestValidationError, contract.on_validation_error)
+    app.add_middleware(EntryLayer, visitor_for=visitor_for, open_paths=open_paths)
+    return app
 
 
 def server_settings() -> dict[str, object]:
