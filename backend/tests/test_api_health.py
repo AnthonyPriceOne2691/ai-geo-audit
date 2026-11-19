@@ -119,10 +119,11 @@ async def test_a41_requests_without_database_need_do_not_touch_it(
 ) -> None:
     """A41: молчащий сервер вместо базы; без пропуска `/api/nope`, закрытая проба, `OPTIONS
     /api/health`; с пропуском — закрытая проба: 403, 403, 405 и 200 с именем вошедшего, сервер
-    «базы» не принял ни одного соединения. После `GET /api/health` — 503 и ровно одно."""
+    «базы» не принял ни одного соединения. После `GET /api/health` — 503 и ровно одно. Весь
+    заход — под пределом 3 с: запрос, который полез в молчащую базу, не повиснет, а покраснеет."""
     probes.use_database(monkeypatch, silent_db.url)
     monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
-    async with probes.client(probes.build()) as http:
+    async with probes.client(probes.build()) as http, asyncio.timeout(3):
         codes = [
             (await http.get("/api/nope")).status_code,
             (await http.get(probes.CLOSED)).status_code,
