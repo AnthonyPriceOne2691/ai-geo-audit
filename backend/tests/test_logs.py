@@ -159,3 +159,34 @@ def test_a21_regex_signs_in_passwords_are_scrubbed_literally(
     logging.getLogger("x").warning("pw=%s and again %s", password, password)
     out = capsys.readouterr().err
     assert password not in out and "pw=***" in out
+
+
+#: Строки DETAIL, пришедшие мимо движка: значение — и что после вычистки остаётся.
+DETAILS = [
+    ("Key (email)=(ivan\nsecret-mail) already exists.", "secret-mail", "Key (email)="),
+    ("Failing row contains (7, secret). tail, x).", "secret", "Failing row contains"),
+    ("Failing row contains (7, line\nsecret-two).", "secret-two", "Failing row contains"),
+    (
+        "Key (period)=([2026-01-01,secret-from)) conflicts with existing key "
+        "(period)=([2026-01-15,secret-till)).",
+        "secret-",
+        "conflicts with existing key",
+    ),
+]
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_a26_second_net_cuts_detail_values_that_bypass_the_engine(
+    capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A26: строки DETAIL мимо движка — значение с переводом строки (`Key` и `Failing row`), с
+    «).» внутри, исключающее ограничение — значения нет ни в одном случае, вид ошибки и имя
+    ограничения остались; честный текст проходит без изменений. Число случаев — в выводе."""
+    logs.setup_logging(fmt=fmt)
+    for detail, value, kept in DETAILS:
+        logging.getLogger("x").error('violates constraint "uq_probe_key"\nDETAIL: %s', detail)
+        out = capsys.readouterr().err
+        assert value not in out and kept in out and "uq_probe_key" in out, detail
+    honest = 'duplicate key value violates unique constraint "uq_probe_key" (Key names only)'
+    assert logs.redact(honest) == honest
+    print(f"A26: проверено случаев DETAIL: {len(DETAILS)}")

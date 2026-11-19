@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import traceback
 
 import asyncpg
 import dbtools
 import pytest
 from dbtools import probe
 from sqlalchemy import event, func, insert, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ai_geo_audit import config, storage
@@ -358,3 +359,41 @@ async def test_a29_killed_connection_is_named_as_lost(engine: AsyncEngine) -> No
                 await killer.execute("SELECT pg_terminate_backend($1)", pid)
             finally:
                 await killer.close()
+
+
+#: Ошибки класса данных, где значение стоит в самом сообщении: запрос, значение, что остаётся.
+DATA_ERRORS = [
+    ("CAST(CAST(:x AS text) AS integer)", "tainiy-znak-7781", "invalid input syntax for type"),
+    ("CAST(CAST(:x AS text) AS integer)", "99999999999", "is out of range for type integer"),
+    ("CAST(CAST(:x AS text) AS date)", "2026-13-45", "date/time field value out of range"),
+    ("CAST(CAST(:x AS text) AS uuid)", "secret-not-uuid", "invalid input syntax for type uuid"),
+    ("CAST(CAST(:x AS text) AS boolean)", "secret-maybe", "invalid input syntax for type"),
+    ("CAST(CAST(:x AS text) AS timestamptz)", "secret-time", "invalid input syntax for type"),
+    ("CAST(:x AS integer)", "tainiy-znak-7781", "invalid input for query argument $1"),
+    ("CAST(:x AS uuid)", "abc-secret-77", "invalid input for query argument $1"),
+    ("CAST(:x AS date)", 1234567, "invalid input for query argument $1"),
+]
+
+
+@pytest.mark.parametrize(("expr", "value", "kept"), DATA_ERRORS)
+async def test_a26_data_class_errors_lose_their_values(
+    engine: AsyncEngine,
+    capsys: pytest.CaptureFixture[str],
+    expr: str,
+    value: object,
+    kept: str,
+) -> None:
+    """A26: ошибки класса данных (SQLSTATE 22…), где значение стоит в самом сообщении: двойное
+    приведение на сервере и отказ драйвера — значения нет ни в цепочке исключений, ни в журнале
+    обоих форматов, а вид ошибки и тип колонки или номер аргумента остались."""
+    with pytest.raises(DBAPIError) as caught:
+        async with session_scope(engine) as s:
+            await s.execute(text(f"SELECT {expr}"), {"x": value})
+    chain = "".join(traceback.format_exception(caught.value))
+    assert str(value) not in chain
+    assert kept in chain
+    for fmt in ("json", "text"):
+        logs.setup_logging(fmt=fmt)
+        logging.getLogger("x").error("сбой", exc_info=caught.value)
+        out = capsys.readouterr().err
+        assert str(value) not in out and kept in out
