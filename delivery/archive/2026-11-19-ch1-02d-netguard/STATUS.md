@@ -9,9 +9,10 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
-  <!-- T5 — сверка в чистом клоне 2026-11-19T11:50:39Z на `33df6e5`, отчёт — verify-report.md;
-       сдача — T6, вердикт ставит проверяющий. Подпись под примерами — `c2ac133`. -->
+- **phase:** handoff
+  <!-- Вердикт проверяющего READY FOR HANDOFF — `47ed87d`; подпись владельца под
+       утверждениями — `a01c800` (2026-11-19T12:29Z), тем же словом — публикация в main.
+       Подпись под примерами — `c2ac133`. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T08:59Z)
@@ -55,8 +56,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** в первом прогоне CI (В1а) на раннере и в первых тестах Ч1.3 после слияния main: pytest без сети и без окружения машины — пропущенных 0, ни один тест не получил отказ запрета; тест, который полезет наружу, — отказ словами с адресом и подсказкой «что делать» в выводе, а не таймаут
+- **observe_until:** 2026-11-27
 - **circuit_breakers:** max_loc_diff=1200
   <!-- Настройка проекта по слову владельца ведущей сессии 2026-11-18T13:49Z: «давай 1200
        строк вместе с тестами». Остальные предохранители — по умолчанию из
