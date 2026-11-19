@@ -3,7 +3,9 @@
 - **slug:** ch1-02d-netguard
 - **stack:** delivery@2.21, cqg@absent, okf@absent
 - **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 5d82ab1)
-- **class:** S
+- **class:** M
+  <!-- Класс — словом проверяющего 2026-11-19T12:05Z: класс определяется работой, а не объёмом
+       (§2.2, §2.2b); S — багфикс в одном файле. Прежнее «S» снято тем же словом. -->
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
@@ -28,7 +30,7 @@
             базой (добавка проверяющего 09:29Z);
           - A31 — `.env` в рабочем каталоге до тестов не доходит (порча N6);
           - A31 — `TEST_DATABASE_URL` остаётся, даже если попал в список образца (порча N1). -->
-- **human_ok_plan:** n/a reason=класс S
+- **human_ok_plan:** n/a reason=класс M
 - **shape-oracles:** weak
   <!-- CQG не развёрнут: волна В1. Строки до 100 знаков и форма как у ruff format
        соблюдаются руками. -->
