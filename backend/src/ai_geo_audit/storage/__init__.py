@@ -9,10 +9,16 @@ from ai_geo_audit.storage.engine import (
     get_engine,
     task_engine,
 )
-from ai_geo_audit.storage.session import AbortedTransactionError, session_scope, step
+from ai_geo_audit.storage.session import (
+    AbortedTransactionError,
+    ConnectionLostError,
+    session_scope,
+    step,
+)
 
 __all__ = [
     "AbortedTransactionError",
+    "ConnectionLostError",
     "ForeignLoopError",
     "build_engine",
     "dispose_engine",
