@@ -15,7 +15,7 @@ from fastapi.security import APIKeyHeader
 
 from ai_geo_audit.api.contract import Refusal
 
-TOKEN_HEADER = "X-Access-Token"
+TOKEN_HEADER = "X-Access-Token"  # noqa: S105 -- имя заголовка, не секрет
 #: Открытые без пропуска пути — точной строкой и с причиной.
 OPEN_PATHS: dict[str, str] = {
     "/api/health": "здоровье: его спрашивают сторож и проверка контейнера, у них нет пропуска",

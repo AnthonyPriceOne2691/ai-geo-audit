@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -58,7 +59,7 @@ def refusal_response(
     *,
     request_id: str = "",
     status: int | None = None,
-    headers: dict[str, str] | None = None,
+    headers: Mapping[str, str] | None = None,
     errors: list[dict[str, object]] | None = None,
 ) -> JSONResponse:
     """Ответ отказа по виду; у `invalid` — ещё `errors`."""
