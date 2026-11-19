@@ -40,7 +40,7 @@
       один `AppProviders` у приложения и тестового рендера (F9); строка-факт без «скоро» (F16).
 - [x] T7: `main.tsx`, `App.tsx` (`AppProviders` со стандартной темой), `brand.ts`, `words.ts`,
       `StubPage.tsx`; тестовая обвязка `test/setup.ts`, `test/render.tsx`. F8, F9, F16.
-- [ ] T8: снимки для приёмки — Chrome без окна, `vite preview`, 1440 × 900 и 390 × 844, снимок
+- [x] T8: снимки для приёмки — Chrome без окна, `vite preview`, 1440 × 900 и 390 × 844, снимок
       390 — через рамку; во временную папку, вне git. F16.
 
 ## Verify
