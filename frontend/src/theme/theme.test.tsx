@@ -6,13 +6,17 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  Button,
   Card,
+  Checkbox,
   Container,
   DEFAULT_THEME,
   Table,
+  Tabs,
   Text,
   Transition,
   defaultCssVariablesResolver,
+  defaultVariantColorsResolver,
   mergeMantineTheme,
 } from '@mantine/core';
 import { screen } from '@testing-library/react';
@@ -22,7 +26,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contrast, inGamut } from '../test/contrast';
 import { renderWithProviders } from '../test/render';
 
-import { cssVariablesResolver, theme } from './theme';
+import { cssVariablesResolver, theme, variantColorResolver } from './theme';
 import { SCHEMES, cssVar, parseBlocks, schemeColors } from './tokens';
 
 const TOKENS = join(dirname(fileURLToPath(import.meta.url)), 'tokens.css');
@@ -78,6 +82,46 @@ const LIBRARY_LEFT = new Map([
   ['--mantine-color-disabled-border', 'вид выключенного — Ч1.4г, кнопки'],
 ]);
 
+// Роли Mantine → токены — таблица целиком (L23): переставить роль между токенами молча нельзя.
+// Палитра основного цвета — по `theme.primaryColor`.
+const P = merged.primaryColor;
+const ROLE_TABLE: Readonly<Record<string, string>> = {
+  '--mantine-color-body': 'surface',
+  '--mantine-color-text': 'ink',
+  '--mantine-color-bright': 'ink',
+  '--mantine-color-dimmed': 'faint',
+  '--mantine-color-placeholder': 'faint',
+  '--mantine-color-anchor': 'accent',
+  '--mantine-color-error': 'crit',
+  '--mantine-color-default': 'surface',
+  '--mantine-color-default-hover': 'tint',
+  '--mantine-color-default-color': 'ink',
+  '--mantine-color-default-border': 'edge',
+  '--mantine-primary-color-filled': 'primary',
+  '--mantine-primary-color-filled-hover': 'primary',
+  '--mantine-primary-color-contrast': 'onPrimary',
+  '--mantine-primary-color-light': 'tint',
+  '--mantine-primary-color-light-hover': 'tint',
+  '--mantine-primary-color-light-color': 'accent',
+  [`--mantine-color-${P}-filled`]: 'primary',
+  [`--mantine-color-${P}-filled-hover`]: 'primary',
+  [`--mantine-color-${P}-light`]: 'tint',
+  [`--mantine-color-${P}-light-hover`]: 'tint',
+  [`--mantine-color-${P}-light-color`]: 'accent',
+  [`--mantine-color-${P}-outline`]: 'accent',
+  [`--mantine-color-${P}-outline-hover`]: 'tint',
+  [`--mantine-color-${P}-text`]: 'accent',
+};
+
+// Пары, которыми компоненты красятся на деле: роль Mantine → токен → цвет схемы.
+const ROLE_PAIRS: readonly (readonly [string, string, number])[] = [
+  ['--mantine-color-text', '--mantine-color-body', 4.5],
+  ['--mantine-color-error', '--mantine-color-body', 4.5],
+  ['--mantine-color-default-border', '--mantine-color-body', 3],
+  ['--mantine-primary-color-contrast', '--mantine-primary-color-filled', 4.5],
+  [`--mantine-color-${P}-light-color`, `--mantine-color-${P}-light`, 4.5],
+];
+
 /** Переменная выше по дереву — так её ставит расширение браузера. */
 function underLeak(children: ReactNode) {
   return <div style={{ '--text-color': '#000' } as CSSProperties}>{children}</div>;
@@ -126,23 +170,86 @@ describe('контраст токенов', () => {
     const outside = Object.entries(colors[scheme]).filter(([, value]) => !inGamut(value));
     expect(outside.map(([role, value]) => `${role}: ${value}`)).toEqual([]);
   });
+});
 
-  it('F11: тема красит Mantine теми же цветами файла токенов, что идут в расчёт', () => {
+describe('роли Mantine', () => {
+  it('F11: тема красит Mantine теми же цветами файла токенов — таблица ролей целиком', () => {
     const resolved = cssVariablesResolver(merged);
+    const want = Object.entries(ROLE_TABLE).map(([name, role]) => [name, cssVar(role)]);
     for (const scheme of SCHEMES) {
-      const own = new Set(Object.keys(colors[scheme]).map(cssVar));
-      const stray = Object.entries(resolved[scheme]).filter(([, value]) => !own.has(value));
-      expect(stray, `схема ${scheme}: переменные Mantine не на токенах`).toEqual([]);
-      expect(resolved[scheme]['--mantine-color-text']).toBe(cssVar('ink'));
-      expect(resolved[scheme]['--mantine-color-dimmed']).toBe(cssVar('faint'));
-      expect(resolved[scheme]['--mantine-color-anchor']).toBe(cssVar('accent'));
+      expect(resolved[scheme], `схема ${scheme}`).toEqual(Object.fromEntries(want));
+    }
+    expect(Object.values(ROLE_TABLE).filter((role) => !(role in colors.light))).toEqual([]);
+  });
+
+  it.each(SCHEMES)('F11: схема %s — пары ролей компонентов в норме', (scheme) => {
+    const resolved: Record<string, string> = cssVariablesResolver(merged)[scheme];
+    const roleOf = (value = '') =>
+      Object.keys(colors[scheme]).find((role) => cssVar(role) === value);
+    const paint = (name: string) => colors[scheme][roleOf(resolved[name]) ?? ''] ?? '';
+    const low = ROLE_PAIRS.flatMap(([fg, bg, need]) => {
+      const ratio = contrast(paint(fg), paint(bg));
+      return ratio < need ? [`${fg} на ${bg}: ${comma(ratio.toFixed(2))}`] : [];
+    });
+    expect(low).toEqual([]);
+  });
+
+  it('F11: подпись на заливке основного цвета — onPrimary; прочие виды и цвета — как у Mantine', () => {
+    const input = (variant: string, color: string = P) => ({ color, theme: merged, variant });
+    expect(variantColorResolver(input('filled')).color).toBe(cssVar('onPrimary'));
+    const others = ['light', 'outline', 'subtle', 'default', 'transparent', 'white'].map((v) =>
+      input(v),
+    );
+    for (const one of [...others, input('filled', 'red')]) {
+      expect(variantColorResolver(one)).toEqual(defaultVariantColorsResolver(one));
+    }
+  });
+});
+
+describe('тема на странице', () => {
+  it('F11: кнопка, флажок и вкладки без пропсов красятся токенами', () => {
+    const { container } = renderWithProviders(
+      <>
+        <Button>Новый аудит</Button>
+        <Checkbox label="Флажок" defaultChecked />
+        <Tabs defaultValue="all">
+          <Tabs.List>
+            <Tabs.Tab value="all">Все</Tabs.Tab>
+          </Tabs.List>
+        </Tabs>
+      </>,
+    );
+    const resolved: Record<string, string> = cssVariablesResolver(merged).light;
+    const read = (selector: string, name: string) =>
+      container.querySelector<HTMLElement>(selector)?.style.getPropertyValue(name) ?? '';
+    // `var(--mantine-…)` → значение этой роли в теме.
+    const viaTheme = (value: string) => resolved[/^var\((--[\w-]+)\)$/.exec(value)?.[1] ?? ''];
+    const button = screen.getByRole('button', { name: 'Новый аудит' });
+    expect(button.style.getPropertyValue('--button-color')).toBe(cssVar('onPrimary'));
+    expect(viaTheme(read('.mantine-Checkbox-root', '--checkbox-color'))).toBe(cssVar('primary'));
+    expect(read('.mantine-Checkbox-root', '--checkbox-icon-color')).toBe(cssVar('onPrimary'));
+    expect(viaTheme(read('.mantine-Tabs-root', '--tabs-color'))).toBe(cssVar('primary'));
+  });
+
+  it('F11: AppProviders ставит на страницу переменные обеих схем на токенах', () => {
+    renderWithProviders(<Text>Тема</Text>);
+    const css = [...document.querySelectorAll('style[data-mantine-styles]')]
+      .map((style) => style.textContent ?? '')
+      .join('');
+    for (const scheme of SCHEMES) {
+      const block = new RegExp(`\\[data-mantine-color-scheme="${scheme}"\\][^{]*\\{([^}]*)\\}`);
+      const text = block.exec(css)?.[1] ?? '';
+      expect(text).toContain(`--mantine-color-body: ${cssVar('surface')}`);
+      expect(text).toContain(`--mantine-color-${P}-filled: ${cssVar('primary')}`);
     }
   });
 
   it('F11: каждая цветовая роль Mantine вне палитр — на токене, кроме названных поимённо', () => {
     // Роль без строки в теме берёт цвет библиотеки молча — и после обновления Mantine тоже.
     const library = defaultCssVariablesResolver(merged);
-    const palettes = Object.keys(merged.colors).map((color) => `--mantine-color-${color}-`);
+    const palettes = Object.keys(merged.colors)
+      .filter((color) => color !== P)
+      .map((color) => `--mantine-color-${color}-`);
     const primary = Object.keys(library.variables).filter((name) =>
       /^--mantine-primary-color-[a-z]/.test(name),
     );
