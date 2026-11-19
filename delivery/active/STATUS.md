@@ -1,0 +1,58 @@
+# Active delivery status
+
+- **slug:** ch1-03-api-entry
+- **stack:** delivery@2.21, cqg@absent, okf@absent
+- **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 5d82ab1)
+- **class:** M
+  <!-- Класс по работе (§2.2, §2.2b): новый вход сервиса — настройки, слой ASGI, форма отказов,
+       здоровье, журналы запроса. Объём — около 1105 строк с поправкой; две контрольные точки
+       со швом (plan.md, Approach). -->
+- **kind:** feature
+- **repro_test:** n/a reason=не bugfix
+- **diagnosis:** n/a reason=не bugfix
+- **phase:** tasks
+  <!-- Ветка документов от main `2bdf4d9` по слову проверяющего 2026-11-19T12:17Z. Спека и план —
+       подписанные черновики как есть: спека `ed4ba18f8d92`, план `216193c42f34`. Код — после
+       того как Ч1.2г ляжет в main: main вливается в ветку, затем срез 0 (T1). -->
+- **builder:** agent:hands-session
+- **verifier:** agent:lead-session
+- **human_ok_spec:** deferred (reason=примеры подписаны владельцем 2026-11-19T10:40Z; вносит проверяющий своим коммитом после сверки сумм: порядок владельца 2026-11-18T13:25:47Z)
+- **human_ok_plan:** n/a reason=класс M
+- **shape-oracles:** weak
+  <!-- CQG не развёрнут: волна В1. Строки до 100 знаков и форма как у ruff format
+       соблюдаются руками. -->
+- **behavior-oracles:** tests-present — pytest на настоящем Postgres 16, ASGI-клиент `httpx` в том же цикле событий; живые прогоны S1–S3 руками; предупреждения — ошибки
+  <!-- Долг на волну В1: реляционный оракул `@given` вместе с мутационным гейтом CQG. До В1
+       его роль — ручные порчи без кэша байткода. -->
+- **artifact_oracle:** n/a reason=поставка ничего не собирает; оракул на собранное придёт с образом Docker (Ч1.5)
+- **ci-oracles:** weak
+  <!-- CI — волна В1. Вместо ссылки на прогон — гейт в чистом клоне в verify-report. -->
+- **worktree:** .claude/worktrees/ch1-03
+- **parallel_sessions:** manual-deploy
+  <!-- Сессии и субагенты исполнителя; полоса фронта — в своей рабочей копии. Интеграция в main
+       до В1 — процессом: только принятое проверяющим, строго по очереди. -->
+- **hooks:** not-deployed
+- **blockers:** none
+- **waivers:** none
+- **new_dependency:** fastapi reason=вход API: маршруты, схемы запросов, зависимости; версия 0.141.1, без набора `standard` by=human:owner (слово 2026-11-18T14:35Z)
+- **new_dependency:** uvicorn reason=сервер ASGI процесса `api`; версия 0.54.0, без набора `standard` by=human:owner (слово 2026-11-18T14:35Z)
+- **new_dependency:** httpx reason=ASGI-клиент тестов, только группа dev; версия 0.28.1 by=human:owner (слово 2026-11-18T14:35Z)
+  <!-- starlette 1.7.0 — ограничением `constraint-dependencies`, прямой зависимостью не
+       становится; транзитивные — строкой в decisions (решения проверяющего 2026-11-19,
+       plan.md, Stack / boundaries). -->
+- **runtime_paths:** backend/src/ai_geo_audit/api/
+  <!-- Живой сервер: запуск, здоровье при остановленной базе, мягкая остановка по SIGTERM —
+       видны только исполнением. Прогоны S1–S3 руками исполнителя, вывод — в verify-report,
+       блок «Исполнение рисковых путей». -->
+- **irreversible_surfaces:** публикация репозитория (публичный GitHub — создание и push), выкат на общий сервер, трата на платных сервисах выше $5 за одно действие, выпуск отчёта клиенту
+- **model_surface:** n/a reason=модель продукт не вызывает; поверхность объявляется с первым вызовом модели — волна В3 (§14)
+- **rule_enforcers:** n/a reason=model_surface не объявлена
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** <заполняется на handoff>
+- **observe_until:** <заполняется на handoff>
+- **circuit_breakers:** max_loc_diff=1200
+  <!-- Настройка проекта по слову владельца ведущей сессии 2026-11-18T13:49Z: «давай 1200
+       строк вместе с тестами». Остальные предохранители — по умолчанию из
+       AGENT_DELIVERY_HARNESS.md §3.4. -->
