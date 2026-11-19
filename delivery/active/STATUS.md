@@ -7,9 +7,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
-  <!-- Пробы T1 сделаны 2026-11-19, итог — в decisions. Подпись владельца под примерами —
-       2026-11-19T08:59Z; код идёт срезами, срез 5 — после контрольной точки (T11). -->
+- **phase:** verify
+  <!-- T15 — сверка в чистом клоне 2026-11-19T10:44:56Z на `a0df3ea`, отчёт — verify-report.md;
+       сдача — T16, вердикт ставит проверяющий. Срез 5 ушёл в Ч1.2г (T11). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T08:59Z)
