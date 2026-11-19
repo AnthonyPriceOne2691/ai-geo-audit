@@ -9,10 +9,10 @@
 
 Отказы, которые выносит сам процесс, — словами, без трассировки: проверка старта, пределы
 ожидания замка и таблицы, негодные настройки, режим `--sql`. Настройки собираются при импорте
-конфига, поэтому негодная настройка ловится на импорте: имя переменной и причина. Причина
-строится из `errors(include_input=False)`, введённого значения pydantic в ней нет. Значение
-бывает только в тексте своей проверки числа («…а не 0»). У секретных полей проверок при импорте
-нет, и их значения в отказ не попадают.
+конфига, поэтому негодная настройка ловится на импорте: имя переменной и причина. Текст строит
+`ai_geo_audit.refusal` — один для всех входов процессов, введённого значения pydantic в нём нет;
+значение бывает только в тексте своей проверки («…а не 0»). У секретных полей проверок при
+импорте нет, и их значения в отказ не попадают.
 
 Трассировкой библиотеки остаются сбои вне этих проверок: адрес базы, который не разбирается (в
 dev и test проверка старта молчит), и недоступная база. Секрета в них нет: SQLAlchemy не
@@ -31,17 +31,15 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 
+from ai_geo_audit.refusal import invalid_settings
+
 try:
     from ai_geo_audit import config
     from ai_geo_audit.config import startup_checks
     from ai_geo_audit.logs import setup as logs
     from ai_geo_audit.storage import build_engine, locks, models
 except ValidationError as invalid:
-    reasons = "\n".join(
-        f"  {'.'.join(map(str, error['loc']))} — {error['msg'].removeprefix('Value error, ')}"
-        for error in invalid.errors(include_url=False, include_input=False)
-    )
-    raise SystemExit(f"Процесс «migrate» не стартует, негодные настройки:\n{reasons}") from None
+    raise SystemExit(invalid_settings("migrate", invalid)) from None
 
 #: Предел ожидания блокировки таблицы на время ревизий — константа без настройки (decisions).
 TABLE_WAIT_SECONDS = 10

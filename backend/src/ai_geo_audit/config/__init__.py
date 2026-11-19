@@ -8,6 +8,7 @@ from __future__ import annotations
 from ai_geo_audit.config._base import Settings
 from ai_geo_audit.config.domains import (
     AccessSettings,
+    ApiSettings,
     AppSettings,
     KeySettings,
     LogSettings,
@@ -19,6 +20,7 @@ storage = StorageSettings()
 access = AccessSettings()
 keys = KeySettings()
 logs = LogSettings()
+api = ApiSettings()
 
 DOMAINS: tuple[type[Settings], ...] = (
     AppSettings,
@@ -26,6 +28,7 @@ DOMAINS: tuple[type[Settings], ...] = (
     AccessSettings,
     KeySettings,
     LogSettings,
+    ApiSettings,
 )
 
 
@@ -37,12 +40,14 @@ def env_names() -> list[str]:
 __all__ = [
     "DOMAINS",
     "AccessSettings",
+    "ApiSettings",
     "AppSettings",
     "KeySettings",
     "LogSettings",
     "Settings",
     "StorageSettings",
     "access",
+    "api",
     "app",
     "env_names",
     "keys",
