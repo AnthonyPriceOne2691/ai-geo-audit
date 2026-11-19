@@ -1,10 +1,14 @@
 import {
+  Checkbox,
   Container,
   Paper,
+  Radio,
   Table,
   Text,
   createTheme,
+  defaultVariantColorsResolver,
   type CSSVariablesResolver,
+  type VariantColorsResolver,
 } from '@mantine/core';
 
 import { cssVar } from './tokens';
@@ -33,21 +37,54 @@ const SCHEME_ROLES = {
   '--mantine-primary-color-light-color': 'accent',
 } as const;
 
-const schemeVariables = Object.fromEntries(
-  Object.entries(SCHEME_ROLES).map(([name, role]) => [name, cssVar(role)]),
-);
+// Роли палитры основного цвета: ими Mantine красит флажок, вкладки и виды кнопок. Имена — от
+// `theme.primaryColor`; синий библиотеки дал бы тексту на светлой поверхности 3,56 : 1.
+const PALETTE_ROLES = {
+  filled: 'primary',
+  'filled-hover': 'primary',
+  light: 'tint',
+  'light-hover': 'tint',
+  'light-color': 'accent',
+  outline: 'accent',
+  'outline-hover': 'tint',
+  text: 'accent',
+} as const;
 
 /** Ссылки одни в обеих схемах, но ставятся в обе: умолчания Mantine стоят по схемам и иначе
  *  перебили бы общий блок. */
-export const cssVariablesResolver: CSSVariablesResolver = () => ({
-  variables: {},
-  light: schemeVariables,
-  dark: schemeVariables,
-});
+export const cssVariablesResolver: CSSVariablesResolver = (theme) => {
+  const palette = Object.entries(PALETTE_ROLES).map(
+    ([part, role]) => [`--mantine-color-${theme.primaryColor}-${part}`, role] as const,
+  );
+  const schemeVariables = Object.fromEntries(
+    [...Object.entries(SCHEME_ROLES), ...palette].map(([name, role]) => [name, cssVar(role)]),
+  );
+  return {
+    variables: {},
+    light: schemeVariables,
+    dark: schemeVariables,
+  };
+};
+
+/** Подпись на заливке основного цвета — `onPrimary`: умолчание Mantine — белый библиотеки, а он в
+ *  тёмной схеме на `primary` даёт 1,99 : 1. Остальные виды и цвета — как у умолчания. */
+export const variantColorResolver: VariantColorsResolver = (input) => {
+  const colors = defaultVariantColorsResolver(input);
+  const own = input.variant === 'filled' && input.color === input.theme.primaryColor;
+  return own ? { ...colors, color: cssVar('onPrimary') } : colors;
+};
+
+/** Значок на заливке флажка и радио — та же подпись; у контурного вида и своего цвета значка —
+ *  как у библиотеки. */
+const iconOnFill =
+  (name: string) => (_theme: unknown, props: { variant?: string; iconColor?: unknown }) => ({
+    root: props.variant === 'outline' || props.iconColor ? {} : { [name]: cssVar('onPrimary') },
+  });
 
 export const theme = createTheme({
   // Без флага Mantine двигает свои появления и при «меньше движения» в системе (F14).
   respectReducedMotion: true,
+  variantColorResolver,
   fontFamily: cssVar('font'),
   headings: { fontFamily: cssVar('font') },
   // Скруглений два: карточка и мелкое — кнопка, поле, метка статуса. Все ступени Mantine
@@ -72,10 +109,10 @@ export const theme = createTheme({
     // переменную он ставит себе только при пропсе цвета. Переменная наследуется: расширение
     // браузера, задавшее её выше по дереву, перекрасило бы каждый Text без пропса.
     // `currentColor` возвращает задуманное «как у родителя». Переменная пропса ложится позже
-    // стилей темы, а без пропса щит и не ставится.
-    Text: Text.extend({
-      styles: (_theme, props) => ({ root: props.color ? {} : { '--text-color': 'currentColor' } }),
-    }),
+    // стилей темы и перекрывает щит.
+    Text: Text.extend({ styles: { root: { '--text-color': 'currentColor' } } }),
+    Checkbox: Checkbox.extend({ vars: iconOnFill('--checkbox-icon-color') }),
+    Radio: Radio.extend({ vars: iconOnFill('--radio-icon-color') }),
     // Таблица по центру умолчанием темы (F18): заголовок и ячейки, первая колонка тоже. Стиль
     // ложится на сам элемент — в месте вызова выравнивание не задаётся.
     Table: Table.extend({
