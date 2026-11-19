@@ -215,7 +215,7 @@ async def _left(name: str) -> int:
     conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
     try:
         async with asyncio.timeout(3):
-            while left := await conn.fetchval(count, name):
+            while left := await conn.fetchval(count, name):  # noqa: ASYNC110 -- опрос базы
                 await asyncio.sleep(0.05)
         return left
     finally:
@@ -252,7 +252,7 @@ async def _connections(name: str, expect: int) -> int:
     try:
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(5):
-                while await conn.fetchval(count, name) < expect:
+                while await conn.fetchval(count, name) < expect:  # noqa: ASYNC110 -- опрос базы
                     await asyncio.sleep(0.05)
         return await conn.fetchval(count, name)
     finally:

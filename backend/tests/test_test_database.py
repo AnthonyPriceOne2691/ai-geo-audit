@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ai_geo_audit.storage import session_scope
 
-BACKEND = Path(__file__).resolve().parents[1]
+BACKEND = dbtools.BACKEND
 DEAD = "postgresql+asyncpg://audit:audit@127.0.0.1:1/postgres"
 
 

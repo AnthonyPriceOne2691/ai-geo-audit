@@ -141,8 +141,8 @@ def test_a21_unencoded_sign_in_the_db_password_is_refused(
     """A21: в бою в пароле базы не закодирован `@`, `#`, `?` или `/` — `api`, `worker` и `migrate`
     не стартуют со своей причиной, а не «короче 12»; ни адреса, ни куска пароля в отказе нет."""
     found = prod(monkeypatch, process, **full_env(master_key) | {"DATABASE_URL": db(password)})
-    assert found == [sc.Problem("DATABASE_URL", sc.UNENCODED_PASSWORD)]
-    assert "ss-word" not in sc.UNENCODED_PASSWORD and "audit" not in sc.UNENCODED_PASSWORD
+    assert found == [sc.Problem("DATABASE_URL", sc.DB_URL_UNENCODED_CHARS)]
+    assert "ss-word" not in sc.DB_URL_UNENCODED_CHARS and "audit" not in sc.DB_URL_UNENCODED_CHARS
 
 
 GOOD = [
@@ -204,6 +204,6 @@ def test_a21_migrate_refuses_an_unencoded_password_without_printing_it() -> None
     url = db("pa@ss-word-123456", f"127.0.0.1:5462/{dbtools.own_name()}")
     run = dbtools.alembic("upgrade", "head", extra={"APP_ENV": "prod", "DATABASE_URL": url})
     assert run.returncode != 0
-    assert sc.UNENCODED_PASSWORD in run.stderr
+    assert sc.DB_URL_UNENCODED_CHARS in run.stderr
     assert "Traceback" not in run.stderr, run.stderr[-1500:]
     assert "ss-word-123456" not in run.stderr

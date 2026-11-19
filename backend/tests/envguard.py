@@ -11,7 +11,8 @@ import re
 from collections.abc import MutableMapping
 from pathlib import Path
 
-EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
+ROOT = Path(os.environ.get("AUDIT_REPO_ROOT") or Path(__file__).resolve().parents[2])
+EXAMPLE = ROOT / ".env.example"
 #: Ключи провайдеров и переменные libpq (`PGSSLMODE=require` ронял бы каждое соединение тестов).
 PREFIXES = ("OPENAI_", "ANTHROPIC_", "DATAFORSEO_", "AHREFS_", "GEMINI_", "GOOGLE_", "PERPLEXITY_")
 PROXIES = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "ENV_FILE"})

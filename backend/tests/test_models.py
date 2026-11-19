@@ -62,7 +62,7 @@ async def test_a15_unique_violation_is_named_by_the_database(committed: AsyncEng
 async def test_a15_default_types_are_bigint_text_timestamptz(committed: AsyncEngine) -> None:
     """A15: `Mapped[int]`, `[str]`, `[datetime]` без типа — bigint, text, timestamptz."""
     async with committed.connect() as conn:
-        types = {name: kind for name, kind in await conn.execute(text(TYPES))}
+        types = dict((await conn.execute(text(TYPES))).all())
     assert [types[c] for c in ("amount", "note", "seen_at")] == [
         "bigint",
         "text",
@@ -84,7 +84,7 @@ async def test_a16_values_are_stored_and_the_check_rejects_the_rest(
         s.add(Probe("enum", status=Status.DONE))
     async with committed.connect() as conn:
         stored = (await conn.execute(text("SELECT status FROM probe.probe"))).scalar_one()
-        enums = (await conn.execute(text("SELECT count(*) FROM pg_type WHERE typtype = 'e'")))
+        enums = await conn.execute(text("SELECT count(*) FROM pg_type WHERE typtype = 'e'"))
         assert (stored, enums.scalar_one()) == ("done", 0)  # типов ENUM в базе нет вовсе
     with pytest.raises(IntegrityError) as caught:
         async with session_scope(committed) as s:
@@ -276,8 +276,10 @@ def test_a15_service_models_follow_the_rules() -> None:
             models.model_problems(models.Base.metadata)
         return
     keys = sum(len(t.foreign_keys) for t in tables.values())
-    print(f"ветвь: таблиц {len(tables)}, колонок {sum(len(t.columns) for t in tables.values())}, "
-          f"ключей {keys}")
+    print(
+        f"ветвь: таблиц {len(tables)}, колонок {sum(len(t.columns) for t in tables.values())}, "
+        f"ключей {keys}"
+    )
     assert models.model_problems(models.Base.metadata) == []
 
 

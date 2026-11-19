@@ -10,21 +10,21 @@ from __future__ import annotations
 import netguard  # isort: skip
 
 netguard.install()
-import envguard  # noqa: E402  # isort: skip
+import envguard  # isort: skip
 
 CLEANED = envguard.clean()
 
-import asyncio  # noqa: E402
-import logging  # noqa: E402
-from collections.abc import AsyncIterator, Iterator  # noqa: E402
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Iterator
 
-import dbtools  # noqa: E402
-import pytest  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession  # noqa: E402
+import dbtools
+import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from ai_geo_audit import config  # noqa: E402
-from ai_geo_audit.logs import setup as log_setup  # noqa: E402
-from ai_geo_audit.storage import build_engine, dispose_engine  # noqa: E402
+from ai_geo_audit import config
+from ai_geo_audit.logs import setup as log_setup
+from ai_geo_audit.storage import build_engine, dispose_engine
 
 
 def pytest_report_header() -> str:

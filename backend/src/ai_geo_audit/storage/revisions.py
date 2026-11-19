@@ -39,8 +39,8 @@ def chain_problems(versions: Path) -> list[str]:
         if len(names) > 1:
             problems.append(f"номер {number} у нескольких ревизий: {', '.join(names)}")
     last = max((int(number) for number in files), default=0)
-    for number in range(1, last + 1):
-        current, previous = f"{number:04d}", f"{number - 1:04d}" if number > 1 else None
+    for n in range(1, last + 1):
+        current, previous = f"{n:04d}", f"{n - 1:04d}" if n > 1 else None
         if current not in files:
             problems.append(f"номер {current} пропущен")
         elif downs[current] != previous:

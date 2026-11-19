@@ -14,6 +14,7 @@ import envguard
 import pytest
 
 PROBE = dbtools.BACKEND / "tests" / "env_probe" / "probe_env.py"
+PYTEST = [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
 
 
 def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: Path) -> None:
@@ -34,8 +35,7 @@ def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: 
         "TEST_DATABASE_URL": dbtools.server_url().render_as_string(hide_password=False),
     }
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
-        + [str(PROBE)],
+        [*PYTEST, str(PROBE)],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -117,8 +117,7 @@ def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
         "TEST_DATABASE_URL": dbtools.server_url().render_as_string(hide_password=False),
     }
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
-        + ["tests/env_probe/probe_env.py"],
+        [*PYTEST, "tests/env_probe/probe_env.py"],
         cwd=dbtools.BACKEND,
         env=dirty,
         capture_output=True,
