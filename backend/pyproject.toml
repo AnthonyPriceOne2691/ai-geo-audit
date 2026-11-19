@@ -6,15 +6,32 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.20,<1.21",
     "asyncpg>=0.31,<0.32",
+    "fastapi==0.141.1",
     "pydantic-settings>=2.6,<3",
     "sqlalchemy[asyncio]>=2.1,<2.2",
+    "uvicorn==0.54.0",
 ]
 
 [dependency-groups]
 dev = [
+    "httpx==0.28.1",
     "pytest>=8.3,<10",
     "pytest-asyncio>=1,<2",
 ]
+
+[tool.uv]
+# Правило 14 суток — нижняя граница возраста пакета: отсечка — момент обновления uv.lock минус
+# 14 суток. Замок обновлён 2026-11-19 после 12:00Z.
+exclude-newer = "2026-11-05T12:00:00Z"
+# starlette 1.7.0 — пара с fastapi 0.141.1, как у соседа в бою: поведение сверено по ней
+# (решение проверяющего 2026-11-19). Прямой зависимостью она не становится.
+constraint-dependencies = ["starlette==1.7.0"]
+
+[tool.uv.exclude-newer-package]
+# Уже стоят в замке и моложе отсечки — не откатываем (решение проверяющего 2026-11-19).
+sqlalchemy = "2026-11-17T00:00:00Z"
+pydantic-settings = "2026-11-14T00:00:00Z"
+pytest-asyncio = "2026-11-13T00:00:00Z"
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
