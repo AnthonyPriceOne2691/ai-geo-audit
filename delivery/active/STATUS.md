@@ -8,7 +8,7 @@
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
 - **phase:** verify
-  <!-- T15 — сверка в чистом клоне 2026-11-19T10:44:56Z на `a0df3ea`, отчёт — verify-report.md;
+  <!-- T15 — сверка в чистом клоне 2026-11-19T11:10:10Z на `4c40f12`, отчёт — verify-report.md;
        сдача — T16, вердикт ставит проверяющий. Срез 5 ушёл в Ч1.2г (T11). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
