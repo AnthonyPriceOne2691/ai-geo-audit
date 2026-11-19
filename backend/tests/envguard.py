@@ -11,7 +11,19 @@ import re
 from collections.abc import MutableMapping
 from pathlib import Path
 
-ROOT = Path(os.environ.get("AUDIT_REPO_ROOT") or Path(__file__).resolve().parents[2])
+
+def repo_root(start: Path | None = None) -> Path:
+    """Корень копии — ближайший предок с `docker-compose.dev.yml` и `backend/`. По меткам, а не
+    по глубине: под mutmut тесты лежат в `backend/mutants/tests`. Без переменной окружения: она
+    навела бы тесты на базу другой копии — имя базы считается от корня."""
+    here = (start or Path(__file__)).resolve()
+    for folder in here.parents:
+        if (folder / "docker-compose.dev.yml").is_file() and (folder / "backend").is_dir():
+            return folder
+    raise RuntimeError(f"корень копии не найден выше {here}")
+
+
+ROOT = repo_root()
 EXAMPLE = ROOT / ".env.example"
 #: Ключи провайдеров и переменные libpq (`PGSSLMODE=require` ронял бы каждое соединение тестов).
 PREFIXES = ("OPENAI_", "ANTHROPIC_", "DATAFORSEO_", "AHREFS_", "GEMINI_", "GOOGLE_", "PERPLEXITY_")
