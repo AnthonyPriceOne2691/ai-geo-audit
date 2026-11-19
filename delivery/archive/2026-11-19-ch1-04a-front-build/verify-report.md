@@ -236,7 +236,7 @@ asserts_without_example: 0
 | Metric | Value |
 |---|---|
 | files_touched / loc_diff | 24 code (+9 process docs) / +7860/-0; гейт без lock и конфига eslint — 22 файла, 848 строк |
-| commits | 13 |
+| commits | 16 — до коммита сдачи |
 | time_to_accepted_spec | 0.1h |
 | rework_after_done | 0 (handoff not declared yet) |
 | harness_hardened | yes — оракул сборки `frontend/scripts/check-dist.mjs` с тестом на 25 порч; тест инструментов со скриптами целиком и сверкой записей lock; общий `AppProviders` у приложения и тестового рендера; `min-release-age` в `.npmrc` с тестом |
