@@ -10,10 +10,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** tasks
-  <!-- Ветка документов от main `2bdf4d9` по слову проверяющего 2026-11-19T12:17Z. Спека и план —
-       подписанные черновики как есть: спека `ed4ba18f8d92`, план `216193c42f34`. Код — после
-       того как Ч1.2г ляжет в main: main вливается в ветку, затем срез 0 (T1). -->
+- **phase:** implement
+  <!-- Ветка от main `2bdf4d9`, подпись под примерами — `494f2ab`. Код — по слову проверяющего
+       2026-11-19T12:27Z, main с Ч1.2г влит `9637d4e`. Срез 0: пакеты и пробы 1–8 (T2, T3). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T10:40Z)
