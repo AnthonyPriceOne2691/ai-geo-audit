@@ -60,11 +60,13 @@ async def silent_db() -> AsyncIterator[Silent]:
 @dataclass
 class Relay:
     """Посредник TCP перед тестовой базой: по флагу перестаёт пересылать байты, соединений не
-    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; считает открытые соединения."""
+    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; `delay` — задержка нового
+    соединения до первой пересылки; считает открытые соединения."""
 
     url: str = ""
     frozen: bool = False
     freeze_on: bytes = b""
+    delay: float = 0.0
     open: int = 0
 
 
@@ -89,6 +91,7 @@ async def relay() -> AsyncIterator[Relay]:
 
     async def link(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         found.open += 1
+        await asyncio.sleep(found.delay)
         upstream_reader, upstream = await asyncio.open_connection(real.host, real.port)
         links.extend([writer, upstream])
         try:
@@ -168,15 +171,21 @@ async def test_a40_silent_database_is_cut_by_the_limit(
 
 @pytest.mark.parametrize("freeze_on", [b"", b"SELECT 1"], ids=["между проверками", "посреди"])
 async def test_a40_frozen_database_is_cut_by_the_limit_too(
-    monkeypatch: pytest.MonkeyPatch, relay: Relay, freeze_on: bytes
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    relay: Relay,
+    freeze_on: bytes,
 ) -> None:
     """A40, строже показанного: база замерзает — посредник перестаёт пересылать байты, соединений
     не рвёт: между проверками и посреди проверки, на уже установленном соединении, когда клиент
     шлёт `SELECT 1`. Первый запрос — 200; второй — 503 не позже предела плюс 1 с; после
-    разморозки — 200. Соединений у посредника в конце 0: оборванное не утекло, пула нет."""
+    разморозки — 200. Соединений у посредника в конце 0: оборванное не утекло, пула нет. Запись
+    WARNING одна — `error` — `TimeoutError`, а не класс ошибки драйвера, `limit_seconds` — 0.5."""
     probes.use_database(monkeypatch, relay.url)
     monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
-    async with probes.client(probes.build()) as http, asyncio.timeout(5):
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http, asyncio.timeout(5):
         first = await http.get("/api/health")
         relay.frozen, relay.freeze_on = not freeze_on, freeze_on
         started = time.monotonic()
@@ -191,6 +200,32 @@ async def test_a40_frozen_database_is_cut_by_the_limit_too(
     assert [first.status_code, second.status_code, third.status_code] == [200, 503, 200]
     assert took <= 1.5, took
     assert relay.open == 0
+    records = list(warnings_of(capsys.readouterr().err))
+    assert [(r["error"], r["limit_seconds"]) for r in records] == [("TimeoutError", 0.5)]
+
+
+async def test_a40_one_deadline_covers_the_connection_and_the_query(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], relay: Relay
+) -> None:
+    """A40, строже показанного: срок один на весь поход. Предел 1,0 с; новое соединение
+    медленное — 0,8 с до первой пересылки, затем база замерзает на `SELECT 1`: 503 не позже
+    1,5 с, а не предел заново от соединения (вышло бы около 1,8 с). Запись WARNING —
+    `TimeoutError` и предел 1.0."""
+    probes.use_database(monkeypatch, relay.url)
+    monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 1.0)
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http, asyncio.timeout(5):
+        warm = await http.get("/api/health")
+        relay.delay, relay.freeze_on = 0.8, b"SELECT 1"
+        started = time.monotonic()
+        response = await http.get("/api/health")
+        took = time.monotonic() - started
+        relay.delay, relay.freeze_on, relay.frozen = 0.0, b"", False
+    assert (warm.status_code, response.status_code) == (200, 503)
+    assert took <= 1.5, took
+    records = list(warnings_of(capsys.readouterr().err))
+    assert [(r["error"], r["limit_seconds"]) for r in records] == [("TimeoutError", 1.0)]
 
 
 async def test_a41_requests_without_database_need_do_not_touch_it(
