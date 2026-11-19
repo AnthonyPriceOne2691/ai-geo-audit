@@ -45,15 +45,33 @@ function listFiles(root) {
   }
 }
 
-/** Атрибуты каждого тега `name`: имя атрибута → значение. */
+/** Атрибуты одного тега: имя атрибута → значение. */
+function attrsOf(text) {
+  const attrs = new Map();
+  for (const [, key, ...values] of text.matchAll(ATTR)) {
+    attrs.set(key.toLowerCase(), values.find((value) => value !== undefined) ?? '');
+  }
+  return attrs;
+}
+
+/** Атрибуты каждого тега `name`. */
 function tags(html, name) {
-  return [...html.matchAll(new RegExp(`<${name}\\b([^>]*)>`, 'gi'))].map(([, text]) => {
-    const attrs = new Map();
-    for (const [, key, ...values] of text.matchAll(ATTR)) {
-      attrs.set(key.toLowerCase(), values.find((value) => value !== undefined) ?? '');
+  return [...html.matchAll(new RegExp(`<${name}\\b([^>]*)>`, 'gi'))].map(([, text]) =>
+    attrsOf(text),
+  );
+}
+
+/** Для политики содержимого обработчик `on…=` и адрес `javascript:` — тоже встроенный скрипт. */
+function checkMarkup(html) {
+  for (const [, tag, text] of html.matchAll(/<([a-z][\w-]*)\b([^>]*)>/gi)) {
+    const where = `<${tag.toLowerCase()}`;
+    for (const [key, value] of attrsOf(text)) {
+      if (key.startsWith('on')) say(page, `встроенный скрипт — ${key} у ${where}>`);
+      else if (/^\s*javascript:/i.test(value)) {
+        say(page, `встроенный скрипт — javascript: у ${where} ${key}>`);
+      }
     }
-    return attrs;
-  });
+  }
 }
 
 const found = (text, re, group) =>
@@ -71,6 +89,7 @@ function checkPage(files, name) {
   const scripts = tags(html, 'script');
   const inline = scripts.filter((attrs) => !attrs.get('src')).length;
   if (inline > 0) say(page, `встроенных скриптов: ${inline} — у каждого <script> нужен src`);
+  checkMarkup(html);
   const links = tags(html, 'link').map((attrs) => attrs.get('href'));
   for (const ref of [...scripts.map((attrs) => attrs.get('src')), ...links].filter(Boolean)) {
     const path = ref.replace(/[?#].*$/, '').replace(/^\.?\//, '');
