@@ -2,10 +2,12 @@
 
 **Version:** 1.0
 **Ratified:** 2026-11-18
-**Canon stack:** delivery@2.21 · cqg@absent · okf@absent
+**Canon stack:** delivery@2.21 · cqg@3.14 · okf@absent
 <!-- Тексты канонов взяты из одной ревизии: delivery@2.21 · cqg@3.14 · okf@1.24 ·
      stack-map@1.57. Развёрнута ось ① (волна В0); ② и CI придут волной В1, ③ — волной В2.
-     absent = слой не развёрнут. -->
+     absent = слой не развёрнут.
+     cqg@3.14 — с поставки В1а: половина Python оси ② и замок payload
+     `scripts/lint/payload.lock.json`; TS-половины — поставка В1б. -->
 **CI:** not-deployed   <!-- §10.4; GitHub Actions — волна В1 -->
 
 Продукт — веб-сервис аудита сайта: сбор данных о сайте, проверки по правилам и

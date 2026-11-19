@@ -80,7 +80,13 @@ def test_a6_config_secrets_are_registered(
     monkeypatch.setenv("DATABASE_URL", DSN)
     logs.register_config_secrets(config.AccessSettings(), config.StorageSettings())
     logs.setup_logging(fmt="text")
-    logging.getLogger("x").warning("dsn=%s secret=%s pw=%s", DSN, SECRET, DB_PASSWORD)
+    # Запись — мимо метода логгера: страж исполнения ловит секрет в вызове лога (так и надо),
+    # а тест вносит его нарочно, чтобы судить маску в обработчике.
+    log = logging.getLogger("x")
+    args = (DSN, SECRET, DB_PASSWORD)
+    log.handle(
+        log.makeRecord("x", logging.WARNING, __file__, 0, "dsn=%s secret=%s pw=%s", args, None)
+    )
     out = capsys.readouterr().err
     assert SECRET not in out and DB_PASSWORD not in out
 

@@ -1,0 +1,21 @@
+{
+  "_": "Роли и половины гейтов, которым на этом дереве в поставке В1а судить нечего (CQG «Применимость», §5.5). Причина печатается на каждом прогоне; TS-половины и npm приходят поставкой В1б.",
+  "check_complexity_gate.sh:ts": "поставка В1б: TS-половина сложности (eslint) — фронтовые половины гейтов идут после В1а, npm в CI В1а нет",
+  "check_layers_gate.sh:ts": "поставка В1б: TS-половина слоёв (dependency-cruiser) — фронтовые половины гейтов идут после В1а",
+  ".dependency-cruiser.cjs": "поставка В1б: конфиг слоёв TS-половины (dependency-cruiser) приходит вместе с ней",
+  "check_dead_code.py:ts": "поставка В1б: TS-половина мёртвого кода (knip) — фронтовые половины гейтов идут после В1а",
+  "check_mutation_gate.sh:ts": "поставка В1б: TS-половина мутаций (Stryker) — фронтовые половины гейтов идут после В1а",
+  "check_eslint_warnings.sh": "поставка В1б: ратчет предупреждений eslint — гейт фронта; npm в CI В1а нет, хуки eslint и prettier сняты до В1б",
+  "check_jscpd_gate.sh": "пакет npm, поставка В1б: jscpd — пакет npm, без него не судит и половина Python; npm в CI В1а нет, дублирование Python до В1б не судит никто",
+  "check_grep_gate.sh:service-no-web": "слоя сервисов нет: правило выбирает файлы по имени (каталог services/, service.py), в ai_geo_audit таких нет — просмотрено 0",
+  "merge_guard.sh": {
+    "reason": "срез 5 поставки В1а: гейт мержа кладётся вместе с подключением и pre-push (A113–A115); объявление истекает, когда файл появится",
+    "until": "scripts/merge_guard.sh"
+  },
+  "quality.yml": {
+    "reason": "срез 2 поставки В1а: CI на GitHub Actions — quality.yml с джобами gates, delivery, tests (A98); объявление истекает, когда файл появится",
+    "until": ".github/workflows/quality.yml"
+  },
+  "okf_sync_gate.py": "ось ③ (OKF) не развёрнута — okf@absent, волна В2",
+  "okf_validate.py": "ось ③ (OKF) не развёрнута — okf@absent, волна В2"
+}

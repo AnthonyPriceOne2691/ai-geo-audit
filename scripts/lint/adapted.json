@@ -1,0 +1,54 @@
+{
+  "_": "Адаптации контура против канона cqg@3.14 (CQG §5.5): что изменено, почему и что переносить при обновлении. kind=upstream-candidate — починка дефекта канона: запись снимается, когда канон починит у себя.",
+  "check_deps_audit.sh": {
+    "reason": "ПОЧИНКА дефекта канона: итог «нет манифестов» смотрит найденный манифест, а не корень дерева",
+    "changed": "строка 236: `if [[ -z \"$py_manifest\" && ! -f \"$FE_DIR/package.json\" ]]` вместо проверки pyproject.toml, requirements.txt и package.json в корне. Гейт сам делает cd в корень дерева, манифесты у нас в backend/ и frontend/, и при любом зелёном исходе он выходил на «не найдено ни одного манифеста» — без «просмотрено N» и без «python-зависимости не проверены» (A91, A103)",
+    "kind": "upstream-candidate"
+  },
+  "mutation_py.sh": {
+    "reason": "ПОЧИНКА дефекта канона: глоб мутантов на раскладке src/ — mutmut 3.8.1 сам срезает приставку src.",
+    "changed": "после `rel=${f#\"$MUT_CWD\"/}` — строка `rel=${rel#src/}`: backend/src/ai_geo_audit/x.py → ai_geo_audit.x.*. Без неё при LINT_PY_SRC=backend/src гейт выходит ложным зелёным «изменённые файлы не дали мутантов», при backend — «не просудил». Зовётся с LINT_PY_SRC=backend/src и MUTATION_WORKERS=1: у воркеров одна база копии; строка 24 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный",
+    "kind": "upstream-candidate"
+  },
+  "sentinels_taps.py": {
+    "reason": "ПОЧИНКА дефекта канона: перехват httpx читал `request.content` у потокового тела",
+    "changed": "в `mark` внутри `wrap_httpx` тело берётся только у `httpx.ByteStream`, у потокового — пустое: `content` у него бросает RequestNotRead, и любой тест с телом-генератором падал внутри стража (три параметра теста A42), а чтение съело бы поток, который тест считает (A42: не отдано ни байта)",
+    "kind": "upstream-candidate"
+  },
+  "check_gate_coverage.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строка 99 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  "gate_coverage_roles.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строка 97 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  "mutation_shard.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строки 10 и 84 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  "mutation_ts.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строка 38 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  ".pre-commit-config.yaml": {
+    "reason": "транспорт и раскладка: все хуки repo: local, свои LINT_*, хук варианта D, TS-хуки — поставка В1б",
+    "changed": "блок 0 — check-yaml, check-json, check-toml, check-merge-conflict, check-added-large-files локальными хуками через `uv run --project backend --no-sync` из пакета pre-commit-hooks 6.0.0 dev-группы, с теми же id, args и stages, вместо внешнего repo (A100); хук canon-texts-stay-out рецептом AGENT_STACK §7.1a (вариант D, A97); хуки eslint, eslint-warning-ratchet и prettier сняты до В1б — npm в CI нет, ратчет объявлен в not-applicable.json; LINT_* в entry через export (§6): LINT_PY_SRC=backend у check_grep_gate.sh — вся область вместе с миграциями (A94), backend/src у AST-гейта, сложности, мёртвого кода и jscpd; LINT_COV_PKG=src/ai_geo_audit у mypy; значения export — в кавычках, иначе доктор читает их вместе с «;»; гейт длины — LINT_LENGTH_GLOBS с *.mjs и javascript в types_or (frontend/scripts); у гейта слоёв files: — backend/src и backend/.importlinter, frontend/src — с TS-половиной в В1б"
+  },
+  "backend/pyproject.toml": {
+    "reason": "фрагмент влит с адаптациями: E501 вне ignore; mypy без плагина SQLAlchemy и с mypy_path",
+    "changed": "[tool.ruff.lint]: E501 вне ignore — литерал и комментарий в 101 знак иначе не краснит ни ruff check, ни ruff format (A93); [tool.mypy]: plugins = [\"pydantic.mypy\"] — в SQLAlchemy 2.1.9 модуля sqlalchemy.ext.mypy нет, mypy с ним выходит с кодом 2, и mypy_path = \"src\" — иначе модули раскладки src/ зовутся src.ai_geo_audit.*, а импорты молча становятся Any; [tool.mutmut]: source_paths = [\"src\"]; [tool.pytest.ini_options] слит с проектным: testpaths, asyncio_mode и asyncio_default_fixture_loop_scope — pytest-asyncio стоит; свой [tool.coverage.run] — src и migrations, patch subprocess, гринлеты (A107, A108); инструменты — dev-группой uv вместо requirements-dev.txt (§5 шаг 4), без pytest-env (окружение тестов держит Ч1.2в, A31)"
+  },
+  "backend/.importlinter": {
+    "reason": "пример канона приведён к пакету: один контракт слоёв, контракты 1 и 3 без предмета",
+    "changed": "root_packages = ai_geo_audit; контракт слоёв api → storage → logs → config → refusal в контейнере ai_geo_audit, api обязательный (A95); контракты integrations-are-leaves и core-models-leaf не заведены — пакета интеграций нет, а «модели не импортируют верхние слои» держит контракт слоёв: storage стоит под api"
+  },
+  "frontend/eslint.config.js": {
+    "reason": "не адаптация шаблона канона: свой конфиг фронта из Ч1.4а; шаблон eslint канона — поставка В1б",
+    "changed": "файл написан в Ч1.4а под фронт проекта, а не извлечён из payload; путь совпадает с конфигом канона eslint.config.js в каталоге фронта. Обновление контура его не перезаписывает: решение о шаблоне канона — в В1б"
+  }
+}

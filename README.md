@@ -18,6 +18,23 @@ React с Vite и Mantine, pytest, docker compose.
 - Тесты ходят только на петлю и не видят окружения машины: `.env` в рабочие копии ссылкой не
   подключается — у каждой копии своё окружение и своя тестовая база.
 
+## Гейты качества кода
+
+- Гейты формы — канон CQG `cqg@3.14`, половина Python; фронтовые половины — следующей поставкой.
+  Хуки — `.pre-commit-config.yaml`, скрипты гейтов — `scripts/lint/`, настройки ruff, mypy,
+  pytest и покрытия — `backend/pyproject.toml`, слои — `backend/.importlinter`.
+- Инструменты — dev-группа uv: `cd backend && uv sync --frozen`. Версия uv — 0.11.26, другая отказывает.
+- Каталог хуков git у клона один на все рабочие копии: в нём заглушки `scripts/hooks/stub.sh`,
+  ставит их `bash scripts/hooks/install-stubs.sh` — по слову проверяющего. Заглушка зовёт
+  `scripts/hooks/run-hooks.sh` той копии, где идёт коммит или push, а он — pre-commit из её
+  `backend/.venv`. `pre-commit install` не годится: он пишет в хук путь к Python одной копии.
+- Хуки руками, из своей копии: `uv run --project backend pre-commit run --all-files`, стадия
+  pre-push — с `--hook-stage pre-push`. Все ли гейты подключены —
+  `bash scripts/lint/check_gate_coverage.sh`; судят ли они — `python3 scripts/lint/contour_doctor.py`.
+- Аудит зависимостей Python ходит в сеть: у его хука `stages: [manual]`, место — CI; руками —
+  `LINT_FE_DIR=.frontend-not-here bash scripts/lint/check_deps_audit.sh`.
+- Гейты видят только файлы в индексе: новый файл — `git add <файл>`, потом прогон.
+
 ## Сервер API
 
 - Запуск — `cd backend && uv run python -m ai_geo_audit.api`: адрес и порт — `API_HOST` и

@@ -1,7 +1,7 @@
 # Active delivery status
 
 - **slug:** contour-b1a
-- **stack:** delivery@2.21, cqg@absent, okf@absent
+- **stack:** delivery@2.21, cqg@3.14, okf@absent
   <!-- Тексты канонов одной ревизии: delivery@2.21 · cqg@3.14 · okf@1.24 · stack-map@1.57.
        Эта поставка разворачивает ось ② (CQG), половину Python; запись `cqg@3.14` — по факту
        развёртывания, вместе с замком payload (A92). Ось ③ — волна В2. -->
@@ -72,7 +72,22 @@
        действует только до первого зелёного прогона CI на коммите этой поставки: тот же коммит,
        что переводит `ci-oracles` в `deployed` (A118), возвращает эту строку к `none`.
        Требование чистого клона к сверке (§10.4) разрешением не снимается. -->
-- **new_dependency:** none reason=инструменты гейтов ставятся в срезе 1, строками по каждому с by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** coverage reason=7.17.2 — покрытие изменённого и подпроцессов alembic, вместе с pytest-cov (A107, A108); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** detect-secrets reason=1.5.0 — сканер секретов на коммите и в CI (A96); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** hypothesis reason=6.170.14 — свойства с генератором входов под мутационным гейтом (A111, A112, A119); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** import-linter reason=2.15 — гейт слоёв `backend/.importlinter` (A95); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** mutmut reason=3.8.1 — мутационный гейт (A109); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** mypy reason=2.4.1 — проверка типов, strict по фрагменту канона; dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** pip-audit reason=2.10.1 — известные уязвимости зависимостей Python (A102, A103); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** pre-commit reason=4.7.0 — запуск хуков коммита и pre-push; dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** pre-commit-hooks reason=6.0.0 — пять проверок гигиены локальными хуками вместо внешнего repo (A100); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** pytest-cov reason=7.1.0 — покрытие изменённого кода (A108); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** pyyaml reason=6.0.3 — разбор workflow и конфига хуков в тесте контракта CI (A99, A100); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** ruff reason=0.17.3 — линтер и форматтер, форма кода и гейт сложности (A93); dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** types-pyyaml reason=6.0.12.20261103 — типы PyYAML для mypy; dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+- **new_dependency:** vulture reason=2.16 — гейт мёртвого кода, половина Python; dev-группа uv, версия точная by=human:owner at=2026-11-19T10:40Z
+  <!-- Слово владельца 2026-11-19T10:40Z («да на всё») — одно на список инструментов плана,
+       «Stack / boundaries»: 14 инструментов, hypothesis — вместе с остальными. -->
 - **runtime_paths:** .github/workflows/
   <!-- Исполняется только на раннере GitHub: доказательство — прогон на коммите поставки,
        строки eval-smoke со ссылкой на прогон. -->
