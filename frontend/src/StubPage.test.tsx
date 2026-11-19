@@ -46,7 +46,7 @@ describe('заглушка', () => {
 
   it('F16: заглушка называет сервис и то, что на ней есть, без обещаний', () => {
     renderWithProviders(<StubPage />);
-    expect(screen.getByText('Сейчас здесь только проверка сборки')).toBeInTheDocument();
+    expect(screen.getByText('Сейчас здесь проверка сборки и образцы вида')).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/скоро/i);
   });
 });
@@ -73,13 +73,13 @@ describe('образцы вида', () => {
       .getAllByRole('row')
       .slice(1)
       .map((row) => {
-        const label = within(row).getByText(/^(Успех|Внимание|Критично)$/);
+        const label = within(row).getByText(/^(ОК|Внимание|Ошибка)$/);
         return [label.textContent, label.style.color, label.style.backgroundColor];
       });
     expect(statuses).toEqual([
-      ['Успех', cssVar('ok'), cssVar('okTint')],
+      ['ОК', cssVar('ok'), cssVar('okTint')],
       ['Внимание', cssVar('warn'), cssVar('warnTint')],
-      ['Критично', cssVar('crit'), cssVar('critTint')],
+      ['Ошибка', cssVar('crit'), cssVar('critTint')],
     ]);
     const cells = [...table.getAllByRole('columnheader'), ...table.getAllByRole('cell')];
     expect(cells.map((cell) => cell.style.textAlign)).toEqual(Array(12).fill('center'));
