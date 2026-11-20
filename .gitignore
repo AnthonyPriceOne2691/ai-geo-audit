@@ -19,6 +19,8 @@ frontend/dist/
 .env
 .env.*
 !.env.example
+# Журнал хода и замок скрипта выката на сервере (A183)
+.deploy/
 .claude/settings.local.json
 .claude/worktrees/
 
