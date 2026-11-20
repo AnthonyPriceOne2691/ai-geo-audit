@@ -145,7 +145,8 @@ def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str,
 def test_a186_a183_links_are_not_followed(ctx, tmp_path: Path, capsys) -> None:
     """A186, A183: `.deploy` — ссылка на чужой каталог: `mkdir` и запуск команды — отказ, права
     чужого каталога прежние; `last` — отказ, строки чужого журнала в выводе нет. Свой корень —
-    ссылка: запись и `mkdir` — отказ. Цель `mkdir` — не каталог: отказ."""
+    ссылка: запись и `mkdir` — отказ. Цель `mkdir` — не каталог: отказ. Замок — ссылка на чужой
+    файл в настоящем `.deploy`: `last` — отказ, чужой метки в выводе нет (порча N6)."""
     foreign = tmp_path / "srv/nb-alpha"
     foreign.mkdir()
     foreign.chmod(0o755)
@@ -171,6 +172,13 @@ def test_a186_a183_links_are_not_followed(ctx, tmp_path: Path, capsys) -> None:
     ctx.paths.etc.write_text("не каталог", encoding="utf-8")
     with pytest.raises(Refused, match="не каталог"):
         ctx.files.mkdir(ctx.paths.etc)
+    ctx.paths.deploy_dir.unlink()
+    ctx.paths.deploy_dir.mkdir()
+    (foreign / "lock").write_text("4242 2026-11-20T00:00:00Z\n", encoding="utf-8")
+    (ctx.paths.deploy_dir / "lock").symlink_to(foreign / "lock")
+    ctx.out = io.StringIO()
+    assert tool.main(["last"], ctx) == 1
+    assert "4242" not in ctx.out.getvalue() + "".join(capsys.readouterr())
 
 
 def test_a186_temp_file_is_600_from_creation_and_crash_keeps_old_file(ctx, monkeypatch) -> None:
