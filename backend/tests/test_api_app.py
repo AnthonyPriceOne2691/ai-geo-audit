@@ -1,6 +1,6 @@
-"""Вход API (A32–A35, A37, A57): настройки входа, сборка приложения, настройки uvicorn, его
+"""Вход API (A32–A35, A37, A51, A57): настройки входа, сборка приложения, настройки uvicorn, его
 журналы и пакеты без лишнего; отказ входа процесса при негодной настройке — словами; остановка
-закрывает движок процесса."""
+закрывает движок процесса; схема и консоли — только в разработке."""
 
 from __future__ import annotations
 
@@ -14,11 +14,13 @@ import sys
 import time
 import tomllib
 from collections.abc import Callable
+from pathlib import Path
 from types import ModuleType
 
 import api_probes as probes
 import asyncpg
 import dbtools
+import httpx
 import pytest
 import uvicorn
 from pydantic import ValidationError
@@ -365,3 +367,86 @@ async def test_a37_shutdown_closes_the_process_engine(monkeypatch: pytest.Monkey
     after = await api_connections(lambda found: found == [])
     assert sent == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
     assert (read.status_code, before, after) == (200, ["idle"], [])
+
+
+PASS = {"X-Access-Token": probes.PASS}
+CONSOLES = ("/api/docs", "/api/redoc")
+REDIRECTS = ("/api/docs/oauth2-redirect", "/docs/oauth2-redirect")
+OPEN_IN_DEVELOPMENT = ["/api/docs", "/api/health", "/api/openapi.json", "/api/redoc"]
+PROD_PATHS = (
+    "/api/openapi.json",
+    "/api/docs",
+    "/api/redoc",
+    "/api/docs/oauth2-redirect",
+    "/openapi.json",
+    "/docs",
+    "/redoc",
+    "/docs/oauth2-redirect",
+)
+
+
+def refused(responses: list[httpx.Response], kind: str) -> list[tuple[str, int]]:
+    """Ответы, которые не равны образцу вида: путь и код."""
+    sample = probes.sample(kind)
+    return [
+        (r.request.url.path, r.status_code)
+        for r in responses
+        if (r.status_code, r.json()) != (sample["status"], sample["body"])
+    ]
+
+
+@pytest.mark.parametrize("env", ["dev", "test"])
+async def test_a51_schema_and_consoles_are_open_in_development(
+    monkeypatch: pytest.MonkeyPatch, app_module: ModuleType, env: str
+) -> None:
+    """A51: `APP_ENV=dev` и `test`, `create_app()`; без пропуска схема — 200 `application/json`, в
+    `paths` ровно `/api/health`, схем входа нет; консоли — 200 `text/html`, обе ссылаются на
+    `/api/openapi.json`, слова `oauth2RedirectUrl` нет. Оба пути oauth2-redirect — 403
+    `signed-out` без пропуска и 404 `not-found` с ним; `swagger_ui_oauth2_redirect_url` — `None`
+    (проба 10). У приложения тестов с закрытой пробой — одна схема входа, `apiKey` заголовка
+    `X-Access-Token` (проба 11). Список открытых — ровно здоровье, схема и две консоли, у каждого
+    — причина."""
+    monkeypatch.setenv("APP_ENV", env)
+    fresh_config(monkeypatch)
+    app = app_module.create_app(visitor_for=probes.known_pass)
+    async with probes.client(app) as http:
+        schema = await http.get("/api/openapi.json")
+        consoles = [await http.get(path) for path in CONSOLES]
+        bare = [await http.get(path) for path in REDIRECTS]
+        passed = [await http.get(path, headers=PASS) for path in REDIRECTS]
+    async with probes.client(probes.build()) as http:
+        probe_schema = (await http.get("/api/openapi.json", headers=PASS)).json()
+    body = schema.json()
+    assert (schema.status_code, schema.headers["content-type"]) == (200, "application/json")
+    assert (sorted(body["paths"]), "components" in body) == (["/api/health"], False)
+    for page in consoles:
+        shown = (page.status_code, page.headers["content-type"].split(";")[0])
+        assert shown == (200, "text/html")
+        assert ("/api/openapi.json" in page.text, "oauth2RedirectUrl" in page.text) == (True, False)
+    assert (refused(bare, "signed-out"), refused(passed, "not-found")) == ([], [])
+    assert app.swagger_ui_oauth2_redirect_url is None
+    schemes = list(probe_schema["components"]["securitySchemes"].values())
+    assert schemes == [{"type": "apiKey", "in": "header", "name": "X-Access-Token"}]
+    listed = app.state.open_paths
+    assert (sorted(listed), all(reason.strip() for reason in listed.values())) == (
+        OPEN_IN_DEVELOPMENT,
+        True,
+    )
+
+
+async def test_a51_no_schema_or_console_in_production(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_module: ModuleType
+) -> None:
+    """A51: `APP_ENV=prod`, настройки боя заданы, как в A32: восемь путей схемы и консолей — без
+    пропуска 403 `signed-out`, с пропуском 404 `not-found`: в бою схемы и консоли нет. У
+    приложения `openapi_url`, `docs_url`, `redoc_url` и `swagger_ui_oauth2_redirect_url` —
+    `None`; список открытых — одно `/api/health`."""
+    probes.prod_settings(monkeypatch, tmp_path)
+    app = app_module.create_app(visitor_for=probes.known_pass)
+    async with probes.client(app) as http:
+        bare = [await http.get(path) for path in PROD_PATHS]
+        passed = [await http.get(path, headers=PASS) for path in PROD_PATHS]
+    assert (refused(bare, "signed-out"), refused(passed, "not-found")) == ([], [])
+    urls = (app.openapi_url, app.docs_url, app.redoc_url, app.swagger_ui_oauth2_redirect_url)
+    assert urls == (None, None, None, None)
+    assert list(app.state.open_paths) == ["/api/health"]

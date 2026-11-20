@@ -1,14 +1,15 @@
-"""Маршруты-пробы и сборка приложения для тестов API (A36–A48, A53, A54).
+"""Маршруты-пробы и сборка приложения для тестов API (A36–A54).
 
 Закрытая проба отвечает именем вошедшего, проба с телом — по схеме с запретом лишних полей,
 падающая проба падает с меткой, проба журнала пишет запись INFO. Проба заголовков пишет в журнал
 `Authorization`, пропуск и пароль сайта, как небрежный код; вторая падающая проба падает с
 пропуском в тексте (A48). Проба чтения читает базу сессией движка процесса (A37). Проба
 ожидания держит вошедших до события теста; открытая проба с телом стоит в списке открытых, как
-будущий вход по паролю (A53, A54). Подставные проверки пропуска: одна признаёт тестовый пропуск,
-другая падает. Схема тела — на уровне модуля: FastAPI ищет
-аннотации по имени, схему внутри функции он не найдёт (проба 7 среза 0, L43). Пропуск и пароль
-сайта — из слов-заглушек.
+будущий вход по паролю (A53, A54); проба своих заголовков ставит кэш, `nosniff` и номер запроса
+сама (A49). Приложение боя — `APP_ENV=prod` с настройками из слов-заглушек, как в A32 (A51).
+Подставные проверки пропуска: одна признаёт тестовый пропуск, другая падает. Схема тела — на
+уровне модуля: FastAPI ищет аннотации по имени, схему внутри функции он не найдёт (проба 7 среза
+0, L43). Пропуск и пароль сайта — из слов-заглушек.
 """
 
 from __future__ import annotations
@@ -17,13 +18,16 @@ import asyncio
 import base64
 import json
 import logging
+import socket
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Annotated, Any
 
 import dbtools
 import httpx
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Security
+from fastapi.responses import JSONResponse
 from pydantic import SecretStr
 from sqlalchemy import text
 from starlette.types import ASGIApp
@@ -48,6 +52,7 @@ DB_READ = "/api/probe/db-read"
 WAIT = "/api/probe/wait"
 OPEN_BODY = "/api/probe/open-body"
 OPEN_ECHO = "/api/probe/open-echo"
+OWN_HEADERS = "/api/probe/own-headers"
 #: Вызовы закрытой пробы: по ним видно, дошёл ли запрос до обработчика.
 CALLS: list[str] = []
 SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_text("utf-8"))
@@ -146,6 +151,17 @@ class Waiting:
             await self._changed.wait()
 
 
+@probes.get("/own-headers")
+async def own_headers() -> JSONResponse:
+    """Маршрут сам ставит кэш, `nosniff` и номер запроса — слой обязан их заменить (A49)."""
+    mine = {
+        "Cache-Control": "public, max-age=60",
+        "X-Content-Type-Options": "sniff",
+        "X-Request-ID": "forged-id-1",
+    }
+    return JSONResponse({}, headers=mine)
+
+
 #: Проба ожидания текущего теста: тест ставит свою, события не переходят между циклами.
 WAITING = Waiting()
 
@@ -205,6 +221,38 @@ def build_open_body() -> FastAPI:
     )
     app.include_router(open_probes)
     return app
+
+
+def closed_port_url() -> str:
+    """Адрес базы на петле, где никто не слушает."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    return f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
+
+
+def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Боевой режим с настройками из слов-заглушек, как в A32: проверка старта `api` проходит."""
+    key = tmp_path / "master.key"
+    key.write_text("master-key-from-plain-words-for-tests-only", encoding="utf-8")
+    env = {
+        "APP_ENV": "prod",
+        "DATABASE_URL": "postgresql+asyncpg://audit:prod-db-words-123456@db:5432/audit",
+        "REDIS_URL": "redis://redis:6379/0",
+        "JWT_SECRET": "prod-jwt-secret-from-plain-words-for-tests-only",
+        "KEYS_MASTER_KEY_FILE": str(key),
+        "API_TRUSTED_PROXIES": "10.9.9.9",
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    for name, domain in (
+        ("app", config.AppSettings),
+        ("storage", config.StorageSettings),
+        ("access", config.AccessSettings),
+        ("keys", config.KeySettings),
+        ("api", config.ApiSettings),
+    ):
+        monkeypatch.setattr(config, name, domain())
 
 
 def use_database(monkeypatch: pytest.MonkeyPatch, url: str) -> None:

@@ -7,7 +7,6 @@ import asyncio
 import contextlib
 import json
 import re
-import socket
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
@@ -22,14 +21,6 @@ from ai_geo_audit.api import contract, health
 from ai_geo_audit.logs import setup as log_setup
 
 UNAVAILABLE = probes.sample("unavailable")
-
-
-def closed_port_url() -> str:
-    """Адрес базы на петле, где никто не слушает."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
 
 
 @dataclass
@@ -134,7 +125,7 @@ async def test_a39_closed_database_is_unavailable_in_words(
     """A39: адрес базы — петля и свободный порт; `GET /api/health` — 503, тело ровно образец
     `unavailable`, без адреса, порта и имени. В журнале — одна запись WARNING «здоровье: база не
     ответила» с `error` — `ConnectionRefusedError` (проба 1), без текста ошибки драйвера."""
-    url = closed_port_url()
+    url = probes.closed_port_url()
     probes.use_database(monkeypatch, url)
     app = probes.build()
     log_setup.setup_logging(fmt="json")
@@ -281,7 +272,7 @@ async def answer(kind: str, monkeypatch: pytest.MonkeyPatch) -> object:
     """Запрос из `when` образца: по одному на вид."""
     token = {"X-Access-Token": probes.PASS}
     probes.use_database(
-        monkeypatch, closed_port_url() if kind == "unavailable" else dbtools.own_url()
+        monkeypatch, probes.closed_port_url() if kind == "unavailable" else dbtools.own_url()
     )
     async with probes.client(probes.build()) as http:
         if kind in ("health-ok", "unavailable"):

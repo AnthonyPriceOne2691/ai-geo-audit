@@ -1,5 +1,6 @@
-"""Ворота входа и договор отказов, срез 2 (A42, A44, A45): путь вне списка открытых — только
-с годным пропуском и до чтения тела; отказы — одной формой по файлу образцов."""
+"""Ворота входа и договор отказов (A42, A44, A45, A49, A50): путь вне списка открытых — только
+с годным пропуском и до чтения тела; отказы — одной формой по файлу образцов; на каждом ответе —
+по одной копии `no-store`, `nosniff` и номера запроса; заголовков CORS нет."""
 
 from __future__ import annotations
 
@@ -9,9 +10,12 @@ import re
 from collections.abc import AsyncIterator
 
 import api_probes as probes
+import dbtools
+import httpx
 import pytest
 
-from ai_geo_audit.api import access
+from ai_geo_audit.api import access, limits
+from ai_geo_audit.api.app import create_app
 from ai_geo_audit.logs import setup as log_setup
 
 SIGNED_OUT = probes.sample("signed-out")
@@ -268,3 +272,116 @@ async def test_a45_crash_is_a_500_in_form_and_one_error_record(
     assert [(r["request_id"], "marker-c0ffee" in r.get("exc", "")) for r in errors] == [
         (number, True)
     ]
+
+
+OWN_NUMBER = re.compile(r"[0-9a-f]{32}")
+PASS = {"X-Access-Token": probes.PASS}
+
+
+async def nothing() -> AsyncIterator[bytes]:
+    """Тело без байтов: размер объявляет заголовок (проба 12)."""
+    for chunk in ():
+        yield chunk
+
+
+def response_headers_wrong(response: httpx.Response, number: str | None = None) -> list[str]:
+    """Что не так с заголовками ответа; пусто — по одной копии `no-store`, `nosniff` и номера."""
+    head = response.headers
+    problems = []
+    if head.get_list("cache-control") != ["no-store"]:
+        problems.append(f"cache-control {head.get_list('cache-control')}")
+    if head.get_list("x-content-type-options") != ["nosniff"]:
+        problems.append(f"x-content-type-options {head.get_list('x-content-type-options')}")
+    numbers = head.get_list("x-request-id")
+    good = numbers == [number] if number else len(numbers) == 1 and OWN_NUMBER.fullmatch(numbers[0])
+    if not good:
+        problems.append(f"x-request-id {numbers}")
+    return problems
+
+
+async def test_a49_every_answer_carries_no_store_nosniff_and_one_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A49: ответы всех видов — 200 здоровья, 200 консоли в `dev`, 403 ворот, с пропуском 404 и
+    422, 405, 400 голого `HTTPException`, 500 перехвата, 503 `unavailable`, 413 объявленный и
+    потоковый (проба 2), 503 `busy`: у каждого ровно по одной копии `cache-control: no-store`,
+    `x-content-type-options: nosniff` и `x-request-id` — 32 шестнадцатеричных знака или
+    присланный, если его принял слой (A46)."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    got: dict[str, httpx.Response] = {}
+    async with probes.client(probes.build()) as http:
+        got["200 здоровья"] = await http.get("/api/health")
+        got["403 ворот"] = await http.get("/api/nope")
+        got["404"] = await http.get("/api/nope", headers=PASS)
+        got["422"] = await http.post(probes.BODY, json={"limit": 1}, headers=PASS)
+        got["405"] = await http.post("/api/health")
+        bare = PASS | {"Content-Type": "application/json"}
+        got["400 голый"] = await http.post(probes.BODY, content=b"\xff", headers=bare)
+        got["500"] = await http.get(probes.BOOM, headers=PASS)
+        declared = PASS | {"Content-Length": "1048577"}
+        got["413 объявленный"] = await http.post(probes.BODY, content=nothing(), headers=declared)
+        got["413 потоковый"] = await http.post(
+            probes.BODY, content=(b"x" * 65536 for _ in range(80)), headers=PASS
+        )
+        monkeypatch.setattr(limits, "IN_FLIGHT_LIMIT", 0)
+        got["503 busy"] = await http.get("/api/health")
+        monkeypatch.setattr(limits, "IN_FLIGHT_LIMIT", 32)
+        probes.use_database(monkeypatch, probes.closed_port_url())
+        got["503 unavailable"] = await http.get("/api/health")
+        sent = await http.get("/api/nope", headers={"X-Request-ID": "abc-123_DEF.4"})
+    async with probes.client(create_app(visitor_for=probes.known_pass)) as http:
+        got["200 консоли"] = await http.get("/api/docs")
+    statuses = {label: response.status_code for label, response in got.items()}
+    assert [label for label, code in statuses.items() if not label.startswith(str(code))] == []
+    wrong = {label: response_headers_wrong(response) for label, response in got.items()}
+    assert {label: problems for label, problems in wrong.items() if problems} == {}
+    assert response_headers_wrong(sent, "abc-123_DEF.4") == []
+
+
+async def test_a49_route_headers_are_replaced_not_added() -> None:
+    """A49: проба сама ставит `Cache-Control: public, max-age=60`, `X-Content-Type-Options: sniff`
+    и `X-Request-ID: forged-id-1`; с тестовым пропуском — по одной копии каждого: `no-store`,
+    `nosniff` и номер запроса слоя. Заголовки маршрута заменены, а не дописаны."""
+    async with probes.client(probes.build()) as http:
+        response = await http.get(probes.OWN_HEADERS, headers=PASS)
+    assert (response.status_code, response_headers_wrong(response)) == (200, [])
+
+
+EVIL = {"Origin": "https://evil.example.invalid"}
+
+
+def cors_headers(response: httpx.Response) -> list[str]:
+    return [name for name in response.headers if name.lower().startswith("access-control-")]
+
+
+async def test_a50_no_cors_headers_on_answers() -> None:
+    """A50: `Origin` чужого сайта — `GET /api/health` и с пропуском `GET` закрытой пробы: 200 и 200,
+    ни одного заголовка, имя которого начинается с `access-control-`."""
+    async with probes.client(probes.build()) as http:
+        health = await http.get("/api/health", headers=EVIL)
+        closed = await http.get(probes.CLOSED, headers=EVIL | PASS)
+    assert (health.status_code, closed.status_code) == (200, 200)
+    assert cors_headers(health) + cors_headers(closed) == []
+
+
+async def test_a50_preflights_are_not_allowed_by_anyone() -> None:
+    """A50: предзапросы с чужим `Origin`: `OPTIONS /api/health` с `Access-Control-Request-Method:
+    GET` — 405 образец `method-not-allowed`, `allow: GET`; `OPTIONS` закрытой пробы без пропуска с
+    методом `POST` и заголовком `x-access-token` — 403 `signed-out`. Заголовков `access-control-*`
+    нет: слой CORS ответил бы на предзапрос сам, до ворот и маршрута."""
+    ask_get = EVIL | {"Access-Control-Request-Method": "GET"}
+    ask_post = EVIL | {
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "x-access-token",
+    }
+    async with probes.client(probes.build()) as http:
+        health = await http.options("/api/health", headers=ask_get)
+        closed = await http.options(probes.CLOSED, headers=ask_post)
+    allowed = probes.sample("method-not-allowed")
+    assert (health.status_code, health.headers.get("allow"), health.json()) == (
+        405,
+        "GET",
+        allowed["body"],
+    )
+    assert refused_signed_out(closed) == []
+    assert cors_headers(health) + cors_headers(closed) == []
