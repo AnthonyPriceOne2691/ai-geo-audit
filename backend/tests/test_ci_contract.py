@@ -52,7 +52,7 @@ INSTALL = re.compile(
     r"(?<![\w-])(?:pip[3x]?|uvx|npx|uv\s+(?:tool|add|sync))(?![\w-])"
     r"|\buv\s+run\b[^\n;&|]*\s--with\b"
     r"|\buv\s+run\b(?![^\n;&|]*\s--no-sync\b)"
-    r"|\b(?:curl|wget)\b[^\n;&]*?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python3?)\b"
+    r"|\b(?:curl|wget)\b[^\n;&]*?\|\s*(?:sudo(?:\s+-\S+)*\s+)?(?:(?:ba|z|da)?sh|python3?)\b"
     r"|(?:\$\(|<\()\s*(?:curl|wget)\b"
     r"|(?<![\w-])(?:npm|apt-get|apt)\b[^\n;&|]*?\s(?:install|i|ci|add)(?![\w-])"
 )
@@ -607,6 +607,7 @@ INSTALLS = (
     "sudo apt-get -y install curl",
     "curl -sSL https://example.invalid/install.sh | sh",
     "wget -qO- https://example.invalid/install.sh | sudo bash",
+    "curl -sSL https://example.invalid/setup | sudo -E bash -",
     'sh -c "$(curl -fsSL https://example.invalid/install.sh)"',
     "bash <(curl -fsSL https://example.invalid/install.sh)",
 )
