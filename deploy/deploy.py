@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import fcntl
 import hashlib
 import http.client
 import ipaddress
 import json
 import os
+import pwd
 import re
 import signal
 import stat
@@ -92,15 +94,16 @@ class Result(NamedTuple):
 
 class Runner:
     """Единственный исполнитель внешних команд: предел времени, пустой stdin, своя сессия — по
-    пределу гаснет вся группа; значения — только окружением (`env`), аргументы видны всем."""
+    пределу гаснет вся группа; значения — только окружением (`env`), аргументы видны всем.
+    Окружение оператора командам не передаётся: HOME — из учётной записи пользователя процесса,
+    иначе docker под root читал бы настройки и плагины из чужого `$HOME/.docker`."""
 
     def run(
         self, argv: Sequence[str], *, timeout: float = TIMEOUT, env: Mapping[str, str] | None = None
     ) -> Result:
         what = " ".join(argv[:2])
-        child = {"PATH": SAFE_PATH, "LC_ALL": "C.UTF-8"}
-        if "HOME" in os.environ:
-            child["HOME"] = os.environ["HOME"]
+        home = pwd.getpwuid(os.geteuid()).pw_dir
+        child = {"PATH": SAFE_PATH, "LC_ALL": "C.UTF-8", "HOME": home}
         try:
             proc = subprocess.Popen(  # noqa: S603 — список без шелла, значения окружением (A183)
                 list(argv),
@@ -162,9 +165,24 @@ class Files:
             raise
         self.ops.append(("write", str(target)))
 
+    def _open(self, target: Path, flags: int) -> int:
+        """Свой обычный файл, без ссылки и без ожидания: канал не ждёт второго конца, каталог и
+        устройство не открываются — не обычный файл: отказ сразу."""
+        try:
+            fd = os.open(target, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+        except OSError as exc:
+            if exc.errno not in (errno.ENXIO, errno.EISDIR, errno.ELOOP):
+                raise
+            raise RefusedError(f"{target.name} — не обычный файл") from None
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            raise RefusedError(f"{target.name} — не обычный файл")
+        os.set_blocking(fd, True)
+        return fd
+
     def append(self, path: Path, text: str) -> None:
         target = self.own(path)
-        fd = os.open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = self._open(target, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
         with os.fdopen(fd, "a", encoding="utf-8") as out:
             out.write(text)
         self.ops.append(("append", str(target)))
@@ -186,20 +204,19 @@ class Files:
 
     def read(self, path: Path) -> tuple[str, os.stat_result]:
         """Свой файл целиком, не по ссылке, — с правами и владельцем того же открытого файла."""
-        fd = os.open(self.own(path), os.O_RDONLY | os.O_NOFOLLOW)
+        fd = self._open(self.own(path), os.O_RDONLY)
         info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            os.close(fd)
-            raise RefusedError(f"{path.name} — не обычный файл")
         with os.fdopen(fd, encoding="utf-8", errors="replace") as source:
             return source.read(), info
 
     def names(self, path: Path) -> list[str]:
-        """Имена в своём каталоге, не по ссылке; каталога нет — пусто."""
+        """Имена в своём каталоге, не по ссылке; каталога нет — пусто, не каталог — отказ."""
         try:
             return sorted(os.listdir(self.own(path, root_itself=True)))
         except FileNotFoundError:
             return []
+        except NotADirectoryError:
+            raise RefusedError(f"{path.name} — не каталог") from None
 
     def remove(self, path: Path) -> None:
         target = self.own(path)
@@ -215,7 +232,7 @@ class Files:
         """Замок одного запуска: flock на время команды и метка «процесс и время». Занят — отказ
         сразу; метка без замка — от мёртвого процесса, она возвращается как устаревшая."""
         target = self.own(path)
-        fd = os.open(target, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = self._open(target, os.O_RDWR | os.O_CREAT)
         mark = os.pread(fd, 200, 0).decode(errors="replace").strip()
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -237,7 +254,7 @@ class Files:
     def lock_state(self, path: Path) -> str:
         """Идёт ли выкат — по своему замку, не трогая метку."""
         try:
-            fd = os.open(self.own(path), os.O_RDONLY | os.O_NOFOLLOW)
+            fd = self._open(self.own(path), os.O_RDONLY)
         except FileNotFoundError:
             return "выката нет"
         try:
@@ -529,16 +546,19 @@ def cmd_last(ctx: Context, _args: argparse.Namespace) -> int:
     return 0
 
 
-COMMANDS: dict[str, Callable[[Context, argparse.Namespace], int]] = {"last": cmd_last}
+COMMANDS: dict[str, tuple[Callable[[Context, argparse.Namespace], int], str]] = {
+    "last": (cmd_last, "последний журнал хода и идёт ли выкат"),
+}
 
 
 def main(argv: Sequence[str] | None = None, ctx: Context | None = None) -> int:
     parser = argparse.ArgumentParser(prog="deploy.py", description="Выкат AI GEO Audit")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("last", help="последний журнал хода и идёт ли выкат")
+    for name, (_command, summary) in COMMANDS.items():
+        commands.add_parser(name, help=summary)
     args = parser.parse_args(argv)
     try:
-        return COMMANDS[args.command](ctx or Context(), args)
+        return COMMANDS[args.command][0](ctx or Context(), args)
     except RefusedError as exc:
         if not exc.reported:
             with contextlib.suppress(OSError, ValueError):
