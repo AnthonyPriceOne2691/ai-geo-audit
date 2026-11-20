@@ -84,7 +84,7 @@ def test_a110_reports_and_mutants_are_ignored() -> None:
 
 
 def test_slice3_gates_are_wired_not_declared() -> None:
-    """Объявления n/a покрытия изменённого и мутаций сняты: оба гейта стоят в джобе tests."""
+    """A108, A109: объявления n/a покрытия изменённого и мутаций сняты — оба гейта в джобе tests."""
     declared = json.loads((ROOT / "scripts" / "lint" / "not-applicable.json").read_text("utf-8"))
     assert {"check_diff_coverage.sh", "check_mutation_gate.sh"} & declared.keys() == set()
 

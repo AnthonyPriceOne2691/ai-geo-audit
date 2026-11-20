@@ -13,7 +13,7 @@ import pytest
 
 
 def test_passes() -> None:
-    assert True
+    return None
 
 
 def test_skipped() -> None:
@@ -46,7 +46,7 @@ def test_a106_skipped_test_fails_the_run_and_is_named(tmp_path: Path) -> None:
 
 def test_a106_run_without_skips_is_green_with_the_summary(tmp_path: Path) -> None:
     """A106: без пропусков — код 0 и «собрано N, прошло N, пропущено 0»."""
-    done = run_probe(tmp_path, PROBE.replace('pytest.skip("проба A106")', "assert True"))
+    done = run_probe(tmp_path, PROBE.replace('pytest.skip("проба A106")', "return None"))
     assert done.returncode == 0, done.stdout
     assert "собрано 2, прошло 2, пропущено 0" in done.stdout
 

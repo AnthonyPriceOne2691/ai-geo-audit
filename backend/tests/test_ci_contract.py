@@ -35,6 +35,7 @@ REQUEST_FIELDS = re.compile(r"\$\{\{\s*github\.(head_ref|event\.pull_request\.)"
 
 
 def load(path: Path) -> dict[Any, Any]:
+    """A99, A100: файл workflow или конфига хуков — словарь YAML."""
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(data, dict), f"{path.name}: не словарь YAML"
     return data
@@ -180,6 +181,7 @@ def guard_problems(guard: dict[Any, Any]) -> list[str]:
 
 
 def python_minor() -> str:
+    """A99: минор Python — нижняя граница `requires-python`."""
     spec = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["requires-python"]
     found = re.search(r">=\s*(\d+\.\d+)", spec)
     assert found, f"requires-python без нижней границы: {spec}"
