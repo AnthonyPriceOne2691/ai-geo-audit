@@ -12,14 +12,16 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
   <!-- Ветка от main `a8e4597` после публикации Ч1.3а: A36, A46, A47 — в Ч1.3а. Спека и план —
        подписанные черновики (примеры — слово владельца 2026-11-19T13:13Z, спека `72af388458b1`,
        26 строк) с условиями открытия и ответами проверяющего и числами новой меры: спека
        `64ad5f6ea440`, план `1cfee8f6c98d`, таблица примеров `be39201e4751`. Подпись под
        примерами — `af4d28d`; шаг 0 — пробы 1–12 и проба A37, итоги в decisions. Срезы 1–5 и
-       A37 (слово владельца 2026-11-20T09:31Z, подпись `0383569`) — в коде; прогон в чистом клоне
-       на `bc736c7` и живые прогоны S1–S5 — в verify-report. Вердикт — за проверяющим. -->
+       A37 (слово владельца 2026-11-20T09:31Z, подпись `0383569`) — в коде; восемь пунктов
+       приёмки — `5ef5f01`, `5a02430`, `94a30d5`; main `1518276` влит — `85b7cc5`. Сверка —
+       `verify-report.md`: чистый клон на `85b7cc5` (535 passed), живые прогоны S1–S5. Вердикт —
+       `b4bad36`, подпись владельца под утверждениями — `089fbbe` (2026-11-20T11:53Z). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T13:13Z)
@@ -81,8 +83,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** в первом прогоне CI В1а (`ubuntu-24.04`) — A37, A48–A58 зелёные: тело больше 1 048 576 байт — 413 `too-large`, сверх 32 запросов в работе — 503 `busy` с `retry-after: 60`, живой сервер A55 — на Linux; на пробном выкате, запросами к api из сети стека: заголовки `POST /api/health` с `Content-Length: 1048577` — 413 `too-large` не позже 2 с, ровно 1 048 576 байт — 405; у каждого ответа по одной копии `cache-control: no-store`, `x-content-type-options: nosniff` и `x-request-id`, без `access-control-*` и `server`; `/api/docs` без пропуска — 403; журнал api — каждая строка наш JSON с `ts` на `+0000`, без пароля базы, секрета подписи и пропуска, без «Logging error» и «Exception ignored»; после `docker compose stop api` соединений `ai-geo-audit:api` в базе 0
+- **observe_until:** 2026-11-27 — первый прогон CI В1а и пробный выкат
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
   <!-- Слова владельца ведущей сессии: 2026-11-19T14:26Z «Да, согласен. Давай ускоримся» —
        предел 2500 строк вместе с тестами, поставка — тема целиком (список из шести пунктов);
