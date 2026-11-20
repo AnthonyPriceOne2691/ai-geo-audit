@@ -16,6 +16,7 @@ import pytest
 
 from ai_geo_audit.ops import stack_rules
 
+sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 _spec = importlib.util.spec_from_file_location(
     "stack_oracle", dbtools.ROOT / "scripts/stack_oracle.py"
 )
