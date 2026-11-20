@@ -259,24 +259,6 @@ jobs:
     # слово владельца 2026-11-20T10:59Z): 99 с прочего + 1200 с мутаций + ~5 с замка ≈ 1304 с, запас
     # ~8 мин — гейт успевает сказать «бюджет исчерпан» раньше таймаута. Число держит тест контракта.
     timeout-minutes: 30
-    services:
-      # Как служба db в docker-compose.dev.yml: база живёт только в прогоне, пароль — публичный
-      # пароль стенда. Образ — строкой стека «линия@дайджест» (A100). Готовность — `pg_isready` по
-      # TCP внутри контейнера: порт на петле раннера отвечает раньше базы, а при первом старте
-      # образ поднимает временный сервер только на сокете.
-      postgres:
-        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
-        env:
-          POSTGRES_USER: audit
-          POSTGRES_PASSWORD: audit  # pragma: allowlist secret
-          POSTGRES_DB: audit
-        ports:
-          - 127.0.0.1:5462:5432
-        options: >-
-          --health-cmd "pg_isready -h 127.0.0.1 -U audit -d audit"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
