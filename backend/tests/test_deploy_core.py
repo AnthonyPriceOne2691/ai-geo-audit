@@ -485,13 +485,17 @@ def test_refusal_journaled_and_shown_once_no_service_dir_named(ctx, monkeypatch,
     assert "— сначала git clone по памятке" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("case", ["read", "append", "lock", "lock_state", "last"])
+@pytest.mark.parametrize("case", ["read", "append", "lock", "lock_state", "last", "names"])
 def test_a186_not_a_regular_file_refused_without_waiting(ctx, capsys, case: str) -> None:
     """A186: на месте своего файла — именованный канал: чтение, дозапись журнала, замок,
     состояние замка и `last` отказывают словами сразу, не ожидая второго конца канала (находка
-    проверяющего: `last` висел)."""
-    ctx.paths.deploy_dir.mkdir()
-    fifo = ctx.paths.deploy_dir / ("lock" if case.startswith("lock") else "20261120T000000Z-a.log")
+    проверяющего: `last` висел); канал на месте своего каталога хода — отказ «не каталог»."""
+    if case == "names":
+        fifo = ctx.paths.deploy_dir
+    else:
+        ctx.paths.deploy_dir.mkdir()
+        name = "lock" if case.startswith("lock") else "20261120T000000Z-a.log"
+        fifo = ctx.paths.deploy_dir / name
     os.mkfifo(fifo)
     act = {
         "read": lambda: ctx.files.read(fifo),
@@ -499,6 +503,7 @@ def test_a186_not_a_regular_file_refused_without_waiting(ctx, capsys, case: str)
         "lock": lambda: ctx.files.lock(fifo),
         "lock_state": lambda: ctx.files.lock_state(fifo),
         "last": lambda: tool.main(["last"], ctx),
+        "names": lambda: ctx.files.names(fifo),
     }[case]
     box: dict[str, object] = {}
 
@@ -520,7 +525,8 @@ def test_a186_not_a_regular_file_refused_without_waiting(ctx, capsys, case: str)
     if case == "last":
         assert box.get("value") == 1 and "не обычный файл" in capsys.readouterr().err
     else:
-        assert isinstance(box.get("error"), Refused) and "не обычный файл" in str(box["error"])
+        expected = "не каталог" if case == "names" else "не обычный файл"
+        assert isinstance(box.get("error"), Refused) and expected in str(box["error"])
 
 
 def test_hangup_is_ignored_from_the_terminal_entry(ctx, monkeypatch) -> None:
