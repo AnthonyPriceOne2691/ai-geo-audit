@@ -43,6 +43,7 @@ HEADERS = "/api/probe/headers"
 BOOM_PASS = "/api/probe/boom-pass"
 WAIT = "/api/probe/wait"
 OPEN_BODY = "/api/probe/open-body"
+OPEN_ECHO = "/api/probe/open-echo"
 #: Вызовы закрытой пробы: по ним видно, дошёл ли запрос до обработчика.
 CALLS: list[str] = []
 SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_text("utf-8"))
@@ -153,6 +154,15 @@ async def open_body(item: ProbeBody) -> dict[str, str]:
     return {"name": item.name}
 
 
+@open_probes.get("/open-echo")
+async def open_echo(request: Request) -> dict[str, str]:
+    """Пишет присланный `X-Access-Token` в журнал текстом кода (A48)."""
+    logging.getLogger("ai_geo_audit.api.probe").info(
+        "пришло: %s", request.headers.get("x-access-token")
+    )
+    return {}
+
+
 async def known_pass(token: str) -> access.Visitor | None:
     """Подставная проверка: признаёт только тестовый пропуск."""
     return access.Visitor("probe-visitor") if token == PASS else None
@@ -174,7 +184,13 @@ def build(
 
 def build_open_body() -> FastAPI:
     """Приложение, где проба с телом стоит в списке открытых, как будущий вход по паролю (A53)."""
-    app = build(open_paths={**access.OPEN_PATHS, OPEN_BODY: "проба: вход по паролю"})
+    app = build(
+        open_paths={
+            **access.OPEN_PATHS,
+            OPEN_BODY: "проба: вход по паролю",
+            OPEN_ECHO: "проба: открытая запись в журнал",
+        }
+    )
     app.include_router(open_probes)
     return app
 

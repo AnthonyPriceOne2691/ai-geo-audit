@@ -290,3 +290,17 @@ def test_a48_object_that_becomes_text_is_cleaned_too(
         logging.getLogger("ai_geo_audit.test").info("объект", extra={"carried": Carrier()})
     out = capsys.readouterr().err
     assert ("carried-pass-words" in out, "carrier ***" in out) == (False, True)
+
+
+async def test_a48_value_not_in_pass_form_does_not_mask_code_text(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A48: значение `X-Access-Token` не по форме пропуска — не секрет и в тексте кода: открытая
+    проба пишет его в журнал — там оно как есть, а не `***`."""
+    app = probes.build_open_body()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http:
+        await http.get(probes.OPEN_ECHO, headers={"X-Access-Token": "/api/nope-not-a-pass"})
+    records = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]
+    echo = [r["message"] for r in records if r["logger"] == "ai_geo_audit.api.probe"]
+    assert echo == ["пришло: /api/nope-not-a-pass"]
