@@ -1,10 +1,11 @@
-"""Маршруты-пробы и сборка приложения для тестов API (A36, A38–A47).
+"""Маршруты-пробы и сборка приложения для тестов API (A36, A38–A48).
 
 Закрытая проба отвечает именем вошедшего, проба с телом — по схеме с запретом лишних полей,
-падающая проба падает с меткой, проба журнала пишет запись INFO. Подставные проверки
-пропуска: одна признаёт тестовый пропуск, другая падает. Схема тела — на уровне модуля:
-FastAPI ищет аннотации по имени, схему внутри функции он не найдёт (проба 7 среза 0, L43).
-Пропуск и пароль сайта — из слов-заглушек.
+падающая проба падает с меткой, проба журнала пишет запись INFO. Проба заголовков пишет в журнал
+`Authorization`, пропуск и пароль сайта, как небрежный код; вторая падающая проба падает с
+пропуском в тексте (A48). Подставные проверки пропуска: одна признаёт тестовый пропуск, другая
+падает. Схема тела — на уровне модуля: FastAPI ищет аннотации по имени, схему внутри функции он
+не найдёт (проба 7 среза 0, L43). Пропуск и пароль сайта — из слов-заглушек.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from typing import Annotated, Any
 import dbtools
 import httpx
 import pytest
-from fastapi import APIRouter, FastAPI, HTTPException, Security
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Security
 from pydantic import SecretStr
 from starlette.types import ASGIApp
 
@@ -35,6 +36,8 @@ BOOM = "/api/probe/boom"
 UNAUTHORIZED = "/api/probe/unauthorized"
 BARE_503 = "/api/probe/bare-503"
 JOURNAL = "/api/probe/journal"
+HEADERS = "/api/probe/headers"
+BOOM_PASS = "/api/probe/boom-pass"
 #: Вызовы закрытой пробы: по ним видно, дошёл ли запрос до обработчика.
 CALLS: list[str] = []
 SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_text("utf-8"))
@@ -85,6 +88,24 @@ async def bare_503() -> None:
 async def journal() -> dict[str, str]:
     logging.getLogger("ai_geo_audit.api.probe").info("проба", extra={"probe": 7})
     return {}
+
+
+@probes.get("/headers")
+async def headers(request: Request) -> dict[str, str]:
+    """Пишет заголовки входа в журнал; пароль сайта — из `Basic`, как его разобрал бы код."""
+    authorization = request.headers.get("authorization", "")
+    pair = base64.b64decode(authorization.partition(" ")[2]).decode()
+    logging.getLogger("ai_geo_audit.api.probe").info(
+        "заголовки: %s",
+        authorization,
+        extra={"token": request.headers.get("x-access-token"), "password": pair.partition(":")[2]},
+    )
+    return {}
+
+
+@probes.get("/boom-pass")
+async def boom_pass(request: Request) -> None:
+    raise RuntimeError(f"упал с пропуском {request.headers.get('x-access-token')}")
 
 
 async def known_pass(token: str) -> access.Visitor | None:

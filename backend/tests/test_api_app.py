@@ -268,3 +268,27 @@ def test_a35_no_extra_server_packages_in_the_lock_or_the_env() -> None:
 async def test_a35_test_loop_is_plain_asyncio() -> None:
     """A35: цикл событий теста — класс из модуля `asyncio`."""
     assert type(asyncio.get_running_loop()).__module__.split(".")[0] == "asyncio"
+
+
+def test_a57_uvicorn_records_go_through_our_handler_and_redaction(
+    capsys: pytest.CaptureFixture[str], app_module: ModuleType
+) -> None:
+    """A57: после `setup_logging(fmt="json")` метка отмечена секретом; собран
+    `uvicorn.Config(**server_settings())` — он сам настраивает свои логгеры (проба 6). У `uvicorn`
+    и `uvicorn.error` своих обработчиков нет, `propagate` — истина; запись `uvicorn.error` с меткой
+    — одна строка нашего JSON с `+0000`, метки нет. Свой `LOGGING_CONFIG` uvicorn увёл бы запись
+    своим обработчиком мимо вычистки."""
+    log_setup.setup_logging(fmt="json")
+    log_setup.register_secret("redact-mark-words-uvicorn")
+    uvicorn.Config(**app_module.server_settings())
+    own = [logging.getLogger(name) for name in ("uvicorn", "uvicorn.error")]
+    assert [(logger.handlers, logger.propagate) for logger in own] == [([], True), ([], True)]
+    logging.getLogger("uvicorn.error").info("метка redact-mark-words-uvicorn")
+    out = [line for line in capsys.readouterr().err.splitlines() if line]
+    assert len(out) == 1, out
+    record = json.loads(out[0])
+    assert (record["logger"], record["ts"][-5:], record["message"]) == (
+        "uvicorn.error",
+        "+0000",
+        "метка ***",
+    )
