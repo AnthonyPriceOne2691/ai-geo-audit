@@ -148,6 +148,8 @@ ENV_FILE = [{"path": "/srv/copy/.env", "required": True}]
 KEY_MOUNT = [{"source": "master_key", "target": "/run/secrets/k"}]
 APP_CONFIG = [{"source": "app_env", "target": "/app/.env"}]
 KEY_IN_APP = [{"source": "master_key", "target": "/app/key"}]
+#: Выключенная проверка с командой: `disable` сильнее `test` (порча M3 проверяющего).
+OFF = {"disable": True, "test": ["CMD", "true"]}
 
 # Проба, код, сервис, переменная: ожидается ровно это нарушение.
 STRUCTURE = [
@@ -160,7 +162,7 @@ STRUCTURE = [
     (put(services, "web", WEB_OPEN), "ports", "web", None),
     (put(svc("redis"), "network_mode", "host"), "ports", "redis", None),
     (drop(svc("redis"), "healthcheck"), "healthcheck", "redis", None),
-    (put(svc("api"), "healthcheck", {"disable": True}), "healthcheck", "api", None),
+    (put(svc("api"), "healthcheck", OFF), "healthcheck", "api", None),
     (put(svc("migrate"), "restart", "on-failure"), "restart", "migrate", None),
     (put(svc("redis"), "restart", "always"), "restart", "redis", None),
     (
@@ -178,6 +180,13 @@ STRUCTURE = [
     (put(svc("redis"), "image", "redis:7.2-alpine" + DIGEST), "image-digest", "redis", None),
     (put(svc("redis"), "image", "valkey:7.4-alpine" + DIGEST), "image-digest", "redis", None),
     *[
+        (put(svc(name), "image", image + DIGEST), "image-digest", name, None)
+        for name, image in (
+            ("db", "evil.example/postgres:16-alpine"),
+            ("redis", "ghcr.io/someone/redis:7.4-alpine"),
+        )
+    ],
+    *[
         (
             put(env("api"), "API_TRUSTED_PROXIES", value),
             "trusted-proxy",
@@ -188,6 +197,7 @@ STRUCTURE = [
     ],
     (put(svc("migrate"), "volumes", BIND_APP), "workdir-volume", "migrate", None),
     (put(svc("migrate"), "configs", APP_CONFIG), "workdir-volume", "migrate", None),
+    (put(svc("migrate"), "configs", [{"source": "app"}]), "workdir-volume", "migrate", None),
     (put(svc("api"), "secrets", KEY_IN_APP), "workdir-volume", "api", None),
     (
         put(svc("api"), "volumes", ["/srv/copy/backend:/app/backend:ro"]),
@@ -201,6 +211,14 @@ SECRETS = [
     (drop(env("migrate"), "DATABASE_URL"), "required-vars", "migrate", "DATABASE_URL"),
     (put(env("api"), "DATABASE_URL", DB_LITERAL), "secret-form", "api", "DATABASE_URL"),
     (put(env("api"), "JWT_SECRET", "http://a"), "secret-form", "api", "JWT_SECRET"),
+    *[
+        (put(env("api"), var, value), "secret-form", "api", var)
+        for var, value in (
+            ("REDIS_URL", "redis://redis:6379/0?password=x"),
+            ("REDIS_URL", "redis://redis:6379/0#x"),
+            ("DATABASE_URL", "postgresql+asyncpg://a:${DB_PASSWORD:?пароль}@db/a"),
+        )
+    ],
     (
         put(env("api"), "DATABASE_URL", "${API_DATABASE_URL:-}"),
         "secret-form",
@@ -288,6 +306,13 @@ def test_a72_environment_as_list_is_read_like_mapping() -> None:
     assert found(config) == set()
     api["environment"] = [item for item in api["environment"] if not item.startswith("JWT_")]
     assert found(config) == {("required-vars", "api", "JWT_SECRET")}
+
+
+def test_a71_a_path_that_only_starts_like_the_workdir_is_not_in_it() -> None:
+    """A71: том в `/application-data` — не в рабочем каталоге `/app` (порча M9 проверяющего)."""
+    stack = valid()
+    stack["services"]["api"]["volumes"] = [{"type": "volume", "target": "/application-data"}]
+    assert found(stack) == set()
 
 
 def test_a72_config_fields_outside_the_lists_are_not_violations() -> None:
