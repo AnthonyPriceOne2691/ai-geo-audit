@@ -143,7 +143,7 @@ PORT = [{"host_ip": "127.0.0.1", "published": "8080", "target": 80}]
 PG_NO_HOST = {"test": ["CMD-SHELL", "pg_isready -U a"]}
 PG_SOCKET = {"test": "pg_isready -h /var/run/postgresql"}
 BIND_APP = [{"type": "bind", "source": "/srv/src", "target": "/app"}]
-DB_LITERAL = "postgresql+asyncpg://a:literal-pass-12@db:5432/a"
+DB_LITERAL = "postgresql+asyncpg://a:literal-pass-12@db:5432/a"  # pragma: allowlist secret
 ENV_FILE = [{"path": "/srv/copy/.env", "required": True}]
 KEY_MOUNT = [{"source": "master_key", "target": "/run/secrets/k"}]
 APP_CONFIG = [{"source": "app_env", "target": "/app/.env"}]
@@ -354,7 +354,9 @@ def test_a72_violation_names_code_service_variable_without_value(
 ) -> None:
     """A72: строка нарушения — код, сервис и имя переменной; значения в выводе нет."""
     config = valid()
-    config["services"]["api"]["environment"]["JWT_SECRET"] = "literal-secret-value-0123456789abc"
+    config["services"]["api"]["environment"]["JWT_SECRET"] = (
+        "literal-secret-value-0123456789abc"  # pragma: allowlist secret
+    )
     code, out = run(monkeypatch, capsys, json.dumps(config))
     assert code == 1
     assert "secret-form: сервис api, переменная JWT_SECRET" in out

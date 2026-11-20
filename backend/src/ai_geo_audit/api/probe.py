@@ -12,10 +12,15 @@ import socket
 import sys
 import time
 
+#: Порт api из конфига; негодный конфиг — None: ValidationError — подкласс ValueError, а в его
+#: тексте введённое значение (L30).
+PORT: int | None
 try:
     from ai_geo_audit import config
-except ValueError:  # ValidationError конфига — подкласс ValueError; в его тексте значение (L30)
-    config = None
+except ValueError:
+    PORT = None
+else:
+    PORT = config.api.port
 
 LIMIT_SECONDS = 3.0
 #: Статусная строка ответа короче; дальше читать незачем.
@@ -51,10 +56,10 @@ def check(port: int, limit: float = LIMIT_SECONDS) -> tuple[int, str]:
 
 
 def main() -> int:
-    if config is None:
+    if PORT is None:
         code, reason = 1, "здоровье: негодная настройка — порт api неизвестен"
     else:
-        code, reason = check(config.api.port)
+        code, reason = check(PORT)
     sys.stdout.write(reason + "\n")
     return code
 
