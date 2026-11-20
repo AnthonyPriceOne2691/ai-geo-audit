@@ -14,7 +14,8 @@
       "Read(~/.ssh/**)",
       "Read(~/.gconnect/**)",
       "Read(~/.config/gh-finger/**)",
-      "Read(~/.config/ssh-finger/**)"
+      "Read(~/.config/ssh-finger/**)",
+      "Read(~/.config/ai-geo-audit/**)"
     ],
     "ask": [
       "Bash(git push:*)",

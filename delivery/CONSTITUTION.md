@@ -132,6 +132,8 @@ deny: Read(~/.ssh/**)
 deny: Read(~/.gconnect/**)
 deny: Read(~/.config/gh-finger/**)
 deny: Read(~/.config/ssh-finger/**)
+# Секреты владельца для сервера на его машине: слово владельца 2026-11-20T09:31Z.
+deny: Read(~/.config/ai-geo-audit/**)
 # Обратимо, но платит человек своим временем — или решает только он.
 ask: Bash(git push:*)
 ask: Bash(gh pr merge:*)
