@@ -1,11 +1,13 @@
 """Секреты запроса (A48): пропуск по форме и пароль сайта из `Authorization: Basic` вычищаются из
 записей любого логгера в своём запросе — и из записи перехвата; мусор в заголовках запрос не
-роняет; секрет запроса не копится в общем наборе вычистки."""
+роняет; секрет запроса не копится в общем наборе вычистки. Строже подписанного: клиент заголовком
+не выбирает, что потеряют поля слоя, — их и форму записи секреты запроса не трогают."""
 
 from __future__ import annotations
 
 import base64
 import json
+import re
 
 import api_probes as probes
 import dbtools
@@ -165,3 +167,91 @@ async def test_a48_only_the_pass_form_is_a_secret_and_it_does_not_pile_up(
     first = next(r for r in json_records(capsys.readouterr().err) if r["logger"] == ACCESS)
     assert first["path"] == "/api/nope"
     assert len(log_setup._secrets) == before
+
+
+ADDRESS = "203.0.113.7"
+NUMBER = "abcdef123456"
+PASS = {"X-Access-Token": probes.PASS}
+TEXT_RECORD = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+0000 [A-Z]+ ")
+
+
+def basic(pair: str) -> str:
+    return "Basic " + base64.b64encode(pair.encode()).decode()
+
+
+#: Секрет, выбранный клиентом, и путь запроса: поля слоя от выбора не зависят.
+CHOSEN = [
+    ("basic-not-base64", {"Authorization": "Basic /api/nope"}, "/api/nope"),
+    ("password-is-path", {"Authorization": basic("a:/api/nope")}, "/api/nope"),
+    ("password-is-client", {"Authorization": basic(f"a:{ADDRESS}")}, "/api/nope"),
+    ("password-is-number", {"Authorization": basic(f"a:{NUMBER}")}, "/api/nope"),
+    ("password-quoted-field", {"Authorization": basic('a:"path"')}, "/api/nope"),
+    ("pass-form-in-path", {"X-Access-Token": "eyJx.aa.bb"}, "/api/eyJx.aa.bb"),
+    ("password-is-logger", {"Authorization": basic(f"a:{ACCESS}")}, "/api/nope"),
+]
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+@pytest.mark.parametrize(("chosen", "path"), [c[1:] for c in CHOSEN], ids=[c[0] for c in CHOSEN])
+async def test_a48_client_does_not_choose_what_layer_fields_lose(
+    capsys: pytest.CaptureFixture[str], fmt: str, chosen: dict[str, str], path: str
+) -> None:
+    """A48, строже подписанного (находка проверяющего 2026-11-20): клиент заголовком выбирает
+    секрет запроса — `Basic` не base64, пароль-путь, пароль-адрес, пароль-номер, пароль `"path"`
+    с кавычками, пропуск по форме в пути, пароль-имя логгера. Поля слоя — `method`, `path`,
+    `status`, `client`, `request_id`, `logger` — от выбора не зависят; JSON остаётся JSON,
+    строка текста — одной строкой. Путь секретом не считается: его пишет и прокси."""
+    app = probes.build()
+    log_setup.setup_logging(fmt=fmt)
+    async with probes.client(app, address=(ADDRESS, 40000)) as http:
+        response = await http.get(path, headers=chosen | {"X-Request-ID": NUMBER})
+    lines = [line for line in capsys.readouterr().err.splitlines() if line]
+    assert (response.status_code, response.headers["x-request-id"]) == (403, NUMBER)
+    if fmt == "json":
+        records = [json.loads(line) for line in lines]
+        access = [r for r in records if r.get("logger") == ACCESS]
+        fields = [(r["method"], r["path"], r["status"], r["client"]) for r in access]
+        assert fields == [("GET", path, 403, ADDRESS)]
+        assert [r["request_id"] for r in records] == [NUMBER] * len(records)
+        return
+    assert [line for line in lines if not TEXT_RECORD.match(line)] == []
+    access_lines = [line for line in lines if f" {ACCESS} запрос | " in line]
+    assert len(access_lines) == 1, lines
+    tail = access_lines[0].split(" | ", 1)[1].split(" ")
+    expected = ["method=GET", f"path={path}", "status=403", f"client={ADDRESS}"]
+    assert [field for field in [*expected, f"request_id={NUMBER}"] if field not in tail] == []
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+async def test_a48_config_secrets_are_cleaned_everywhere_as_before(
+    capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A48: секреты настроек клиент не выбирает — их вычистка как раньше, везде, и в полях слоя:
+    секрет настроек в пути — в строке доступа `/api/***`."""
+    app = probes.build()
+    log_setup.setup_logging(fmt=fmt)
+    log_setup.register_secret("config-secret-words-in-path")
+    async with probes.client(app) as http:
+        await http.get("/api/config-secret-words-in-path")
+    out = capsys.readouterr().err
+    assert ("config-secret-words-in-path" in out, "/api/***" in out) == (False, True)
+
+
+async def test_a48_pass_form_after_any_scheme_is_a_secret(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A48: `Authorization` со схемой не `Basic` — `Bearer` с пропуском по форме: пропуск —
+    секрет запроса, в записи пробы на его месте `***`."""
+    bearer = "eyJplaceholder.bearer-pass-words.not-a-signature"
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http:
+        response = await http.get(
+            probes.HEADERS, headers=PASS | {"Authorization": f"Bearer {bearer}"}
+        )
+    out = capsys.readouterr().err
+    assert (response.status_code, bearer in out, "заголовки: Bearer ***" in out) == (
+        200,
+        False,
+        True,
+    )

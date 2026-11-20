@@ -99,7 +99,8 @@ async def journal() -> dict[str, str]:
 async def headers(request: Request) -> dict[str, str]:
     """Пишет заголовки входа в журнал; пароль сайта — из `Basic`, как его разобрал бы код."""
     authorization = request.headers.get("authorization", "")
-    pair = base64.b64decode(authorization.partition(" ")[2]).decode()
+    scheme, _, value = authorization.partition(" ")
+    pair = base64.b64decode(value).decode() if scheme.lower() == "basic" else ""
     logging.getLogger("ai_geo_audit.api.probe").info(
         "заголовки: %s",
         authorization,
