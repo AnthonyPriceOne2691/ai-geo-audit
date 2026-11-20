@@ -11,12 +11,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
+- **phase:** verify
   <!-- Ветка `ch1-03-health` поверх main с принятой Ч1.3. Код Ч1.3а — `Ч1.3а`, слаг
        `ch1-03a-health-journals` (решение проверяющего 2026-11-19T13:41Z). Спека `9a2e592d4c1b` и
        план `001060aceef9` — черновики, сверенные проверяющим, с его ответами 13:36Z и 13:41Z;
        подпись под примерами — `8dfd522`. Код — по слову проверяющего 2026-11-19T13:55Z; проба 9
-       (T1) и её вывод проверяющему — до кода среза 2. -->
+       (T1) и её вывод проверяющему — до кода среза 2. Сверка — `verify-report.md`: чистый
+       клон на `21892ea`, 2026-11-20T08:14:45Z–08:18:10Z. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T10:40Z)
