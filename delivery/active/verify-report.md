@@ -10,12 +10,51 @@
 packages», набор 531 из 531, покрытие диффа 6 файлов 98,2–100 % (журнал — вторая проверяющая).
 Раньше: 44706856356 на `580a608` — зелёный (gates, delivery); 44708717514 на `1a18f5c` — красный
 шаг мутаций, причина и правка — ниже.
-**Commit:** вершина кода — в «Прогон в чистом клоне».
+**Commit:** код вершины — `669d40c` (CI 44725764860); прогон в чистом клоне — на `7b4273e`,
+вершина сдачи — коммит с этим разделом поверх `7b4273e`.
 
 ## Прогон в чистом клоне
 
-Заполняется после разрешения проверяющего на тяжёлые прогоны (нагрузка машины, сборка образа
-Ч1.5а): гейт `--diff-base origin/main` и набор тестов в свежем клоне, вывод дословно (L34).
+Клон свежий, из локального репозитория, ветка `contour-b1a` на `7b4273e` (код как у `669d40c`,
+дальше — только документы); база диффа — `origin/main` клона, `1518276`.
+2026-11-20T11:45:28Z–11:46:28Z, нагрузка 4,18 в начале и 4,83 в конце. Вывод дословный, цвета
+сняты, длинные строки обрезаны знаком «…»:
+
+```
+$ git log --format="%h %p %s" -2 && git rev-parse --short origin/main && git merge-base HEAD origin/main
+7b4273e e5921fe docs(delivery): В1а — A109, первая строка, и A98: прогон запроса поставки 44725764860 на 669d40c
+e5921fe 7189be8 docs(delivery): В1а — A109, третья строка, показана: «убито 0 из 4 (0%)», цель ≥60%; доктор из CI
+1518276
+1518276a1b0130b2fab77113ddfbed9acfb6683a
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+breakers: files=38 net_loc=2265 (+2322/-57), excluded=76 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scr…
+наблюдение §13.1: поставок в архиве 11, окон со сроком 11, истекших без observed.md 0
+delivery_check: 0 error(s), 0 warning(s)
+exit=0
+$ cd backend && uv sync --frozen -q; echo "uv sync exit=$?"
+uv sync exit=0
+$ cd backend && uv run pytest -q -p no:cacheprovider -W error | tail -3; echo "pytest exit=${PIPESTATUS[0]}"
+стражи исполнения: записей прочитано 1455 · секретов под меткой 7 (CLAUDE_CODE_MESSAGING_TOKEN, JWT_SECRET, JWT_SECRET,…
+⚠ текст пользователя НЕ судился: ни один тест не отправил свободный текст и не взял canary_text (§2.7)
+собрано 531, прошло 531, пропущено 0
+pytest exit=0
+$ uv run --project backend pre-commit run --all-files > ../precommit.log 2>&1; echo "pre-commit exit=$?"; grep -c "Pass…
+pre-commit exit=0
+27
+$ CI=true uv run --project backend python3 scripts/lint/contour_doctor.py | grep -E "contour-doctor:"; echo "doctor exi…
+contour-doctor: AUTO 40 · WEAK 16 · ABSENT 2 · TOOL 3 · SKIP 9 · DEAD 0
+doctor exit=0
+$ bash scripts/lint/check_gate_coverage.sh | tail -1; echo "gate-coverage exit=${PIPESTATUS[0]}"
+gate-coverage: OK — 16 скрипт(ов), подключено 11, осознанно нет 5; правил сверено 8 (4 конфиг(ов))
+gate-coverage exit=0
+$ git status --short | head -5; echo "status lines: $(git status --short | wc -l | tr -d " ")"
+status lines: 0
+```
+
+- Счёт — 38 файлов и 2265 строк при пределах 50 и 2500. В «секретов под меткой» — имена
+  переменных стражей исполнения, значений нет.
+- После прогона тестовая база клона `audit_test_0416a31528` снята («было 1, стало 0»), клон
+  удалён.
 
 ## Дайджест утверждений
 
@@ -144,6 +183,9 @@ main `eb3d6ca` по решению ведущей 2026-11-20T10:52Z. Запис�
 Заполняется на handoff (`scripts/delivery_metrics.py --base main`).
 
 **Убрано (CONSTITUTION, п. 10):** рабочая копия и ветка среза 4 (`b1a-props`) и её база
-`audit_test_3a149358d1`; база временного клона пробы A108 `audit_test_b7ef213c82`. Не убрано:
+`audit_test_3a149358d1`; база временного клона пробы A108 `audit_test_b7ef213c82`; ветки-пробы
+`probe-a98`, `probe-a106`, `probe-a108`, `probe-t24`, `probe-a109` и копия `b1a-probe109`
+(запросы №2–№6 закрыты тимлидом без слияния); клон чистого прогона и его база
+`audit_test_0416a31528`. Не убрано:
 каталог временного клона пробы A108 в папке проб исполнителя — проверка безопасности не дала
 удалить каталог; удалит владелец или исполнитель после его слова.
