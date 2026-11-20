@@ -7,6 +7,7 @@
 ожидания держит вошедших до события теста; открытая проба с телом стоит в списке открытых, как
 будущий вход по паролю (A53, A54); проба своих заголовков ставит кэш, `nosniff` и номер запроса
 сама (A49). Приложение боя — `APP_ENV=prod` с настройками из слов-заглушек, как в A32 (A51).
+Приложения с одним дефектом обхода и одно без дефектов — для A52.
 Подставные проверки пропуска: одна признаёт тестовый пропуск, другая падает. Схема тела — на
 уровне модуля: FastAPI ищет аннотации по имени, схему внутри функции он не найдёт (проба 7 среза
 0, L43). Пропуск и пароль сайта — из слов-заглушек.
@@ -26,10 +27,22 @@ from typing import Annotated, Any
 import dbtools
 import httpx
 import pytest
-from fastapi import APIRouter, FastAPI, HTTPException, Request, Security
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Security,
+    WebSocket,
+)
 from fastapi.responses import JSONResponse
-from pydantic import SecretStr
+from fastapi.security import APIKeyHeader, HTTPBearer, OAuth2PasswordBearer
+from pydantic import BaseModel, SecretStr
 from sqlalchemy import text
+from starlette.applications import Starlette
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 from starlette.types import ASGIApp
 
 from ai_geo_audit import config
@@ -66,6 +79,12 @@ def sample(kind: str) -> dict[str, Any]:
 class ProbeBody(RequestModel):
     name: str
     limit: int
+
+
+class Loose(BaseModel):
+    """Тело без запрета лишних полей — дефект обхода (A52)."""
+
+    name: str = ""
 
 
 probes = APIRouter(prefix="/api/probe", dependencies=[Security(access.signed_in)])
@@ -270,3 +289,84 @@ def client(
         transport=httpx.ASGITransport(app=app, client=address, **transport),
         base_url="http://test",
     )
+
+
+DEFECT = "/api/defect"
+#: Маршруты без дефекта: включённый роутер, роутер в роутере, `Mount`, скрытая схема, тело.
+CLEAN_PATHS = (
+    "/api/clean/flat",
+    "/api/clean/inner/deep",
+    "/api/clean-mount/z",
+    "/api/clean/hidden",
+    "/api/clean/body",
+)
+
+
+async def ok() -> dict[str, str]:
+    return {}
+
+
+async def plain(_request: Request) -> PlainTextResponse:
+    return PlainTextResponse("ok")
+
+
+async def raise_401() -> None:
+    raise HTTPException(401)
+
+
+async def loose_body(item: Loose) -> dict[str, str]:
+    return {"name": item.name}
+
+
+async def clean_body(item: ProbeBody) -> dict[str, str]:
+    return {"name": item.name}
+
+
+async def socket_probe(socket: WebSocket) -> None:
+    await socket.close()
+
+
+def defect_app(name: str) -> FastAPI:
+    """Приложение с одним дефектом обхода (A52); остальное — как у `create_app()`."""
+    if name == "empty":
+        bare = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+        bare.state.open_paths = {}
+        return bare
+    listed = access.open_paths()
+    router = APIRouter()
+    path = f"{DEFECT}/{name}"
+    if name == "bearer":
+        router.add_api_route(path, ok, dependencies=[Depends(HTTPBearer())])
+    elif name == "oauth2":
+        scheme = OAuth2PasswordBearer(tokenUrl="/api/x")
+        router.add_api_route(path, ok, dependencies=[Depends(scheme)])
+    elif name == "api-key-open":
+        router.add_api_route(path, ok, dependencies=[Depends(APIKeyHeader(name="X-Access-Token"))])
+        listed[path] = "проба: будущий вход по паролю"
+    elif name == "raise-401":
+        router.add_api_route(path, raise_401)
+    elif name == "loose-body":
+        router.add_api_route(path, loose_body, methods=["POST"])
+    elif name == "list-typo":
+        listed["/api/heath"] = "проба: опечатка в списке"
+    elif name == "websocket":
+        router.add_api_websocket_route(path, socket_probe)
+    app = create_app(visitor_for=known_pass, open_paths=listed)
+    app.include_router(router)
+    return app
+
+
+def clean_app() -> FastAPI:
+    """Приложение без дефектов: маршруты во включённом роутере, в роутере, включённом в роутер,
+    внутри `Mount`, со скрытой схемой и с телом на базе схем запросов (A52)."""
+    outer = APIRouter(prefix="/api/clean")
+    inner = APIRouter(prefix="/inner")
+    inner.add_api_route("/deep", ok)
+    outer.add_api_route("/flat", ok)
+    outer.add_api_route("/hidden", ok, include_in_schema=False)
+    outer.add_api_route("/body", clean_body, methods=["POST"])
+    outer.include_router(inner)
+    app = create_app(visitor_for=known_pass)
+    app.include_router(outer)
+    app.mount("/api/clean-mount", Starlette(routes=[Route("/z", plain)]))
+    return app
