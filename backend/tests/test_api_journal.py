@@ -19,6 +19,7 @@ from ai_geo_audit.api import app as app_module
 from ai_geo_audit.logs import setup as log_setup
 
 ACCESS = "ai_geo_audit.api.access"
+# pragma: allowlist nextline secret
 SECRET = "s3cr3t-in-url-123456"
 OWN_NUMBER = re.compile(r"[0-9a-f]{32}")
 TEXT_RECORD = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+0000 [A-Z]+ ")

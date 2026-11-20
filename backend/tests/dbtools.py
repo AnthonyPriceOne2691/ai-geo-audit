@@ -27,6 +27,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from ai_geo_audit.storage import build_engine, models
 
 PREFIX = "audit_test_"
+# pragma: allowlist nextline secret
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
 START = "docker compose -f docker-compose.dev.yml up -d db"
 ROOT = envguard.ROOT

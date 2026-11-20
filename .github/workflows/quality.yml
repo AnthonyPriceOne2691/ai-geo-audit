@@ -257,7 +257,7 @@ jobs:
         image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
         env:
           POSTGRES_USER: audit
-          POSTGRES_PASSWORD: audit
+          POSTGRES_PASSWORD: audit  # pragma: allowlist secret
           POSTGRES_DB: audit
         ports:
           - 127.0.0.1:5462:5432

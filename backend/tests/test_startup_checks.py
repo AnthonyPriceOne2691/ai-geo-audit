@@ -11,6 +11,7 @@ import pytest
 from ai_geo_audit import config
 from ai_geo_audit.config import startup_checks as sc
 
+# pragma: allowlist nextline secret
 DSN = "postgresql+asyncpg://audit:pw-1234567890@db:5432/audit"
 
 
@@ -61,7 +62,9 @@ def test_a3_prod_names_every_missing_variable_at_once(monkeypatch: pytest.Monkey
 def test_a3_placeholders_are_refused(monkeypatch: pytest.MonkeyPatch, master_key: str) -> None:
     """A3: заглушка `.env.example` в бою не принимается — даже длинная, даже как путь."""
     env = full_env(master_key) | {
+        # pragma: allowlist nextline secret
         "JWT_SECRET": "CHANGE_ME_" + "x" * 40,
+        # pragma: allowlist nextline secret
         "DATABASE_URL": "postgresql+asyncpg://audit:CHANGE_ME@db:5432/audit",
         "KEYS_MASTER_KEY_FILE": "CHANGE_ME",
     }
@@ -184,6 +187,7 @@ def test_a21_db_password_of_11_signs_is_refused_and_12_starts(
         db("ab%40cdefghij"),
         db(quote("пароль-длин")),
         db(None),
+        # pragma: allowlist nextline secret
         "postgresql+asyncpg://audit:audit@localhost:5462/audit",
     ],
     ids=["percent-13-is-11", "cyrillic-11-is-22-bytes", "no-password", "dev-compose-password"],

@@ -28,6 +28,7 @@ def closed_port_url() -> str:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
+    # pragma: allowlist nextline secret
     return f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
 
 
@@ -49,6 +50,7 @@ async def silent_db() -> AsyncIterator[Silent]:
 
     server = await asyncio.start_server(hold, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
+    # pragma: allowlist nextline secret
     found.url = f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
     yield found
     for writer in found.accepted:

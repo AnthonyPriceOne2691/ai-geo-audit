@@ -12,7 +12,9 @@ from ai_geo_audit import config
 from ai_geo_audit.logs import setup as logs
 from ai_geo_audit.logs.setup import JsonFormatter, TextFormatter
 
+# pragma: allowlist nextline secret
 SECRET = "s3cr3t-token-value-1234567890"
+# pragma: allowlist nextline secret
 DB_PASSWORD = "db-password-123456"
 DSN = f"postgresql+asyncpg://audit:{DB_PASSWORD}@db:5432/audit"
 
@@ -114,6 +116,7 @@ def test_repeated_setup_does_not_duplicate_lines(capsys: pytest.CaptureFixture[s
     assert sum("один раз" in line for line in lines(capsys)) == 1
 
 
+# pragma: allowlist nextline secret
 REDIS_PASSWORD = "r3dis-pass-123456"
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@redis:6379/0"
 
@@ -143,6 +146,7 @@ def test_a21_percent_encoded_db_password_is_scrubbed_in_both_forms(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fmt: str
 ) -> None:
     """A21: пароль базы `p%40ss-word-123456` — в выводе нет ни записи, ни `p@ss-word-123456`."""
+    # pragma: allowlist nextline secret
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://audit:p%40ss-word-123456@db:5432/a")
     logs.register_config_secrets(config.StorageSettings())
     logs.setup_logging(fmt=fmt)
@@ -157,6 +161,7 @@ def test_a21_regex_signs_in_passwords_are_scrubbed_literally(
 ) -> None:
     """A21: пароль `p.ss+w(rd)*123456` в адресах базы и Redis вычищается буквально; запись
     журнала не падает."""
+    # pragma: allowlist nextline secret
     password = "p.ss+w(rd)*123456"
     monkeypatch.setenv("DATABASE_URL", f"postgresql+asyncpg://audit:{password}@db:5432/a")
     monkeypatch.setenv("REDIS_URL", f"redis://:{password}@redis:6379/0")

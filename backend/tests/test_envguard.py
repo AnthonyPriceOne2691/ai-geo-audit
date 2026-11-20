@@ -25,7 +25,9 @@ def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: 
     трогается."""
     (tmp_path / ".env").write_text(
         "APP_ENV=prod\n"
+        # pragma: allowlist nextline secret
         "DATABASE_URL=postgresql+asyncpg://audit:dotenv-pass-5150@db:5432/audit\n"
+        # pragma: allowlist nextline secret
         "OPENAI_API_KEY=sk-dotenv-mark-5150\n",
         encoding="utf-8",
     )
@@ -107,9 +109,13 @@ def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
         "APP_ENV": "prod",
         "app_env": "prod",
         "ENV_FILE": str(prod_env),
+        # pragma: allowlist nextline secret
         "DATABASE_URL": "postgresql+asyncpg://audit:env-pass-123456@db:5432/audit",
+        # pragma: allowlist nextline secret
         "OPENAI_API_KEY": "sk-test-not-a-real-key-1",
+        # pragma: allowlist nextline secret
         "ANTHROPIC_API_KEY": "ak-test-not-a-real-key-1",
+        # pragma: allowlist nextline secret
         "GEMINI_API_KEY": "gm-test-not-a-real-key-1",
         "LOG_FORMAT": "json",
         "PGSSLMODE": "require",
