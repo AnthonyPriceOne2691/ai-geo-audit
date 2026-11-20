@@ -38,6 +38,12 @@ _NEEDS: dict[Process, frozenset[str]] = {
 }
 
 
+def required(process: Process) -> frozenset[str]:
+    """Имена, которые проверка старта требует от процесса; по ним правила стека раздают
+    переменные сервисам compose (`ai_geo_audit.ops.stack_rules`)."""
+    return _NEEDS[process]
+
+
 class ConfigError(RuntimeError):
     """Обязательных настроек не хватает или они негодны."""
 
@@ -140,7 +146,7 @@ def problems(
             "API_TRUSTED_PROXIES", api or config.api, "trusted_proxies_text"
         ),
     }
-    return [p for name, p in checks.items() if name in _NEEDS[process] and p is not None]
+    return [p for name, p in checks.items() if name in required(process) and p is not None]
 
 
 def check_startup(process: Process, found: list[Problem] | None = None) -> None:
