@@ -6,6 +6,7 @@ from ai_geo_audit.logs.setup import (
     register_config_secrets,
     register_secret,
     request_context,
+    request_secrets,
     setup_logging,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "register_config_secrets",
     "register_secret",
     "request_context",
+    "request_secrets",
     "setup_logging",
 ]

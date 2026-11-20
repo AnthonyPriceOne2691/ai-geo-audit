@@ -1,8 +1,10 @@
 """Логирование: поля из `extra` и id запроса и аудита доживают до вывода, секреты — нет.
 
 Время — всегда UTC (`+0000`): у машины разработчика и сервера пояса разные. Секреты
-вычищаются из готовой записи; httpx и httpcore — на WARNING: на INFO они печатают адрес
-целиком, а в адресе бывает токен.
+вычищаются из готовой записи: общий набор — секреты настроек, набор запроса — пропуск и пароль
+сайта своего запроса, в переменной контекста (A48). Поле `extra` с именем базового поля записи
+выходит с приставкой `extra_` и его не перебивает (A56). httpx и httpcore — на WARNING: на INFO
+они печатают адрес целиком, а в адресе бывает токен.
 """
 
 from __future__ import annotations
@@ -26,6 +28,9 @@ _audit_id: ContextVar[str] = ContextVar("audit_id", default="")
 
 #: Значения, которых не должно быть в выводе. Короткие не берём: маска съела бы слова.
 _secrets: set[str] = set()
+#: Секреты запроса: живут в своём запросе. Общий набор рос бы на каждый новый пропуск, а
+#: `redact` обходит его на каждой записи.
+_request_secrets: ContextVar[tuple[str, ...]] = ContextVar("request_secrets", default=())
 _MIN_SECRET_LEN = 6
 MASK = "***"
 #: Значения строки, которые Postgres сам кладёт в DETAIL ошибки: `Key (email)=(…)`,
@@ -47,6 +52,8 @@ _NOISY_LOGGERS = ("httpx", "httpcore")
 #: Поля записи, которые в вывод не идут: `color_message` — копия сообщения uvicorn с цветом,
 #: управляющими знаками терминала.
 _DROPPED = frozenset({"color_message"})
+#: Базовые поля вывода: одноимённое поле `extra` выходит как `extra_<имя>` (A56).
+_RESERVED = frozenset({"ts", "level", "logger", "exc"})
 
 
 def register_secret(value: str) -> None:
@@ -69,9 +76,9 @@ def register_config_secrets(*domains: config.Settings) -> None:
 
 
 def redact(text: str) -> str:
-    """Заменить на маску известные секреты (длинные — первыми) и значения строк из
-    ошибок Postgres."""
-    for secret in sorted(_secrets, key=len, reverse=True):
+    """Заменить на маску известные секреты — общие и своего запроса, длинные первыми, — и
+    значения строк из ошибок Postgres."""
+    for secret in sorted({*_secrets, *_request_secrets.get()}, key=len, reverse=True):
         text = text.replace(secret, MASK)
     for pattern in _PG_VALUES:
         text = pattern.sub(rf"\g<1>{MASK}\g<2>", text)
@@ -97,6 +104,18 @@ def audit_context(audit_id: str | int) -> AbstractContextManager[None]:
     return _tagged(_audit_id, audit_id)
 
 
+@contextmanager
+def request_secrets(*values: str) -> Iterator[None]:
+    """Секреты запроса на время блока; на выходе — прежний набор. Короткие не берутся, как и в
+    общем наборе. Набор ставится и пустым: так чужой набор, унаследованный задачей, не доживает
+    до записей этого запроса (проба 8)."""
+    token = _request_secrets.set(tuple(v for v in values if len(v) >= _MIN_SECRET_LEN))
+    try:
+        yield
+    finally:
+        _request_secrets.reset(token)
+
+
 class ContextFilter(logging.Filter):
     """Ставит идентификаторы каждой записи. Висит на обработчике: так и на чужих записях."""
 
@@ -114,7 +133,11 @@ def _utc(record: logging.LogRecord) -> str:
 def _extra(record: logging.LogRecord) -> dict[str, object]:
     fields = record.__dict__.items()
     dropped = _STANDARD | _DROPPED
-    return {k: v for k, v in fields if k not in dropped and not k.startswith("_")}
+    return {
+        f"extra_{k}" if k in _RESERVED else k: v
+        for k, v in fields
+        if k not in dropped and not k.startswith("_")
+    }
 
 
 def _scrub(value: object) -> object:
