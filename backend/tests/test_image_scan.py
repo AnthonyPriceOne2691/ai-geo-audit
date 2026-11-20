@@ -9,7 +9,9 @@ CycloneDX и метаданные базы `<cache-dir>/db/metadata.json` — п
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import http.server
 import importlib.util
 import io
 import json
@@ -19,6 +21,8 @@ import stat
 import subprocess
 import sys
 import tarfile
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -282,6 +286,88 @@ def test_a124_install_broken_mid_copy_leaves_the_directory_empty(
     assert scan.install(target, release(archive)) == 1
     assert "диск полон" in joined(capsys.readouterr().out)
     assert list(target.iterdir()) == []
+
+
+def test_a124_install_replaces_a_planted_link_and_leaves_its_target_intact(tmp_path: Path) -> None:
+    """A124: в каталоге установки уже лежит ссылка `trivy` на чужой файл — установка заменяет
+    саму ссылку обычным файлом 755; чужой файл цел, его права прежние, временных файлов нет."""
+    archive = tarball(tmp_path / "release.tar.gz", {"trivy": BINARY})
+    target = tmp_path / "bin"
+    target.mkdir()
+    foreign = tmp_path / "foreign.txt"
+    foreign.write_text("чужое", encoding="utf-8")
+    foreign.chmod(0o600)
+    (target / "trivy").symlink_to(foreign)
+    assert scan.install(target, release(archive)) == 0
+    assert foreign.read_text(encoding="utf-8") == "чужое"
+    assert stat.S_IMODE(foreign.stat().st_mode) == 0o600
+    trivy = target / "trivy"
+    assert not trivy.is_symlink()
+    assert trivy.read_bytes() == BINARY
+    assert stat.S_IMODE(trivy.stat().st_mode) == 0o755
+    assert [path.name for path in target.iterdir()] == ["trivy"]
+
+
+class Trickle(http.server.BaseHTTPRequestHandler):
+    """Сервер на петле: заголовки сразу, тело — по байту раз в 0,2 с."""
+
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Length", "40")
+        self.end_headers()
+        with contextlib.suppress(OSError):
+            for _ in range(40):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.2)
+
+    def log_message(self, *args: object) -> None:
+        """Журнал сервера в тесте не нужен."""
+
+
+def test_a124_download_has_one_deadline_for_the_whole_body(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A124, свой предел шагу (спека, Non-functional): тело идёт каплей — по байту, каждая
+    операция сокета укладывается в предел, а всё тело — нет; отказ «загрузка не уложилась в 1 с»
+    примерно за секунду, а не за 8 с капли; каталог установки пуст. Сервер — только петля."""
+    monkeypatch.setitem(scan.LIMITS, "download", 1)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Trickle)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/trivy.tar.gz"
+        target = tmp_path / "bin"
+        target.mkdir()
+        started = time.monotonic()
+        code = scan.install(target, scan.Release(VERSION, url, "0" * 64))
+        spent = time.monotonic() - started
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert code == 1
+    assert "загрузка не уложилась в 1 с" in joined(capsys.readouterr().out)
+    assert spent < 4, spent
+    assert list(target.iterdir()) == []
+
+
+def test_a124_download_over_the_size_cap_is_refused_before_the_sum(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A124: тело больше потолка (подменённый адрес не заполнит диск раннера) — отказ «архив
+    больше потолка» до сверки суммы, даже если сумма верна; каталог установки пуст."""
+    archive = tarball(tmp_path / "release.tar.gz", {"trivy": BINARY * 400})
+    monkeypatch.setattr(scan, "ARCHIVE_CAP", archive.stat().st_size - 1)
+    target = tmp_path / "bin"
+    target.mkdir()
+    assert scan.install(target, release(archive)) == 1
+    assert "архив больше потолка" in joined(capsys.readouterr().out)
+    assert list(target.iterdir()) == []
+
+
+def test_a124_size_cap_holds_the_release_archive_with_room() -> None:
+    """A124: потолок — с запасом над архивом выпуска 0.76.2 (52 714 130 байт) и ниже 128 МБ."""
+    assert 52_714_130 * 1.5 < scan.ARCHIVE_CAP < 128 * 1024 * 1024
 
 
 def test_a125_a126_canary_is_found_and_the_journal_names_scanner_db_and_packages(

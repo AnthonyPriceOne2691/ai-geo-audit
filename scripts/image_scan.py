@@ -21,12 +21,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -83,6 +85,9 @@ SCAN = ("--scanners", "vuln", "--pkg-types", "os,library", "--timeout", "10m")
 SEVERITY = ("CRITICAL", "HIGH")
 #: Пределы, секунды: зависшая команда называется своим пределом, а не висит.
 LIMITS = {"download": 300, "trivy": 900, "build": 1200, "save": 300, "run": 120}
+#: Потолок архива выпуска до сверки суммы: архив 0.76.2 — 52 714 130 байт (заголовок выпуска,
+#: 2026-11-20), запас почти вдвое — подменённый адрес не заполнит диск раннера.
+ARCHIVE_CAP = 96 * 1024 * 1024
 #: Канарейка (A125): находка, пакет по PEP 503, версия, версия с исправлением.
 CANARY = ("CVE-2020-14343", "pyyaml", "5.3", "5.4")
 CANARY_FILE = "site-packages/PyYAML-5.3.dist-info/METADATA"
@@ -141,21 +146,37 @@ def execute(argv: list[str], limit: int) -> subprocess.CompletedProcess[bytes]:
         raise ScanError(f"{argv[0]} не найден") from None
 
 
+def shown(path: Path) -> str:
+    """Путь для журнала — от рабочего каталога, если так короче: перенос строк вывода режет
+    длинный путь посреди слова."""
+    relative = os.path.relpath(path)
+    return relative if len(relative) < len(str(path)) else str(path)
+
+
 def download(url: str, path: Path) -> str:
-    """Архив выпуска — во временный файл; sha256 считается по ходу."""
-    digest, seconds = hashlib.sha256(), LIMITS["download"]
+    """Архив выпуска — во временный файл; sha256 по ходу. Срок — один на всё тело, а не на
+    операцию сокета (`read1` отдаёт пришедшее сразу); потолок размера — до сверки суммы."""
+    digest, seconds, size = hashlib.sha256(), LIMITS["download"], 0
+    deadline, per_read = time.monotonic() + seconds, min(seconds, 30)
     with (
-        urllib.request.urlopen(url, timeout=seconds) as response,  # noqa: S310 -- адрес выпуска
+        urllib.request.urlopen(url, timeout=per_read) as response,  # noqa: S310 -- адрес выпуска
         path.open("wb") as out,
     ):
-        while chunk := response.read(1 << 20):
+        while chunk := response.read1(1 << 20):
+            size += len(chunk)
+            if size > ARCHIVE_CAP:
+                raise ScanError(f"архив больше потолка {ARCHIVE_CAP} байт — до сверки суммы")
+            if time.monotonic() > deadline:
+                raise ScanError(f"загрузка не уложилась в {seconds} с")
             digest.update(chunk)
             out.write(chunk)
     return digest.hexdigest()
 
 
 def take_trivy(archive: Path, binary: Path) -> None:
-    """Из архива — только обычный файл `trivy`: ссылка, каталог или его отсутствие — отказ."""
+    """Из архива — только обычный файл `trivy`: ссылка, каталог или его отсутствие — отказ. Тело —
+    во временный файл того же каталога (O_EXCL, O_NOFOLLOW), права по дескриптору, затем
+    `os.replace` на `trivy`: подложенная ссылка заменяется сама, её цель не трогается."""
     with tarfile.open(archive, "r:gz") as tar:
         try:
             member = tar.getmember("trivy")
@@ -164,9 +185,15 @@ def take_trivy(archive: Path, binary: Path) -> None:
         source = tar.extractfile(member) if member.isfile() else None
         if source is None:
             raise ScanError("trivy — не обычный файл")
-        with source, binary.open("wb") as out:
-            shutil.copyfileobj(source, out)
-    binary.chmod(0o755)
+        part = binary.with_name(f".{binary.name}.{os.getpid()}.part")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        try:
+            with source, os.fdopen(os.open(part, flags, 0o600), "wb") as out:
+                shutil.copyfileobj(source, out)
+                os.fchmod(out.fileno(), 0o755)
+            os.replace(part, binary)
+        finally:
+            part.unlink(missing_ok=True)
 
 
 def install(target: Path, release: Release = RELEASE) -> int:
@@ -184,7 +211,7 @@ def install(target: Path, release: Release = RELEASE) -> int:
             (target / "trivy").unlink(missing_ok=True)  # оборванная запись — не установка
             say(f"установка Trivy {release.version} — КРАСНОЕ: {failure}")
             return 1
-    say(f"Trivy {release.version} — {target / 'trivy'}; sha256 архива сверена до распаковки")
+    say(f"Trivy {release.version} — {shown(target / 'trivy')}; sha256 архива сверена до распаковки")
     return 0
 
 
@@ -431,7 +458,7 @@ def inventory(image: Image, trivy: Trivy, work: Path, runner: Runner) -> bool:
     Расхождение — `ScanError`; вернуть `False` — образ не красный."""
     archive = work / f"{image.target}.tar"
     if not archive.is_file():
-        raise ScanError(f"файла образа {archive} нет — сначала run")
+        raise ScanError(f"файла образа {shown(archive)} нет — сначала run")
     raw = trivy("image", "--skip-db-update", "--format", "cyclonedx", "--input", str(archive))
     bom = parse(raw, "опись")
     count, digest = len(bom.get("components") or []), hashlib.sha256(raw).hexdigest()
