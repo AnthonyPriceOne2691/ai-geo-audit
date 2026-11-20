@@ -1,15 +1,18 @@
-"""Маршруты-пробы и сборка приложения для тестов API (A36, A38–A48).
+"""Маршруты-пробы и сборка приложения для тестов API (A36, A38–A48, A53, A54).
 
 Закрытая проба отвечает именем вошедшего, проба с телом — по схеме с запретом лишних полей,
 падающая проба падает с меткой, проба журнала пишет запись INFO. Проба заголовков пишет в журнал
 `Authorization`, пропуск и пароль сайта, как небрежный код; вторая падающая проба падает с
-пропуском в тексте (A48). Подставные проверки пропуска: одна признаёт тестовый пропуск, другая
-падает. Схема тела — на уровне модуля: FastAPI ищет аннотации по имени, схему внутри функции он
-не найдёт (проба 7 среза 0, L43). Пропуск и пароль сайта — из слов-заглушек.
+пропуском в тексте (A48). Проба ожидания держит вошедших до события теста; открытая проба с телом
+стоит в списке открытых, как будущий вход по паролю (A53, A54). Подставные проверки пропуска:
+одна признаёт тестовый пропуск, другая падает. Схема тела — на уровне модуля: FastAPI ищет
+аннотации по имени, схему внутри функции он не найдёт (проба 7 среза 0, L43). Пропуск и пароль
+сайта — из слов-заглушек.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -38,6 +41,8 @@ BARE_503 = "/api/probe/bare-503"
 JOURNAL = "/api/probe/journal"
 HEADERS = "/api/probe/headers"
 BOOM_PASS = "/api/probe/boom-pass"
+WAIT = "/api/probe/wait"
+OPEN_BODY = "/api/probe/open-body"
 #: Вызовы закрытой пробы: по ним видно, дошёл ли запрос до обработчика.
 CALLS: list[str] = []
 SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_text("utf-8"))
@@ -108,6 +113,45 @@ async def boom_pass(request: Request) -> None:
     raise RuntimeError(f"упал с пропуском {request.headers.get('x-access-token')}")
 
 
+class Waiting:
+    """Проба ожидания: считает вошедших и держит их до события теста (A54)."""
+
+    def __init__(self) -> None:
+        self.entered = 0
+        self.release = asyncio.Event()
+        self._changed = asyncio.Event()
+
+    def enter(self) -> None:
+        self.entered += 1
+        self._changed.set()
+
+    async def until(self, count: int) -> None:
+        """Ждать, пока вошедших станет `count`, — событием, без сна."""
+        while self.entered < count:
+            self._changed.clear()
+            await self._changed.wait()
+
+
+#: Проба ожидания текущего теста: тест ставит свою, события не переходят между циклами.
+WAITING = Waiting()
+
+
+@probes.get("/wait")
+async def wait() -> dict[str, int]:
+    WAITING.enter()
+    await WAITING.release.wait()
+    return {"entered": WAITING.entered}
+
+
+#: Открытые пробы — без зависимости входа, как будущий вход по паролю.
+open_probes = APIRouter(prefix="/api/probe")
+
+
+@open_probes.post("/open-body")
+async def open_body(item: ProbeBody) -> dict[str, str]:
+    return {"name": item.name}
+
+
 async def known_pass(token: str) -> access.Visitor | None:
     """Подставная проверка: признаёт только тестовый пропуск."""
     return access.Visitor("probe-visitor") if token == PASS else None
@@ -124,6 +168,13 @@ def build(
     """Приложение сервиса с маршрутами-пробами; список открытых — свой, если задан."""
     app = create_app(visitor_for=check, open_paths=open_paths or access.OPEN_PATHS)
     app.include_router(probes)
+    return app
+
+
+def build_open_body() -> FastAPI:
+    """Приложение, где проба с телом стоит в списке открытых, как будущий вход по паролю (A53)."""
+    app = build(open_paths={**access.OPEN_PATHS, OPEN_BODY: "проба: вход по паролю"})
+    app.include_router(open_probes)
     return app
 
 
