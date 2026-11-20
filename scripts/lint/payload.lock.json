@@ -1,0 +1,241 @@
+{
+  "_": "Замок payload'а: что канон отдавал на этих версиях. Пишет обновление контура (§5.5), читает доктор; руками не править.",
+  "versions": {
+    "cqg": "3.14",
+    "delivery": "2.21"
+  },
+  "scripts": {
+    "scripts/check_irreversible_signature.sh": {
+      "canon": "delivery",
+      "digest": "sha256:a280fec4a1c9b11b8c1694df37d6db23a9f12cb4f88101b0a0488c601aefdd93"
+    },
+    "scripts/delivery_artifact.py": {
+      "canon": "delivery",
+      "digest": "sha256:e9049918ea97a6da749175ac39af7df0f1bc9f489dc5982064c1548ae35e3e46"
+    },
+    "scripts/delivery_base.py": {
+      "canon": "delivery",
+      "digest": "sha256:7dd3c9d32ea891a14d09c0528405de976832cf6ab496cb2ec0b15e00c4d6736b"
+    },
+    "scripts/delivery_check.py": {
+      "canon": "delivery",
+      "digest": "sha256:839b609bcfcf25b23272a4cfd985819a1105f442bce069fc8741dac4464b588b"
+    },
+    "scripts/delivery_decisions.py": {
+      "canon": "delivery",
+      "digest": "sha256:63460e4715dd0db2619faafe570a938cde8764eed05c2d3b74445221a84923e2"
+    },
+    "scripts/delivery_diff.py": {
+      "canon": "delivery",
+      "digest": "sha256:ff85a14de0987cc662aeb2d5fb92e54ae55126d0801122cd9bf9c79d9dca3618"
+    },
+    "scripts/delivery_evidence.py": {
+      "canon": "delivery",
+      "digest": "sha256:f1712c71150e5fdeac4324e46e667d9054cdb741ac68e24d08326b559b195a2d"
+    },
+    "scripts/delivery_history.py": {
+      "canon": "delivery",
+      "digest": "sha256:4ca8fa7dde1421f34ae35a04ee6f93530161fa2dc83db9bd1201ff2060c6bbe1"
+    },
+    "scripts/delivery_journals.py": {
+      "canon": "delivery",
+      "digest": "sha256:f055831db30f6713256b319a2a95be8c3fa9142f369d2b4be96978af6d3dd3cf"
+    },
+    "scripts/delivery_limits.py": {
+      "canon": "delivery",
+      "digest": "sha256:ffdfa3394f7da0c4305bed88e7c0f43ef1becc7f2f774a7044a4ba5d8e141470"
+    },
+    "scripts/delivery_metrics.py": {
+      "canon": "delivery",
+      "digest": "sha256:af3da096922341e6695e53f874ec52a40e4632dc75c6d3bcf18f7ae8060aed84"
+    },
+    "scripts/delivery_risk.py": {
+      "canon": "delivery",
+      "digest": "sha256:7c50ed5db80fdd33b5078d4f0c8bef02bb3040f6b39e2dd036056d32a8619ba6"
+    },
+    "scripts/delivery_runtime.py": {
+      "canon": "delivery",
+      "digest": "sha256:1269ee403e825be8bd195b6f11806ffc29016ee1e499074ee4394f80023e2adf"
+    },
+    "scripts/delivery_status.py": {
+      "canon": "delivery",
+      "digest": "sha256:e151d8407bb7f314b444f59055e05e61f13369231b9b5fa8cb374495832b954b"
+    },
+    "scripts/lint/assert_digest.sh": {
+      "canon": "cqg",
+      "digest": "sha256:b00f3bfa7ff334049424e11c6f82eb2961c45841e28c16d9edf433b152b2fa62"
+    },
+    "scripts/lint/ast_rules.py": {
+      "canon": "cqg",
+      "digest": "sha256:194a0295049c1c6996b8b9511595f7674cda90bc770e3270ca7adf12ba1c3cf6"
+    },
+    "scripts/lint/ast_web_rules.py": {
+      "canon": "cqg",
+      "digest": "sha256:15f084dda03777b33f346f512986b43a9e88286b371e092312d5844ce285c336"
+    },
+    "scripts/lint/check_ast_gate.py": {
+      "canon": "cqg",
+      "digest": "sha256:398864437fa204a5c1d85f7893d90fabc3dcba6e91aa12e7eb20b0328abab343"
+    },
+    "scripts/lint/check_baseline_ratchet.sh": {
+      "canon": "cqg",
+      "digest": "sha256:0e6934d85346bb9ea35acb1b7eb9eb5f4cebb825ab79400fa4a519aeed6253c2"
+    },
+    "scripts/lint/check_ci_status.sh": {
+      "canon": "cqg",
+      "digest": "sha256:c543d156241f20a7fe6fab8845fc65ae808da077534814380bdacb56fc6f805b"
+    },
+    "scripts/lint/check_complexity_gate.sh": {
+      "canon": "cqg",
+      "digest": "sha256:342e4197a9a2e350e8fa534f94f33955f3555953052d3f7364c8a52b5c11d8a8"
+    },
+    "scripts/lint/check_dead_code.py": {
+      "canon": "cqg",
+      "digest": "sha256:544480c5696ec4f6eb7e1a063e3cf17cf667d906611777c516de45cf2c57e11e"
+    },
+    "scripts/lint/check_deps_audit.sh": {
+      "canon": "cqg",
+      "digest": "sha256:05adf6e6611325cf80f6fc59807aaf8740cb07cc6d4a85b31380785c2d8e0d2f"
+    },
+    "scripts/lint/check_diff_coverage.sh": {
+      "canon": "cqg",
+      "digest": "sha256:4fb3b1a968eb146f560929fbb83eada7e646b0ee6734a7ba01f2637fbea388bf"
+    },
+    "scripts/lint/check_eslint_warnings.sh": {
+      "canon": "cqg",
+      "digest": "sha256:e4325a892825381c95d389b50ae192c1beb286ea1c53cfd21a826d7a160159b5"
+    },
+    "scripts/lint/check_file_length.sh": {
+      "canon": "cqg",
+      "digest": "sha256:8ac9f883541edd9de73319d2e9056c2570731d76def00cd7264c724957984c60"
+    },
+    "scripts/lint/check_gate_coverage.sh": {
+      "canon": "cqg",
+      "digest": "sha256:ed052fd7b11d6806d526a73e218fceab600d44ebeda172860869aeebc0a16416"
+    },
+    "scripts/lint/check_gate_value.sh": {
+      "canon": "cqg",
+      "digest": "sha256:724daa208d4e7139c0b22a29a4b5116d1663e4e3aa7b61595ec075e19a143503"
+    },
+    "scripts/lint/check_grep_gate.sh": {
+      "canon": "cqg",
+      "digest": "sha256:affc6eec8179dae505f633f3b9b8ab9dcc0ad92d546d294c3784a43f09690482"
+    },
+    "scripts/lint/check_jscpd_gate.sh": {
+      "canon": "cqg",
+      "digest": "sha256:da7106b2b1b1d12db3ea4c644586b20dc63bcec4a218932d530360eaecc12527"
+    },
+    "scripts/lint/check_layers_gate.sh": {
+      "canon": "cqg",
+      "digest": "sha256:51d7806cb82cabad188262c90f8da4d278985d5011f0f359a4e6268b59d82b4c"
+    },
+    "scripts/lint/check_mutation_gate.sh": {
+      "canon": "cqg",
+      "digest": "sha256:1f7befee45e83c54135ea61f79935e08247cc20372e8e537a632ac9e89981b28"
+    },
+    "scripts/lint/check_new_dependency.py": {
+      "canon": "cqg",
+      "digest": "sha256:be27106e11b8432a2cad468432295a309460b122a1cb54aced32eae1a1d3b14d"
+    },
+    "scripts/lint/complexity_halves.sh": {
+      "canon": "cqg",
+      "digest": "sha256:1d8c36e993f7a8d42f2342b7906a8639f48e79f7d44599ed38fc6e22db31c294"
+    },
+    "scripts/lint/contour_doctor.py": {
+      "canon": "cqg",
+      "digest": "sha256:d30d04329af541e5495a3bf802240d0dbbc4a16f3efaf704a912099efa4923e6"
+    },
+    "scripts/lint/dead_code_rules.py": {
+      "canon": "cqg",
+      "digest": "sha256:38c890cfb771455fb0b94a4c0e9b1f028b7e376cda231e7126d3abe5e155f878"
+    },
+    "scripts/lint/dependency_manifests.py": {
+      "canon": "cqg",
+      "digest": "sha256:3110a4963db60f91913859d8141c1c96ce2a51789c7c6dc011d1b15c0eea94fb"
+    },
+    "scripts/lint/doctor_area_verdicts.py": {
+      "canon": "cqg",
+      "digest": "sha256:874063ee2d84cfc8dba4e7fcecfa02473bc1a1f20f2969828d0632a22ccc8571"
+    },
+    "scripts/lint/doctor_areas.py": {
+      "canon": "cqg",
+      "digest": "sha256:5286f6374abaf723b73fa85334f0de5bb3a0f4d8e3c8f5bd308367b35ebfc777"
+    },
+    "scripts/lint/doctor_canaries.py": {
+      "canon": "cqg",
+      "digest": "sha256:fcc2d4b090ec1b1b1a561168c5b8ee72ecefccebf13430f82f28b7f70ff7ca99"
+    },
+    "scripts/lint/doctor_core.py": {
+      "canon": "cqg",
+      "digest": "sha256:aeafc09084e73a1b37885ca08099b61d2ab45445f2e1eee2cc0553b6ebef82ff"
+    },
+    "scripts/lint/doctor_deployment.py": {
+      "canon": "cqg",
+      "digest": "sha256:7d657ff677ba207927e90a6a86ec4bcb9360058dd0993287bd72c5fb65ada769"
+    },
+    "scripts/lint/doctor_hooks.py": {
+      "canon": "cqg",
+      "digest": "sha256:253e83895f2df70e4e8706fc7f43a179a32ba04a49ae7080eac2bd843a1066e5"
+    },
+    "scripts/lint/doctor_layout.py": {
+      "canon": "cqg",
+      "digest": "sha256:2b204e04da3b440dbf8dafbdf1720efb036ec62555b88cc5840b3b614e1177cf"
+    },
+    "scripts/lint/doctor_probes.py": {
+      "canon": "cqg",
+      "digest": "sha256:d9311b159039036585e7c69f36ca2a7d8fdda06ba179e701b0f3c6a67fd23fa5"
+    },
+    "scripts/lint/doctor_sentinels.py": {
+      "canon": "cqg",
+      "digest": "sha256:b9c53aa0f70250d889ef1cc170995c24a9cb72268c082a9378283c327170d762"
+    },
+    "scripts/lint/doctor_versions.py": {
+      "canon": "cqg",
+      "digest": "sha256:16c3b72b6da5f48a28c7d7647107954f66932a8e6bb0ad8d9cf4ebdce3cfb6c6"
+    },
+    "scripts/lint/gate_coverage_roles.sh": {
+      "canon": "cqg",
+      "digest": "sha256:dba5ec26d0e43aeb5aa58c462bb6b00467218ff6af643c6cf9c5a753c64d54a4"
+    },
+    "scripts/lint/gate_coverage_template.sh": {
+      "canon": "cqg",
+      "digest": "sha256:c9764691f5d1e917e2c421f48dfabb5057e43c9c1cd039d59f96ead65c85bed3"
+    },
+    "scripts/lint/gate_value_log.py": {
+      "canon": "cqg",
+      "digest": "sha256:1970df7d9150cf260fc084b6b604fcd65990bf0af76543817ec9c69fa13171cc"
+    },
+    "scripts/lint/mutation_py.sh": {
+      "canon": "cqg",
+      "digest": "sha256:f1461037bb6f3ae61055945342d6b7a6294d02370258c6050b9de5c7dc1a269b"
+    },
+    "scripts/lint/mutation_shard.sh": {
+      "canon": "cqg",
+      "digest": "sha256:b22a3767cb135832866b31a4db697f7ae074d82df13a6963b2bbc70be4a7b4be"
+    },
+    "scripts/lint/mutation_ts.sh": {
+      "canon": "cqg",
+      "digest": "sha256:1e42d113ebb74a5cb6b57531aaa6cacd1529fff95d02a77eb8fb5eeeff8f7e97"
+    },
+    "scripts/lint/mutation_verdict.sh": {
+      "canon": "cqg",
+      "digest": "sha256:f801afd3636b581c7f700272eb34f998b913bbd21e3f1ec73c88ff8ed3e7a7c8"
+    },
+    "scripts/lint/run_sentinels.py": {
+      "canon": "cqg",
+      "digest": "sha256:21915fbfddc1eb1d766dff7e6a04dbbeb2bcaae736220e38b7a521914be11cba"
+    },
+    "scripts/lint/sentinels_taps.py": {
+      "canon": "cqg",
+      "digest": "sha256:0b833fb89a7492d6aab797dcf73266145773c3148485b90564fb7addab8fcd52"
+    },
+    "scripts/merge_guard.sh": {
+      "canon": "cqg",
+      "digest": "sha256:3739213aabcd6064c05f58e7a1defa760e26e6ba49137b3a4b3335ae7a94a5f9"
+    },
+    "scripts/sign_irreversible.sh": {
+      "canon": "delivery",
+      "digest": "sha256:78a8f931263920440e3585dfa295774f0d27e38a7a391a5df05c7fffed98f1f7"
+    }
+  }
+}

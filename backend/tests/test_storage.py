@@ -11,6 +11,8 @@ import asyncpg
 import dbtools
 import pytest
 from dbtools import probe
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from sqlalchemy import event, func, insert, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -183,6 +185,68 @@ async def test_a10_stage_is_invisible_until_committed(committed: AsyncEngine) ->
     assert await dbtools.rows(committed) == 2
 
 
+#: Шаги стадии: ключ вставки и признак «мимо `step`». Ключей три — дубли частые.
+STEPS = st.lists(st.tuples(st.sampled_from("abc"), st.booleans()), min_size=1, max_size=6)
+
+
+def expected_keys(steps: list[tuple[str, bool]]) -> set[str] | None:
+    """Модель на множестве ключей: дубль мимо `step` — отказ (None), дубль в `step` откатывает
+    только себя, новый ключ записан."""
+    keys: set[str] = set()
+    for key, bare in steps:
+        if key not in keys:
+            keys.add(key)
+        elif bare:
+            return None
+    return keys
+
+
+async def run_stage(engine: AsyncEngine, steps: list[tuple[str, bool]]) -> None:
+    """Стадия по шагам; ошибку вставки код ловит сам. Ошибка мимо `step` — последняя команда, как в
+    A9: после неё сорвана вся транзакция."""
+    async with session_scope(engine) as s:
+        for key, bare in steps:
+            try:
+                if bare:
+                    await s.execute(add(key))
+                else:
+                    async with step(s):
+                        await s.execute(add(key))
+            except IntegrityError:
+                if bare:
+                    break
+
+
+async def saved_keys(engine: AsyncEngine) -> set[str]:
+    """Ключи, которые видит новое соединение, — то есть зафиксированные."""
+    async with engine.connect() as conn:
+        return set((await conn.execute(select(probe.c.key))).scalars())
+
+
+@settings(max_examples=25, deadline=None)
+@given(steps=STEPS)
+async def test_a112_refusal_exactly_when_a_duplicate_bypasses_step(
+    steps: list[tuple[str, bool]],
+) -> None:
+    """A112: свойство на настоящей базе — отказ ровно тогда, когда дубль вставлен мимо `step`, и от
+    сессии тогда не остаётся ни строки; иначе в базе ровно ключи успешных вставок. Ожидаемое считает
+    модель. Движок и уборка — свои у примера: фикстура живёт весь тест, а не один пример."""
+    expected = expected_keys(steps)
+    engine = storage.build_engine("test", url=dbtools.own_url())
+    try:
+        await dbtools.require_empty(engine)
+        refused = False
+        try:
+            await run_stage(engine, steps)
+        except storage.AbortedTransactionError:
+            refused = True
+        saved = await saved_keys(engine)
+        assert (refused, saved) == (expected is None, set() if expected is None else expected)
+    finally:
+        await dbtools.truncate(engine)
+        await engine.dispose()
+
+
 @pytest.mark.usefixtures("on_test_db")
 async def test_a11_process_engine_is_one_and_named() -> None:
     """A11: движок процесса один на процесс, соединение подписано ai-geo-audit:api."""
@@ -215,7 +279,7 @@ async def _left(name: str) -> int:
     conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
     try:
         async with asyncio.timeout(3):
-            while left := await conn.fetchval(count, name):
+            while left := await conn.fetchval(count, name):  # noqa: ASYNC110 -- опрос базы
                 await asyncio.sleep(0.05)
         return left
     finally:
@@ -252,7 +316,7 @@ async def _connections(name: str, expect: int) -> int:
     try:
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(5):
-                while await conn.fetchval(count, name) < expect:
+                while await conn.fetchval(count, name) < expect:  # noqa: ASYNC110 -- опрос базы
                     await asyncio.sleep(0.05)
         return await conn.fetchval(count, name)
     finally:

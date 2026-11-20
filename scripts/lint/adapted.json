@@ -1,0 +1,72 @@
+{
+  "_": "Адаптации контура против канона cqg@3.14 (CQG §5.5): что изменено, почему и что переносить при обновлении. kind=upstream-candidate — починка дефекта канона: запись снимается, когда канон починит у себя.",
+  "check_deps_audit.sh": {
+    "reason": "ПОЧИНКА дефекта канона: итог «нет манифестов» смотрит найденный манифест, а не корень дерева",
+    "changed": "строка 236: `if [[ -z \"$py_manifest\" && ! -f \"$FE_DIR/package.json\" ]]` вместо проверки pyproject.toml, requirements.txt и package.json в корне. Гейт сам делает cd в корень дерева, манифесты у нас в backend/ и frontend/, и при любом зелёном исходе он выходил на «не найдено ни одного манифеста» — без «просмотрено N» и без «python-зависимости не проверены» (A91, A103)",
+    "kind": "upstream-candidate"
+  },
+  "mutation_py.sh": {
+    "reason": "ПОЧИНКА дефекта канона: глоб мутантов на раскладке src/ — mutmut 3.8.1 сам срезает приставку src.",
+    "changed": "после `rel=${f#\"$MUT_CWD\"/}` — строка `rel=${rel#src/}`: backend/src/ai_geo_audit/x.py → ai_geo_audit.x.*. Без неё при LINT_PY_SRC=backend/src гейт выходит ложным зелёным «изменённые файлы не дали мутантов», при backend — «не просудил». Зовётся с LINT_PY_SRC=backend/src и MUTATION_WORKERS=1: у воркеров одна база копии; строка 24 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный",
+    "kind": "upstream-candidate"
+  },
+  "sentinels_taps.py": {
+    "reason": "ПОЧИНКА двух дефектов канона: перехват httpx читал `request.content` у потокового тела; страж печатал поля записи лога без защиты — поле, чей `__str__` падает, роняло прогон",
+    "changed": "в `mark` внутри `wrap_httpx` тело берётся только у `httpx.ByteStream`, у потокового — пустое: `content` у него бросает RequestNotRead, и любой тест с телом-генератором падал внутри стража (три параметра теста A42), а чтение съело бы поток, который тест считает (A42: не отдано ни байта). Второе (2026-11-20, слияние main с Ч1.3б): в `_WRAPPER` перехвата лога аргументы, значения `extra` и исключение проходят `printable` — печатается — как есть, нет — заглушка «<Тип: не печатается>»; `record_text` в `run_sentinels.py` делает `str()` от каждого значения, и тест A48 Ч1.3б с непечатаемым полем ронял весь прогон (INTERNALERROR, код 3)",
+    "kind": "upstream-candidate"
+  },
+  "check_ci_status.sh": {
+    "reason": "вход без вывода токена: на машинах проекта токен не выводится, а проверка входа канона `gh auth token` его печатает (у канона — в /dev/null)",
+    "changed": "строки 169–174 канона: проверки `gh auth token` нет, вход проверяет сам `gh run list`; его отказ (код ≠ 0, кроме «нет хостинга») — «статус CI не проверен: gh run list — код N: <первая строка stderr>», выход по `no_ci_evidence`, как у ветки «нет входа». Без этого пустой вывод при отказе входа уходил бы в «ни разу не гонялся» (test_ci_status_login.py)",
+    "kind": "upstream-candidate"
+  },
+  "check_gate_value.sh": {
+    "reason": "вход без вывода токена: на машинах проекта токен не выводится, а проверка входа канона `gh auth token` его печатает (у канона — в /dev/null)",
+    "changed": "строка 66 канона: остаётся только «нет gh»; вход проверяет сам `gh run list`, его stderr больше не глушится: отказ — «данных о срабатываниях нет: gh run list — код N: …», код 0, а не «нет прогонов» (test_ci_status_login.py)",
+    "kind": "upstream-candidate"
+  },
+  "check_gate_coverage.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строка 99 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  "gate_coverage_roles.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строка 97 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  "mutation_shard.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строки 10 и 84 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  "mutation_ts.sh": {
+    "reason": "имя человека в комментарии тела",
+    "changed": "строка 38 — имя человека в комментарии тела заменено словом «владельца»: правило репозитория (AGENTS.md) — имена людей в репозиторий не кладутся, а репозиторий публичный; код не тронут",
+    "kind": "upstream-candidate"
+  },
+  ".pre-commit-config.yaml": {
+    "reason": "транспорт и раскладка: все хуки repo: local, свои LINT_*, хук варианта D, TS-хуки — поставка В1б",
+    "changed": "блок 0 — check-yaml, check-json, check-toml, check-merge-conflict, check-added-large-files локальными хуками через `uv run --project backend --no-sync` из пакета pre-commit-hooks 6.0.0 dev-группы, с теми же id, args и stages, вместо внешнего repo (A100); хук canon-texts-stay-out рецептом AGENT_STACK §7.1a (вариант D, A97); хуки eslint, eslint-warning-ratchet и prettier сняты до В1б — npm в CI нет, ратчет объявлен в not-applicable.json; LINT_* в entry через export (§6): LINT_PY_SRC=backend у check_grep_gate.sh — вся область вместе с миграциями (A94), backend/src у AST-гейта, сложности, мёртвого кода и jscpd; LINT_COV_PKG=src/ai_geo_audit у mypy; значения export — в кавычках, иначе доктор читает их вместе с «;»; гейт длины — LINT_LENGTH_GLOBS с *.mjs и javascript в types_or (frontend/scripts); у гейта слоёв files: — backend/src и backend/.importlinter, frontend/src — с TS-половиной в В1б; свои хуки ruff-deploy, ruff-format-deploy и mypy-deploy — ruff и mypy strict с конфигом backend на `deploy/**/*.py` и каждый свой `.py` в `scripts/` — всё, кроме тел канона (`scripts/lint/`, `scripts/delivery_*`, `scripts/okf_*`); перечень тел для теста контракта — замок payload (решение проверяющего 2026-11-20T09:26Z): у файла вне backend/ ruff своего конфига не найдёт и возьмёт умолчания; тела канона под эти хуки не попадают"
+  },
+  "backend/pyproject.toml": {
+    "reason": "фрагмент влит с адаптациями: E501 вне ignore; mypy без плагина SQLAlchemy и с mypy_path",
+    "changed": "[tool.ruff.lint]: E501 вне ignore — литерал и комментарий в 101 знак иначе не краснит ни ruff check, ни ruff format (A93); [tool.mypy]: plugins = [\"pydantic.mypy\"] — в SQLAlchemy 2.1.9 модуля sqlalchemy.ext.mypy нет, mypy с ним выходит с кодом 2, и mypy_path = \"src\" — иначе модули раскладки src/ зовутся src.ai_geo_audit.*, а импорты молча становятся Any; [tool.mutmut]: source_paths = [\"src\"]; [tool.pytest.ini_options] слит с проектным: testpaths, asyncio_mode и asyncio_default_fixture_loop_scope — pytest-asyncio стоит; свой [tool.coverage.run] — src и migrations, patch subprocess, гринлеты (A107, A108); инструменты — dev-группой uv вместо requirements-dev.txt (§5 шаг 4), без pytest-env (окружение тестов держит Ч1.2в, A31); [tool.pytest.ini_options]: `disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true` — узел теста с кириллицей в параметре печатается как есть: в экранированном виде (`[\\u043f…]`) mutmut подаёт его обратно, pytest его не находит (код 4), и гейт мутаций не судит ничего (проба 2026-11-20T09:20Z, прогон CI 44708717514)"
+  },
+  "backend/.importlinter": {
+    "reason": "пример канона приведён к пакету: один контракт слоёв, контракты 1 и 3 без предмета",
+    "changed": "root_packages = ai_geo_audit; контракт слоёв api → storage → logs → config → refusal в контейнере ai_geo_audit, api обязательный (A95); контракты integrations-are-leaves и core-models-leaf не заведены — пакета интеграций нет, а «модели не импортируют верхние слои» держит контракт слоёв: storage стоит под api"
+  },
+  "frontend/eslint.config.js": {
+    "reason": "не адаптация шаблона канона: свой конфиг фронта из Ч1.4а; шаблон eslint канона — поставка В1б",
+    "changed": "файл написан в Ч1.4а под фронт проекта, а не извлечён из payload; путь совпадает с конфигом канона eslint.config.js в каталоге фронта. Обновление контура его не перезаписывает: решение о шаблоне канона — в В1б"
+  },
+  ".github/workflows/quality.yml": {
+    "reason": "шаблон канона под раскладку backend/ и uv: права, закрепление действий, установка из замка, JS-половина до В1б",
+    "changed": "сверху `permissions: contents: read` (A100); действия по полному хешу с версией в комментарии: checkout v7.0.1, setup-python v7.1.0 (A100); раннер `ubuntu-24.04` вместо `ubuntu-latest`; `concurrency` — группа запроса по ref, у остальных по `github.sha`, `cancel-in-progress` только у запроса (A101); у checkout `persist-credentials: false`; установка — `pip install uv==0.11.26` и `uv sync --frozen` вместо venv и pip шаблона (A99, A123); setup-node и установка фронта сняты — npm в CI поставка В1б; шаг инструментов ждёт список dev-группы: detect-secrets, ruff, mypy, pip-audit, mutmut, vulture, lint-imports (A99, A103); pre-commit — `uv run --project backend --no-sync`; `LINT_*` сверху — как у хуков гейтов, которые зовутся напрямую (A99); у аудита `LINT_FE_DIR: .frontend-not-here` и предохранитель: «python-зависимости не проверены» — красный (A102, A103); джоба `tests` (срез 3) вместо шагов покрытия и мутаций в `gates`: служба Postgres по дайджесту, как db в docker-compose.dev.yml, готовность — проверкой здоровья `pg_isready` в контейнере, а не TCP (порт на петле отвечает раньше базы); набор один раз с `--cov` по настройкам (src и migrations) и `coverage.json.head`; покрытие изменённого по отчёту джобы (`LINT_COV_FILE`, `LINT_PY_SRC=backend`); мутации только на запросе, 300 с, один воркер (A106–A109); шаг подписи необратимого в `delivery`: без активной поставки — строка словами (A105); самопроверка канона — только ветка варианта D, без `pip install PyYAML`; длинные комментарии шаблона не перенесены — пояснения короче, правила держит тест контракта"
+  },
+  ".github/workflows/main-guard.yml": {
+    "reason": "права токена и раннер: запись — только у джобы alert",
+    "changed": "сверху `permissions: contents: read`, `issues: write` — у джобы `alert` (A100); раннер `ubuntu-24.04` вместо `ubuntu-latest`; условие, триггер и тело тревоги — дословно (A117)"
+  }
+}

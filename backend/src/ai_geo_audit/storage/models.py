@@ -45,7 +45,7 @@ _CHECK = text(
 )
 
 
-class NothingToCheck(RuntimeError):
+class NothingToCheck(RuntimeError):  # noqa: N818 -- имя в тестах и сообщениях
     """Проверке нечего проверять: молчание выглядело бы как «нарушений нет»."""
 
 
@@ -99,9 +99,11 @@ async def enum_drift(conn: AsyncConnection, metadata: MetaData) -> list[str]:
     problems = []
     for table, column in found:
         kind = column.type
+        assert isinstance(kind, SqlEnum)
         where = {"name": f"ck_{table.name}_{kind.name}", "schema": table.schema or "public"}
         definition = await conn.scalar(_CHECK, {**where, "table": table.name})
-        in_db, in_code = set(re.findall(r"'([^']*)'", definition or "")), set(kind.enums)
+        found_db = re.findall(r"'([^']*)'", definition or "")  # cpu-ok: колонки схемы
+        in_db, in_code = set(found_db), set(kind.enums)
         place = f"{table.fullname}.{column.name}"
         missing, extra = sorted(in_code - in_db), sorted(in_db - in_code)
         problems += [f"{place}: значения «{v}» нет в проверке базы" for v in missing]
@@ -140,14 +142,15 @@ def model_problems(
             if loose and not narrow.get(place, "").strip():
                 problems.append(f"{place}: тип {kind} — только поимённо, с причиной")
         for fk in table.foreign_keys:
+            assert fk.constraint is not None
             name = str(fk.constraint.name)
             if fk.ondelete is None:
                 problems.append(f"{name}: нет явного ondelete")
             elif fk.ondelete.upper() == "SET NULL" and not _test_exists(root, set_null.get(name)):
                 problems.append(f"{name}: SET NULL без теста пути при обнулённой связи")
-        for item in [*table.constraints, *table.indexes]:
-            if len(str(item.name).encode()) > PG_NAME_MAX:
-                problems.append(f"{item.name}: имя длиннее {PG_NAME_MAX} байт — Postgres обрежет")
+        for named in [*(c.name for c in table.constraints), *(i.name for i in table.indexes)]:
+            if len(str(named).encode()) > PG_NAME_MAX:
+                problems.append(f"{named}: имя длиннее {PG_NAME_MAX} байт — Postgres обрежет")
     return sorted(problems)
 
 

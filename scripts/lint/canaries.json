@@ -1,0 +1,7 @@
+{
+  "_": "Свои канарейки гейтов (doctor_canaries.OWN_CANARIES): доктор кладёт файл, гоняет гейт до и после и убирает файл. Сложности канарейки нет: при запуске доктора гейт не находит ruff (decisions).",
+  "check_layers_gate.sh": {
+    "path": "backend/src/ai_geo_audit/config/canary_layers.py",
+    "content": "from ai_geo_audit import api\n\nX = api\n"
+  }
+}

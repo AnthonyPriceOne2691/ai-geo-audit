@@ -12,6 +12,7 @@ from pydantic import Field, SecretStr, field_validator
 from ai_geo_audit.config._base import Settings
 
 #: База разработки из docker compose. В бою проверка старта требует `DATABASE_URL` явно.
+# pragma: allowlist nextline secret
 _DEV_DATABASE_URL = "postgresql+asyncpg://audit:audit@localhost:5462/audit"
 _DEV_REDIS_URL = "redis://localhost:6379/0"
 Level = Literal["DEBUG", "INFO", "WARNING", "ERROR"]

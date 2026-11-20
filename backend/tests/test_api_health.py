@@ -41,6 +41,7 @@ async def silent_db() -> AsyncIterator[Silent]:
 
     server = await asyncio.start_server(hold, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
+    # pragma: allowlist nextline secret
     found.url = f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
     yield found
     for writer in found.accepted:
@@ -75,7 +76,7 @@ async def relay() -> AsyncIterator[Relay]:
             while data := await reader.read(65536):
                 if watch and found.freeze_on and found.freeze_on in data:
                     found.frozen = True
-                while found.frozen:
+                while found.frozen:  # noqa: ASYNC110 -- проба держит ответ, пока поднят флаг
                     await asyncio.sleep(0.02)
                 writer.write(data)
                 await writer.drain()

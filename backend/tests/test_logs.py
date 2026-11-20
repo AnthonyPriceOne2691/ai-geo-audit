@@ -13,7 +13,9 @@ from ai_geo_audit import config
 from ai_geo_audit.logs import setup as logs
 from ai_geo_audit.logs.setup import JsonFormatter, TextFormatter
 
+# pragma: allowlist nextline secret
 SECRET = "s3cr3t-token-value-1234567890"
+# pragma: allowlist nextline secret
 DB_PASSWORD = "db-password-123456"
 DSN = f"postgresql+asyncpg://audit:{DB_PASSWORD}@db:5432/audit"
 
@@ -81,7 +83,13 @@ def test_a6_config_secrets_are_registered(
     monkeypatch.setenv("DATABASE_URL", DSN)
     logs.register_config_secrets(config.AccessSettings(), config.StorageSettings())
     logs.setup_logging(fmt="text")
-    logging.getLogger("x").warning("dsn=%s secret=%s pw=%s", DSN, SECRET, DB_PASSWORD)
+    # Запись — мимо метода логгера: страж исполнения ловит секрет в вызове лога (так и надо),
+    # а тест вносит его нарочно, чтобы судить маску в обработчике.
+    log = logging.getLogger("x")
+    args = (DSN, SECRET, DB_PASSWORD)
+    log.handle(
+        log.makeRecord("x", logging.WARNING, __file__, 0, "dsn=%s secret=%s pw=%s", args, None)
+    )
     out = capsys.readouterr().err
     assert SECRET not in out and DB_PASSWORD not in out
 
@@ -109,6 +117,7 @@ def test_repeated_setup_does_not_duplicate_lines(capsys: pytest.CaptureFixture[s
     assert sum("один раз" in line for line in lines(capsys)) == 1
 
 
+# pragma: allowlist nextline secret
 REDIS_PASSWORD = "r3dis-pass-123456"
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@redis:6379/0"
 
@@ -138,6 +147,7 @@ def test_a21_percent_encoded_db_password_is_scrubbed_in_both_forms(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fmt: str
 ) -> None:
     """A21: пароль базы `p%40ss-word-123456` — в выводе нет ни записи, ни `p@ss-word-123456`."""
+    # pragma: allowlist nextline secret
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://audit:p%40ss-word-123456@db:5432/a")
     logs.register_config_secrets(config.StorageSettings())
     logs.setup_logging(fmt=fmt)
@@ -152,6 +162,7 @@ def test_a21_regex_signs_in_passwords_are_scrubbed_literally(
 ) -> None:
     """A21: пароль `p.ss+w(rd)*123456` в адресах базы и Redis вычищается буквально; запись
     журнала не падает."""
+    # pragma: allowlist nextline secret
     password = "p.ss+w(rd)*123456"
     monkeypatch.setenv("DATABASE_URL", f"postgresql+asyncpg://audit:{password}@db:5432/a")
     monkeypatch.setenv("REDIS_URL", f"redis://:{password}@redis:6379/0")
@@ -191,6 +202,67 @@ def test_a26_second_net_cuts_detail_values_that_bypass_the_engine(
     honest = 'duplicate key value violates unique constraint "uq_probe_key" (Key names only)'
     assert logs.redact(honest) == honest
     print(f"A26: проверено случаев DETAIL: {len(DETAILS)}")
+
+
+# Импорт свойства — здесь, а не в шапке: строки значений выше записаны в `.secrets.baseline` своими
+# номерами, и сдвиг заставил бы сканер секретов переснять снимок.
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+#: Значение — от 6 знаков (короче `register_secret` не берёт) и без `*`: маска из него и состоит, и
+#: значение со звёздочкой она собирает заново (`x***yzw` из `xabcdefyzw` при `abcdef`). Знаки
+#: регулярных выражений — замена обязана быть буквальной.
+VALUE = st.text("ab.+(\\$", min_size=6, max_size=12)
+#: Текст между вхождениями: те же знаки, звёздочка и пробел; бывает пустым.
+GAP = st.text("ab.+(\\$* ", max_size=4)
+
+
+@st.composite
+def values_in_text(draw: st.DrawFn) -> tuple[list[str], str]:
+    """От одного до трёх значений; у каждого одно или несколько вхождений вперемешку, между
+    вхождениями — свой текст."""
+    values = draw(st.lists(VALUE, min_size=1, max_size=3, unique=True))
+    copies: list[str] = []
+    for value in values:
+        copies += [value] * draw(st.integers(1, 3))
+    text = draw(GAP)
+    for copy in draw(st.permutations(copies)):
+        text += copy + draw(GAP)
+    return values, text
+
+
+@settings(max_examples=200)
+@given(case=values_in_text())
+def test_a111_no_registered_value_survives_redact(case: tuple[list[str], str]) -> None:
+    """A111: свойство над `redact` — от одного до трёх зарегистрированных значений, у каждого одно
+    или несколько вхождений: в выводе нет ни одного. Мимо логгера: страж исполнения судит вызовы
+    лога. Реестр на время примера — ровно эти значения, после — прежний."""
+    values, text = case
+    saved = set(logs._secrets)
+    logs._secrets.clear()
+    try:
+        for value in values:
+            logs.register_secret(value)
+        out = logs.redact(text)
+    finally:
+        logs._secrets.clear()
+        logs._secrets.update(saved)
+    assert [value for value in values if value in out] == []
+
+
+def test_a111_nested_value_is_masked_whole_longest_first() -> None:
+    """A111, пример: пароль внутри адреса — адрес маскируется целиком, длинное значение первым.
+    При обратном порядке в выводе остался бы кожух адреса вокруг маски пароля."""
+    saved = set(logs._secrets)
+    logs._secrets.clear()
+    try:
+        logs.register_secret(DB_PASSWORD)
+        logs.register_secret(DSN)
+        out = logs.redact(f"url={DSN} pw={DB_PASSWORD}")
+    finally:
+        logs._secrets.clear()
+        logs._secrets.update(saved)
+    assert out == f"url={logs.MASK} pw={logs.MASK}"
 
 
 #: Поля `extra` с именами базовых полей записи и присланный номер запроса (A56).
