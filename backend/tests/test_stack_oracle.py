@@ -15,12 +15,14 @@ from pathlib import Path
 import dbtools
 import pytest
 
+sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 _spec = importlib.util.spec_from_file_location(
     "stack_oracle", dbtools.ROOT / "scripts" / "stack_oracle.py"
 )
 oracle = importlib.util.module_from_spec(_spec)
 sys.modules["stack_oracle"] = oracle
 _spec.loader.exec_module(oracle)
+compose = importlib.import_module("stack_oracle_compose")
 
 LABEL = "oracle-canary-0f0f0f0f"
 
@@ -126,9 +128,9 @@ def test_a61_stack_name_is_the_prefix_and_ten_signs_of_the_path_hash() -> None:
 
 def test_a65_a67_docker_times_and_the_zero_time() -> None:
     """A65, A67: время Docker с наносекундами читается; нулевое время — «не стартовал»."""
-    assert oracle.parse_time("0001-01-01T00:00:00Z") is None
-    early = oracle.parse_time("2026-11-20T09:30:01.123456789Z")
-    late = oracle.parse_time("2026-11-20T09:30:02Z")
+    assert compose.parse_time("0001-01-01T00:00:00Z") is None
+    early = compose.parse_time("2026-11-20T09:30:01.123456789Z")
+    late = compose.parse_time("2026-11-20T09:30:02Z")
     assert early is not None and late is not None
     assert early < late and early.microsecond == 123456
 
@@ -139,8 +141,8 @@ def test_a63_process_users_are_read_under_the_top_header() -> None:
     rows = (
         "10001  101   1     0  09:30  ?    0:00  tini\n10001  102   101   0  09:30  ?    0:01  py\n"
     )
-    assert oracle.top_uids(head + rows) == {"10001"}
-    assert oracle.top_uids(head + rows.replace("10001  102", "root   102")) == {"10001", "root"}
+    assert compose.top_uids(head + rows) == {"10001"}
+    assert compose.top_uids(head + rows.replace("10001  102", "root   102")) == {"10001", "root"}
 
 
 def test_a63_process_users_in_the_compose_5_top_layout() -> None:
@@ -150,7 +152,7 @@ def test_a63_process_users_in_the_compose_5_top_layout() -> None:
         "api      1   10001  81294  81270  0   09:38  ?    00:00:00  /sbin/docker-init -- python\n"
         "api      1   10001  81317  81294  35  09:38  ?    00:00:00  python -m ai_geo_audit.api\n"
     )
-    assert oracle.top_uids(text) == {"10001"}
+    assert compose.top_uids(text) == {"10001"}
 
 
 class LeftBehind(oracle.Docker):

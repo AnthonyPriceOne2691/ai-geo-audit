@@ -143,11 +143,13 @@ PORT = [{"host_ip": "127.0.0.1", "published": "8080", "target": 80}]
 PG_NO_HOST = {"test": ["CMD-SHELL", "pg_isready -U a"]}
 PG_SOCKET = {"test": "pg_isready -h /var/run/postgresql"}
 BIND_APP = [{"type": "bind", "source": "/srv/src", "target": "/app"}]
-DB_LITERAL = "postgresql+asyncpg://a:literal-pass-12@db:5432/a"
+DB_LITERAL = "postgresql+asyncpg://a:literal-pass-12@db:5432/a"  # pragma: allowlist secret
 ENV_FILE = [{"path": "/srv/copy/.env", "required": True}]
 KEY_MOUNT = [{"source": "master_key", "target": "/run/secrets/k"}]
 APP_CONFIG = [{"source": "app_env", "target": "/app/.env"}]
 KEY_IN_APP = [{"source": "master_key", "target": "/app/key"}]
+#: Выключенная проверка с командой: `disable` сильнее `test` (порча M3 проверяющего).
+OFF = {"disable": True, "test": ["CMD", "true"]}
 
 # Проба, код, сервис, переменная: ожидается ровно это нарушение.
 STRUCTURE = [
@@ -160,7 +162,7 @@ STRUCTURE = [
     (put(services, "web", WEB_OPEN), "ports", "web", None),
     (put(svc("redis"), "network_mode", "host"), "ports", "redis", None),
     (drop(svc("redis"), "healthcheck"), "healthcheck", "redis", None),
-    (put(svc("api"), "healthcheck", {"disable": True}), "healthcheck", "api", None),
+    (put(svc("api"), "healthcheck", OFF), "healthcheck", "api", None),
     (put(svc("migrate"), "restart", "on-failure"), "restart", "migrate", None),
     (put(svc("redis"), "restart", "always"), "restart", "redis", None),
     (
@@ -178,6 +180,13 @@ STRUCTURE = [
     (put(svc("redis"), "image", "redis:7.2-alpine" + DIGEST), "image-digest", "redis", None),
     (put(svc("redis"), "image", "valkey:7.4-alpine" + DIGEST), "image-digest", "redis", None),
     *[
+        (put(svc(name), "image", image + DIGEST), "image-digest", name, None)
+        for name, image in (
+            ("db", "evil.example/postgres:16-alpine"),
+            ("redis", "ghcr.io/someone/redis:7.4-alpine"),
+        )
+    ],
+    *[
         (
             put(env("api"), "API_TRUSTED_PROXIES", value),
             "trusted-proxy",
@@ -188,6 +197,7 @@ STRUCTURE = [
     ],
     (put(svc("migrate"), "volumes", BIND_APP), "workdir-volume", "migrate", None),
     (put(svc("migrate"), "configs", APP_CONFIG), "workdir-volume", "migrate", None),
+    (put(svc("migrate"), "configs", [{"source": "app"}]), "workdir-volume", "migrate", None),
     (put(svc("api"), "secrets", KEY_IN_APP), "workdir-volume", "api", None),
     (
         put(svc("api"), "volumes", ["/srv/copy/backend:/app/backend:ro"]),
@@ -201,6 +211,14 @@ SECRETS = [
     (drop(env("migrate"), "DATABASE_URL"), "required-vars", "migrate", "DATABASE_URL"),
     (put(env("api"), "DATABASE_URL", DB_LITERAL), "secret-form", "api", "DATABASE_URL"),
     (put(env("api"), "JWT_SECRET", "http://a"), "secret-form", "api", "JWT_SECRET"),
+    *[
+        (put(env("api"), var, value), "secret-form", "api", var)
+        for var, value in (
+            ("REDIS_URL", "redis://redis:6379/0?password=x"),
+            ("REDIS_URL", "redis://redis:6379/0#x"),
+            ("DATABASE_URL", "postgresql+asyncpg://a:${DB_PASSWORD:?пароль}@db/a"),
+        )
+    ],
     (
         put(env("api"), "DATABASE_URL", "${API_DATABASE_URL:-}"),
         "secret-form",
@@ -290,6 +308,13 @@ def test_a72_environment_as_list_is_read_like_mapping() -> None:
     assert found(config) == {("required-vars", "api", "JWT_SECRET")}
 
 
+def test_a71_a_path_that_only_starts_like_the_workdir_is_not_in_it() -> None:
+    """A71: том в `/application-data` — не в рабочем каталоге `/app` (порча M9 проверяющего)."""
+    stack = valid()
+    stack["services"]["api"]["volumes"] = [{"type": "volume", "target": "/application-data"}]
+    assert found(stack) == set()
+
+
 def test_a72_config_fields_outside_the_lists_are_not_violations() -> None:
     """A72: `APP_ENV`, `LOG_FORMAT`, `API_PORT` и пулы базы у api — поля конфига вне списков."""
     config = valid()
@@ -329,7 +354,9 @@ def test_a72_violation_names_code_service_variable_without_value(
 ) -> None:
     """A72: строка нарушения — код, сервис и имя переменной; значения в выводе нет."""
     config = valid()
-    config["services"]["api"]["environment"]["JWT_SECRET"] = "literal-secret-value-0123456789abc"
+    config["services"]["api"]["environment"]["JWT_SECRET"] = (
+        "literal-secret-value-0123456789abc"  # pragma: allowlist secret
+    )
     code, out = run(monkeypatch, capsys, json.dumps(config))
     assert code == 1
     assert "secret-form: сервис api, переменная JWT_SECRET" in out

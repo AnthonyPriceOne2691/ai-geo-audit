@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import socket
 import subprocess
@@ -13,7 +14,6 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
 
 import dbtools
 import pytest
@@ -26,9 +26,10 @@ DOWN = b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"
 SILENCE_SECONDS = 6.0
 
 
-@contextmanager
-def server(reply: bytes | None) -> Iterator[int]:
-    """A70: сервер на петле; на каждое соединение — `reply`, а `None` — принять и молчать."""
+@contextlib.contextmanager
+def server(reply: bytes | None, delay: float = 0.0) -> Iterator[int]:
+    """A70: сервер на петле; на каждое соединение — `reply` (с `delay` — по байту с паузой), а
+    `None` — принять и молчать."""
     listener = socket.create_server(("127.0.0.1", 0))
     listener.settimeout(0.05)
     stop = threading.Event()
@@ -46,10 +47,13 @@ def server(reply: bytes | None) -> Iterator[int]:
                 timer.start()
                 held.append((conn, timer))
                 continue
-            with conn:
+            step = 1 if delay else len(reply)
+            with conn, contextlib.suppress(OSError):
                 conn.settimeout(2)
                 conn.recv(1024)
-                conn.sendall(reply)
+                for start in range(0, len(reply), step):
+                    conn.sendall(reply[start : start + step])
+                    time.sleep(delay)
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
@@ -120,7 +124,7 @@ def test_a70_silent_server_fails_after_three_seconds_not_sooner_not_later() -> N
 def test_a70_bad_setting_is_one_line_without_the_value() -> None:
     """A70: негодный `API_PORT` — код 1 и одна строка без введённого значения (урок L30)."""
     done = entry("port-9x7q")
-    assert done.returncode == 1
+    assert done.returncode == 1 and "негодная настройка" in done.stdout
     assert one_clean_line(done.stdout + done.stderr, "port-9x7q")
 
 
@@ -141,3 +145,19 @@ def test_a70_answer_that_is_not_http_is_refused() -> None:
     """A70: первая строка без `HTTP/` — не ответ HTTP: код 1, даже если второе слово — 200."""
     with server(b"foo 200 OK\r\n\r\n") as port:
         assert probe.check(port) == (1, "здоровье: ответ не HTTP")
+
+
+def test_a70_only_200_is_healthy_not_any_2xx() -> None:
+    """A70: ответ 204 — не 200: код 1, а не «любой 2xx здоров»."""
+    with server(b"HTTP/1.1 204 No Content\r\n\r\n") as port:
+        assert probe.check(port) == (1, "здоровье: ответ 204")
+
+
+def test_a70_status_line_trickled_past_the_limit_is_cut_at_the_limit() -> None:
+    """A70: строка статуса по байту медленнее предела — код 1 за 3,0–3,5 с: срок один на весь
+    поход, а не на каждое чтение."""
+    with server(OK, delay=0.4) as port:
+        started = time.monotonic()
+        code, _ = probe.check(port)
+        elapsed = time.monotonic() - started
+    assert code == 1 and 3.0 <= elapsed <= 3.5, elapsed

@@ -38,7 +38,7 @@ ONE_SHOT = frozenset({"migrate"})
 #: Рабочий каталог образа сервиса: там конфиг ищет `.env` (`deploy/backend/Dockerfile`).
 IMAGE_WORKDIR = "/app"
 #: Секрет compose с мастер-ключом: только у процессов, которым нужен `KEYS_MASTER_KEY_FILE`.
-MASTER_KEY_SECRET = "master_key"
+MASTER_KEY_NAME = "master_key"
 #: Секреты образов, а не конфига: пароль суперпользователя базы задаёт образ postgres.
 IMAGE_SECRETS = frozenset({"POSTGRES_PASSWORD"})
 #: Единственный доверенный прокси api — адрес web из переменной сервера.
@@ -60,7 +60,8 @@ SHAPES: dict[str, tuple[type, ...]] = {
     "healthcheck": (dict,),
 }
 
-_PROCESSES = frozenset(get_args(startup_checks.Process))
+#: Сервис и процесс сопоставляются по имени: api — `api`, migrate — `migrate`.
+_PROCESSES: dict[str, startup_checks.Process] = {p: p for p in get_args(startup_checks.Process)}
 _REF = re.compile(r"\$\{[^}]*\}")
 _STRICT_REF = re.compile(r"\$\{([A-Za-z_]\w*):\?[^}]+\}")
 _IMAGE = re.compile(r"(?P<name>[a-z0-9._/-]+):(?P<tag>[\w.-]+)@sha256:[0-9a-f]{64}")
@@ -69,7 +70,7 @@ _PG_HOST = re.compile(r"(?:^|\s)(?:-h|--host)(?:=|\s+)(\S+)")
 Finding = tuple[str | None, str | None, str]
 
 
-class InputRefused(ValueError):
+class InputRefusedError(ValueError):
     """Ввод не годится для правил: проверять нечего или нечем."""
 
 
@@ -98,34 +99,37 @@ class Stack:
 
 def _own(service: str) -> frozenset[str]:
     """Список проверки старта процесса сервиса (по имени); у db и redis процесса нет."""
-    return startup_checks.required(service) if service in _PROCESSES else frozenset()
+    process = _PROCESSES.get(service)
+    return startup_checks.required(process) if process else frozenset()
 
 
 def _environment(service: str, raw: object) -> dict[str, object]:
-    if isinstance(raw, list):
-        if not all(isinstance(item, str) for item in raw):
-            raise InputRefused(f"сервис {service}: environment незнакомого вида")
+    if isinstance(raw, dict):
+        return dict(raw)
+    if isinstance(raw, list) and all(isinstance(item, str) for item in raw):
         pairs = (item.partition("=") for item in raw)
         return {name: value if sep else None for name, sep, value in pairs}
-    return dict(raw or {})
+    if raw is None:
+        return {}
+    raise InputRefusedError(f"сервис {service}: environment незнакомого вида")
 
 
 def parse(raw: object) -> Stack:
     """Стек из вывода compose; ввод, на котором правила молча ослепли бы, — отказ."""
     services = raw.get("services") if isinstance(raw, dict) else None
-    if not isinstance(services, dict) or not services:
-        raise InputRefused("ноль сервисов — правилам нечего проверять")
+    if not isinstance(raw, dict) or not isinstance(services, dict) or not services:
+        raise InputRefusedError("ноль сервисов — правилам нечего проверять")
     env: dict[str, dict[str, object]] = {}
     for name, service in services.items():
         if not isinstance(service, dict):
-            raise InputRefused(f"сервис {name} незнакомого вида")
+            raise InputRefusedError(f"сервис {name} незнакомого вида")
         for key, kinds in SHAPES.items():
             if service.get(key) is not None and not isinstance(service[key], kinds):
-                raise InputRefused(f"сервис {name}: {key} незнакомого вида")
+                raise InputRefusedError(f"сервис {name}: {key} незнакомого вида")
         env[name] = _environment(name, service.get("environment"))
     values = (value for found in env.values() for value in found.values())
     if not any(isinstance(value, str) and "${" in value for value in values):
-        raise InputRefused(
+        raise InputRefusedError(
             "в environment нет ни одной ссылки ${…} — похоже на вывод без --no-interpolate: "
             "с подстановкой правила не видят env_file"
         )
@@ -330,7 +334,7 @@ def _secret_form(stack: Stack) -> Iterator[Finding]:
 
 
 def _foreign_secret(stack: Stack) -> Iterator[Finding]:
-    listed = _secret_names().union(*map(startup_checks.required, _PROCESSES))
+    listed = _secret_names().union(*map(startup_checks.required, _PROCESSES.values()))
     for name, values in stack.env.items():
         for var in sorted((listed & values.keys()) - _own(name)):
             yield name, var, "переменная из чужого списка проверки старта"
@@ -354,7 +358,7 @@ def _master_key(stack: Stack) -> Iterator[Finding]:
     for name, service in stack.services.items():
         mounted = service.get("secrets") or []
         sources = {e.get("source") if isinstance(e, dict) else e for e in mounted}
-        if MASTER_KEY_SECRET in sources and "KEYS_MASTER_KEY_FILE" not in _own(name):
+        if MASTER_KEY_NAME in sources and "KEYS_MASTER_KEY_FILE" not in _own(name):
             yield name, None, "смонтирован файл мастер-ключа"
 
 
@@ -380,7 +384,7 @@ RULES = tuple(code for code, _ in CHECKS)
 
 
 def check(raw: object) -> list[Violation]:
-    """Нарушения стека в порядке перечня; негодный ввод — `InputRefused`."""
+    """Нарушения стека в порядке перечня; негодный ввод — `InputRefusedError`."""
     stack = parse(raw)
     return [Violation(code, *finding) for code, rule in CHECKS for finding in rule(stack)]
 
@@ -392,7 +396,7 @@ def run(text: str) -> tuple[int, list[str]]:
     try:
         raw = json.loads(text)
         found = check(raw)
-    except InputRefused as refusal:
+    except InputRefusedError as refusal:
         return 2, [f"отказ: {refusal}"]
     except json.JSONDecodeError:
         return 2, ["отказ: ввод не JSON"]
