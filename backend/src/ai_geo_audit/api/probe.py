@@ -43,7 +43,8 @@ def check(port: int, limit: float = LIMIT_SECONDS) -> tuple[int, str]:
     except OSError as error:
         return 1, f"здоровье: сбой соединения ({type(error).__name__})"
     words = head.split(b"\r\n", 1)[0].split()
-    status = words[1].decode("ascii", "replace") if len(words) > 1 else ""
+    http = len(words) > 1 and words[0].startswith(b"HTTP/")
+    status = words[1].decode("ascii", "replace") if http else ""
     if status == "200":
         return 0, "здоровье: ok"
     return 1, f"здоровье: ответ {status}" if status.isdigit() else "здоровье: ответ не HTTP"
