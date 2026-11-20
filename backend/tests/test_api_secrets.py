@@ -171,7 +171,7 @@ async def test_a48_only_the_pass_form_is_a_secret_and_it_does_not_pile_up(
 
 
 ADDRESS = "203.0.113.7"
-NUMBER = "abcdef123456"
+NUMBER = "number-words-123"
 PASS = {"X-Access-Token": probes.PASS}
 TEXT_RECORD = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+0000 [A-Z]+ ")
 

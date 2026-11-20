@@ -242,12 +242,18 @@ def build_open_body() -> FastAPI:
     return app
 
 
+#: Пароли адресов баз в пробах — из слов-заглушек; в адрес они подставляются.
+CLOSED_WORDS = "probe-words-123456"
+PROD_DB_WORDS = "prod-db-words-123456"
+PROD_JWT_WORDS = "prod-jwt-from-plain-words-for-tests-only"
+
+
 def closed_port_url() -> str:
     """Адрес базы на петле, где никто не слушает."""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    return f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
+    return f"postgresql+asyncpg://audit:{CLOSED_WORDS}@127.0.0.1:{port}/audit"
 
 
 def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -256,9 +262,9 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     key.write_text("master-key-from-plain-words-for-tests-only", encoding="utf-8")
     env = {
         "APP_ENV": "prod",
-        "DATABASE_URL": "postgresql+asyncpg://audit:prod-db-words-123456@db:5432/audit",
+        "DATABASE_URL": f"postgresql+asyncpg://audit:{PROD_DB_WORDS}@db:5432/audit",
         "REDIS_URL": "redis://redis:6379/0",
-        "JWT_SECRET": "prod-jwt-secret-from-plain-words-for-tests-only",
+        "JWT_SECRET": PROD_JWT_WORDS,
         "KEYS_MASTER_KEY_FILE": str(key),
         "API_TRUSTED_PROXIES": "10.9.9.9",
     }

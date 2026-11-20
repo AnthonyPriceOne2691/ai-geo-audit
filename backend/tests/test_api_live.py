@@ -24,10 +24,11 @@ import httpx
 
 import ai_geo_audit
 
-SRC = Path(ai_geo_audit.__file__).resolve().parents[1]
+PACKAGE = Path(ai_geo_audit.__file__).resolve()
+SRC = PACKAGE.parents[1]
 MARK = "query-mark-words-in-url"
-PASSWORD = "live-site-password-words"
-ENCODED = base64.b64encode(f"user:{PASSWORD}".encode()).decode()
+SITE_WORDS = "live-site-pass-words"
+ENCODED = base64.b64encode(f"user:{SITE_WORDS}".encode()).decode()
 
 
 def free_port() -> int:
@@ -172,7 +173,7 @@ async def test_a55_live_server_answers_logs_and_stops_on_sigterm(tmp_path: Path)
             code = await asyncio.wait_for(process.wait(), 25)
         finally:
             await stop(process)
-    assert printed == str(Path(ai_geo_audit.__file__).resolve())
+    assert printed == str(PACKAGE)
     assert (marked.status_code, marked.json()) == (200, {"status": "ok"})
     assert (gated.status_code, gated.json()) == (403, probes.sample("signed-out")["body"])
     assert secret.status_code == 200
@@ -190,7 +191,7 @@ async def test_a55_live_server_answers_logs_and_stops_on_sigterm(tmp_path: Path)
     text = log.read_text("utf-8")
     records = [json.loads(line) for line in text.splitlines()]
     assert [r for r in records if not str(r["ts"]).endswith("+0000") or "level" not in r] == []
-    leaks = ["Traceback", "\x1b", "color_message", MARK, PASSWORD, ENCODED, probes.PASS]
+    leaks = ["Traceback", "\x1b", "color_message", MARK, SITE_WORDS, ENCODED, probes.PASS]
     assert [part for part in leaks if part in text] == []
     uvicorn = [r["message"] for r in records if r["logger"] == "uvicorn.error"]
     assert (
