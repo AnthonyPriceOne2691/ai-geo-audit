@@ -171,3 +171,45 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
     code, line = oracle.verdict(0, left)
     assert code == 1 and "КРАСНОЕ" in line and "oracle_db-data" in line
     assert oracle.verdict(0, []) == (0, f"итог: шагов {len(oracle.STEPS)}, красных 0")
+
+
+#: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера.
+STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
+
+
+def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
+    """Расхождения таблицы шагов с примерами: шаг без номера, номер не из набора, пример без
+    шага."""
+    problems = [f"шаг «{title}» без номера примера" for numbers, title, *_ in steps if not numbers]
+    seen = {number for numbers, *_ in steps for number in numbers.split()}
+    problems += [f"номер {number} — не пример оракула" for number in sorted(seen - STEP_EXAMPLES)]
+    return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
+
+
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_and_a73() -> None:
+    """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
+    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73."""
+    assert steps_problems(oracle.STEPS) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ("номер стёрт", "шаг «сборка из чистой копии» без номера примера"),
+        ("шаг A73 убран", "пример A73 без шага"),
+        ("номер A68", "номер A68 — не пример оракула"),
+    ],
+)
+def test_a76_step_without_a_number_or_an_example_without_a_step_is_red(
+    change: str, problem: str
+) -> None:
+    """A76, первая строка, копии: шаг без номера, пример без шага, номер не из набора — красное с
+    названием шага или номера."""
+    steps = list(oracle.STEPS)
+    if change == "номер стёрт":
+        steps[0] = ("", *steps[0][1:])
+    elif change == "шаг A73 убран":
+        steps = [step for step in steps if "A73" not in step[0].split()]
+    else:
+        steps.append(("A68", "лишний шаг", steps[0][2], False))
+    assert problem in steps_problems(steps)
