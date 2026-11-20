@@ -1,0 +1,14 @@
+# Белый список контекста образа сервиса: закрыто всё, открыты пять путей.
+*
+!backend/pyproject.toml
+!backend/uv.lock
+!backend/src/
+!backend/alembic.ini
+!backend/migrations/
+# После открытия — снова закрыто на любой глубине: окружение, кэш Python, окружения и сборки.
+**/.env*
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/node_modules
+**/dist
