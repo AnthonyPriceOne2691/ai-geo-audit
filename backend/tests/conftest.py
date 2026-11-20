@@ -16,10 +16,14 @@ CLEANED = envguard.clean()
 
 import asyncio
 import logging
+import os
+import tempfile
 from collections.abc import AsyncIterator, Iterator
+from pathlib import Path
 
 import dbtools
 import pytest
+from hypothesis import settings
 from run_summary import (  # noqa: F401 -- хуки итога A106 подключаются по именам
     pytest_collection_finish,
     pytest_runtest_logreport,
@@ -31,6 +35,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from ai_geo_audit import config
 from ai_geo_audit.logs import setup as log_setup
 from ai_geo_audit.storage import build_engine, dispose_engine
+
+# Свойства с генератором воспроизводимы: под ними идёт мутационный гейт. Сид — от самого теста,
+# базы примеров нет. Родитель — профиль по умолчанию, а не текущий: в CI hypothesis сам грузит свой
+# профиль `ci`, и на машине и в CI правило разошлось бы.
+settings.register_profile(
+    "reproducible", settings.get_profile("default"), derandomize=True, database=None
+)
+settings.load_profile("reproducible")
+# Хранилище hypothesis — вне дерева: кэш констант исходников (его собирает ещё сбор тестов), таблицу
+# юникода и заплатки упавших примеров он пишет и без базы примеров, по умолчанию — в `.hypothesis/`
+# текущего каталога.
+os.environ.setdefault(
+    "HYPOTHESIS_STORAGE_DIRECTORY", str(Path(tempfile.gettempdir()) / "hypothesis-ai-geo-audit")
+)
 
 
 def pytest_report_header() -> str:

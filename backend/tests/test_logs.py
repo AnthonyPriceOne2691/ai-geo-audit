@@ -196,3 +196,49 @@ def test_a26_second_net_cuts_detail_values_that_bypass_the_engine(
     honest = 'duplicate key value violates unique constraint "uq_probe_key" (Key names only)'
     assert logs.redact(honest) == honest
     print(f"A26: проверено случаев DETAIL: {len(DETAILS)}")
+
+
+# Импорт свойства — здесь, а не в шапке: строки значений выше записаны в `.secrets.baseline` своими
+# номерами, и сдвиг заставил бы сканер секретов переснять снимок.
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+#: Значение — от 6 знаков (короче `register_secret` не берёт) и без `*`: маска из него и состоит, и
+#: значение со звёздочкой она собирает заново (`x***yzw` из `xabcdefyzw` при `abcdef`). Знаки
+#: регулярных выражений — замена обязана быть буквальной.
+VALUE = st.text("ab.+(\\$", min_size=6, max_size=12)
+#: Текст между вхождениями: те же знаки, звёздочка и пробел; бывает пустым.
+GAP = st.text("ab.+(\\$* ", max_size=4)
+
+
+@st.composite
+def values_in_text(draw: st.DrawFn) -> tuple[list[str], str]:
+    """От одного до трёх значений; у каждого одно или несколько вхождений вперемешку, между
+    вхождениями — свой текст."""
+    values = draw(st.lists(VALUE, min_size=1, max_size=3, unique=True))
+    copies: list[str] = []
+    for value in values:
+        copies += [value] * draw(st.integers(1, 3))
+    text = draw(GAP)
+    for copy in draw(st.permutations(copies)):
+        text += copy + draw(GAP)
+    return values, text
+
+
+@settings(max_examples=200)
+@given(case=values_in_text())
+def test_a111_no_registered_value_survives_redact(case: tuple[list[str], str]) -> None:
+    """A111: свойство над `redact` — от одного до трёх зарегистрированных значений, у каждого одно
+    или несколько вхождений: в выводе нет ни одного. Мимо логгера: страж исполнения судит вызовы
+    лога. Реестр на время примера — ровно эти значения, после — прежний."""
+    values, text = case
+    saved = set(logs._secrets)
+    logs._secrets.clear()
+    try:
+        for value in values:
+            logs.register_secret(value)
+        out = logs.redact(text)
+    finally:
+        logs._secrets.clear()
+        logs._secrets.update(saved)
+    assert [value for value in values if value in out] == []
