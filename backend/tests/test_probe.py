@@ -135,3 +135,9 @@ def test_a70_connect_is_under_the_same_limit(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(probe.socket, "create_connection", hang)
     assert probe.check(closed_port()) == (1, "здоровье: нет ответа за 3 с")
     assert limits == [3.0]
+
+
+def test_a70_answer_that_is_not_http_is_refused() -> None:
+    """A70: первая строка без `HTTP/` — не ответ HTTP: код 1, даже если второе слово — 200."""
+    with server(b"foo 200 OK\r\n\r\n") as port:
+        assert probe.check(port) == (1, "здоровье: ответ не HTTP")
