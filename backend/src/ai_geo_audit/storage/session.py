@@ -80,3 +80,6 @@ async def _still_alive(session: AsyncSession) -> None:
         raise AbortedTransactionError(
             "ошибку базы поймали без step(): записанное в сессии не сохранено"
         ) from exc
+
+
+# проба мутаций T24: файл в диффе

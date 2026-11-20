@@ -46,3 +46,6 @@ def chain_problems(versions: Path) -> list[str]:
         elif downs[current] != previous:
             problems.append(f"у {current} down_revision {downs[current]} вместо {previous}")
     return sorted(problems)
+
+
+# проба мутаций T24: файл в диффе

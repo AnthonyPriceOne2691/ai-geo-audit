@@ -172,3 +172,6 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     root.setLevel((level or config.logs.level).upper())
     for name in _NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+# проба мутаций T24: файл в диффе
