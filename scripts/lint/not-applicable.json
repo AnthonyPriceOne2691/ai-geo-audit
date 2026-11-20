@@ -8,14 +8,6 @@
   "check_eslint_warnings.sh": "поставка В1б: ратчет предупреждений eslint — гейт фронта; npm в CI В1а нет, хуки eslint и prettier сняты до В1б",
   "check_jscpd_gate.sh": "пакет npm, поставка В1б: jscpd — пакет npm, без него не судит и половина Python; npm в CI В1а нет, дублирование Python до В1б не судит никто",
   "check_grep_gate.sh:service-no-web": "слоя сервисов нет: правило выбирает файлы по имени (каталог services/, service.py), в ai_geo_audit таких нет — просмотрено 0",
-  "check_diff_coverage.sh": {
-    "reason": "срез 3 поставки В1а: место — джоба `tests` в CI (A107, A108); объявление истекает, когда появится контракт джобы `tests`",
-    "until": "backend/tests/test_tests_job.py"
-  },
-  "check_mutation_gate.sh": {
-    "reason": "срез 3 поставки В1а: место — джоба `tests` в CI (A109); объявление истекает, когда появится контракт джобы `tests`",
-    "until": "backend/tests/test_tests_job.py"
-  },
   "check_ci_status.sh": {
     "reason": "срез 5 поставки В1а: место — гейт мержа и pre-push (A114, A118); объявление истекает, когда появится гейт мержа",
     "until": "scripts/merge_guard.sh"

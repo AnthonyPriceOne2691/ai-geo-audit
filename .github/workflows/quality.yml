@@ -243,3 +243,89 @@ jobs:
             exit 1
           fi
           echo "каноны вне репо — вариант B/D по объявлению в $where; инвариант назван"
+
+  tests:
+    runs-on: ubuntu-24.04
+    # §8.7: набор с покрытием и мутации на запросе — минуты; 30 значит «что-то повисло».
+    timeout-minutes: 30
+    services:
+      # Как служба db в docker-compose.dev.yml: база живёт только в прогоне, пароль — публичный
+      # пароль стенда. Образ — по дайджесту (A100); готовность — проверка здоровья в контейнере:
+      # порт на петле отвечает раньше, чем встанет база.
+      postgres:
+        image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit
+          POSTGRES_DB: audit
+        ports:
+          - 127.0.0.1:5462:5432
+        options: >-
+          --health-cmd "pg_isready -U audit -d audit"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0              # база диффа покрытия изменённого и мутаций (A108, A109)
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+      - name: Diff base (одна на джобу, отказ — вслух)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            before="${{ github.event.before }}"
+            zero="0000000000000000000000000000000000000000"
+            if [ -n "$before" ] && [ "$before" != "$zero" ] \
+               && git cat-file -e "${before}^{commit}" 2>/dev/null; then
+              base="$before"
+            else
+              default="${{ github.event.repository.default_branch }}"
+              base="$(git merge-base "origin/$default" HEAD 2>/dev/null || true)"
+              if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ]; then
+                echo "::error::база диффа не определима (before=$before, default=$default):"\
+                     "первый push репозитория или переписанная история." \
+                     "Открой PR или сделай второй коммит — гейт не имеет права судить пустоту."
+                exit 1
+              fi
+            fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "база диффа: $base"
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Инструменты из замка
+        run: |
+          python -m pip install uv==0.11.26
+          cd backend && uv sync --frozen
+
+      # Набор — один раз: покрытие src и migrations снимается здесь же, отчёт привязан к коммиту.
+      # Итог «собрано N, прошло N, пропущено 0» печатает conftest; пропуск — красное (A106, A107).
+      - name: Тесты с покрытием
+        working-directory: backend
+        run: |
+          uv run --no-sync pytest --cov --cov-report=json:coverage.json
+          git rev-parse HEAD > coverage.json.head
+
+      # Отчёт этой джобы, а не второй прогон набора; база — шаг «Diff base» (A108).
+      - name: Diff coverage
+        env:
+          LINT_PY_SRC: backend
+          LINT_COV_FILE: backend/coverage.json
+          MIN_PCT: "70"
+        run: bash scripts/lint/check_diff_coverage.sh
+
+      # Самый дорогой гейт — только на запросе и с бюджетом; один воркер: база у копии одна (A109).
+      - name: Mutation testing (changed files, budgeted)
+        if: github.event_name == 'pull_request'
+        env:
+          LINT_PY_SRC: backend/src
+          MUTATION_WORKERS: "1"
+          MIN_KILLED: "60"
+          BUDGET_SEC: "300"
+        run: bash scripts/lint/check_mutation_gate.sh

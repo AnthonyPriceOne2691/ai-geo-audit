@@ -20,6 +20,12 @@ from collections.abc import AsyncIterator, Iterator
 
 import dbtools
 import pytest
+from run_summary import (  # noqa: F401 -- хуки итога A106 подключаются по именам
+    pytest_collection_finish,
+    pytest_runtest_logreport,
+    pytest_sessionfinish,
+    pytest_terminal_summary,
+)
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ai_geo_audit import config
