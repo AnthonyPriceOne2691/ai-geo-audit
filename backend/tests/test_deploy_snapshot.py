@@ -24,6 +24,9 @@ from deploy_fakes import (
     write_env,
 )
 
+#: A186: начало команды inspect — узлы её шаблона сверяются со списком полей снимка.
+INSPECT_CMD = ("docker", "container", "inspect")
+
 
 @pytest.fixture
 def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -33,8 +36,10 @@ def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 
 def test_a186_snapshot_unchanged_neighbor(ctx) -> None:
     """A186: снимок до и после без перемен — «общих N, перезапусков 0, коды прежние; пропало 0,
-    новых 0», не красное. Наш стек не входит; `StartedAt` с дробной частью 6, 8 и 9 знаков и
-    миграции с узлом здоровья и без него сравниваются как есть; адреса опрошены оба раза."""
+    новых 0», не красное. Наш стек не входит, остановленные — входят (`docker ps --all`);
+    `StartedAt` с дробной частью 6, 8 и 9 знаков и миграции с узлом здоровья и без него
+    сравниваются как есть; адреса опрошены оба раза. Ключи снимка — хеши, имён в нём нет; у
+    docker запрошены только поля снимка — окружений контейнеров соседа скрипт не получает."""
     started = [re.search(r'"StartedAt":"[^"]+\.(\d+)Z"', line) for line in rec.server_machine()]
     assert {len(found[1]) for found in started if found} == {6, 8, 9}
     write_env(ctx, server_values())
@@ -42,6 +47,12 @@ def test_a186_snapshot_unchanged_neighbor(ctx) -> None:
     line = "снимок соседа: общих 35, перезапусков 0, коды прежние; пропало 0, новых 0"
     assert (result.line, result.red) == (line, False) and line in ctx.out.getvalue()
     assert ctx.probe.urls == URLS.split(",") * 2
+    seen = tool.neighbor_snapshot(ctx, "").seen
+    assert len(seen) == 35 and all(re.fullmatch(r"[0-9a-f]{16}", key) for key in seen)
+    asked = [argv[4] for argv, _env in ctx.runner.calls if argv[:3] == INSPECT_CMD]
+    nodes = {".Id", ".Name", ".Config.Labels", ".State", ".RestartCount", ".HostConfig.Memory"}
+    nodes |= {".HostConfig.PortBindings"}
+    assert asked and all(set(re.findall(r"\{\{json (\.[\w.]+)\}\}", fmt)) == nodes for fmt in asked)
 
 
 def test_a186_snapshot_divergence_is_red_with_numbers_not_names(ctx) -> None:
@@ -66,7 +77,8 @@ def test_a186_snapshot_divergence_is_red_with_numbers_not_names(ctx) -> None:
 
 
 def test_a186_changed_health_code_is_red(ctx) -> None:
-    """A186: код адреса проверки соседа сменился между снимками — красное, адрес не назван."""
+    """A186: код адреса проверки соседа сменился между снимками — красное, адрес не назван; адресов
+    стало меньше — тоже красное."""
     with tool.session(ctx, "check"):
         before = tool.neighbor_snapshot(ctx, URLS)
         ctx.probe.codes["http://127.0.0.1:9102/health"] = 403
@@ -74,6 +86,8 @@ def test_a186_changed_health_code_is_red(ctx) -> None:
     tail = "кодов изменилось 1; пропало 0, новых 0 — красное: коды адресов 1"
     assert result.red and result.line.endswith(tail)
     assert "9102" not in result.line
+    fewer = tool.compare(before, before._replace(codes=before.codes[:1]))
+    assert fewer.red and fewer.line.endswith("— красное: коды адресов 1")
 
 
 @pytest.mark.parametrize(
@@ -85,6 +99,7 @@ def test_a186_changed_health_code_is_red(ctx) -> None:
         "https://127.0.0.1:9101/health",
         "http://user:pass@127.0.0.1:9101/health",  # pragma: allowlist secret
         "http://127.0.0.1:99999/health",
+        "http://127.0.0.1:0/health",
         "127.0.0.1:9101/health",
     ],
 )
@@ -98,8 +113,9 @@ def test_a186_address_not_on_loopback_refused_before_any_request(ctx, url: str) 
 
 
 def test_a186_container_gone_between_listing_and_inspect_is_gone_not_failure(ctx) -> None:
-    """A186: контейнер удалён между `docker ps` и `docker container inspect` — он «пропал»; сбой
-    `docker ps` и чужой формат ответа — отказ словами."""
+    """A186: контейнер удалён между `docker ps` и `docker container inspect` — он «пропал». Чужой
+    формат ответа inspect, ответ `docker ps` не из идентификаторов, сбой inspect не вида «нет
+    такого контейнера» и сбой `docker ps` — отказ словами, без вывода самой команды."""
     before = tool.neighbor_snapshot(ctx, "")
     ctx.runner.vanish = {rec.cid("nb-alpha-svc-a-1"), rec.cid("ai-geo-audit-api-1")}
     assert tool.compare(before, tool.neighbor_snapshot(ctx, "")).line.endswith("пропало 1, новых 0")
@@ -107,9 +123,18 @@ def test_a186_container_gone_between_listing_and_inspect_is_gone_not_failure(ctx
     ctx.runner.lines[rec.cid("nb-alpha-scaled-1")] = '{"id":"x"}'
     with pytest.raises(Refused, match="не разобран — сверить версию docker"):
         tool.neighbor_snapshot(ctx, "")
-    ctx.runner.ps_code = 1
-    with pytest.raises(Refused, match="docker ps: код 1"):
+    ctx.runner.become(rec.server_machine())
+    ctx.runner.ps_out = "WARNING: No swap limit support\n"
+    with pytest.raises(Refused, match="ответ docker ps не разобран"):
         tool.neighbor_snapshot(ctx, "")
+    ctx.runner.ps_out, ctx.runner.inspect_err = None, "Error response from daemon: denied\n"
+    with pytest.raises(Refused, match="docker container inspect: код 1"):
+        tool.neighbor_snapshot(ctx, "")
+    ctx.runner.inspect_err = ""
+    ctx.runner.ps_code, ctx.runner.ps_out, ctx.runner.ps_err = 1, "mkq22\n", "mkq23 denied\n"
+    with pytest.raises(Refused, match="docker ps: код 1") as refused:
+        tool.neighbor_snapshot(ctx, "")
+    assert "mkq22" not in str(refused.value) and "mkq23" not in str(refused.value)
 
 
 @pytest.fixture

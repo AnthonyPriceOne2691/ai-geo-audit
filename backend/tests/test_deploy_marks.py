@@ -12,7 +12,6 @@ import deploy_records as rec
 import pytest
 from deploy_fakes import (
     ROOT,
-    Refused,
     changed,
     check_like,
     make_ctx,
@@ -34,10 +33,11 @@ MARKS = [f"mkq{n:02d}" for n in range(1, 16)] + ["4791234567", "198.51.100.208",
 MARKS += ["198.51.100.210", "nb-beta", *(str(port) for port in range(47911, 47917))]
 
 
-def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys) -> None:
+def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys, monkeypatch) -> None:
     """A183: метки в секретах файла окружения, мастер-ключе, входящем файле, пароле сайта, в
-    домене, порте, подсети, адресах, в именах и портах соседа; ядро по удачным сценариям и с
-    отказами — меток нет ни в выводе, ни в журнале `.deploy/`, ни в аргументах команд."""
+    домене, порте, подсети, адресах, в именах и портах соседа; ядро через `main` по удачным
+    сценариям, с отказами и с чужой ошибкой — меток нет ни в выводе, ни в журнале `.deploy/`, ни
+    в аргументах команд; у чужой ошибки — только её вид."""
     values = server_values(
         migrate="a1a1mkq01",
         app="b2b2mkq02",
@@ -61,29 +61,35 @@ def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys) -> None:
     machine = rec.server_machine("nb-alpha-mkq09", "nb-beta-mkq10", ("47914", "47915"))
     ctx.runner.become(machine + rec.ours())
     write_env(ctx, values)
-    check_like(ctx)
-    check_like(ctx, changed(machine, "nb-alpha-mkq09-web-1", restarts=3))
+    after: list[list[str]] = []
+
+    def check(c: Any, _args: Any) -> int:
+        check_like(c, after.pop() if after else None)
+        return 0
+
+    monkeypatch.setitem(tool.COMMANDS, "check", (check, "ядро, как check"))
+    assert tool.main(["check"], ctx) == 0
+    after.append(changed(machine, "nb-alpha-mkq09-web-1", restarts=3))
+    assert tool.main(["check"], ctx) == 0
     for broken in (
         values | {"NEIGHBOR_HEALTH_URLS": "http://192.0.2.7:47916/mkq14"},
         values | {"SITE_DOMAIN": "*.mkq15.example.test"},
         values | {"JWT_SECRET": tool.PLACEHOLDER},
     ):
         write_env(ctx, broken)
-        with pytest.raises(Refused):
-            check_like(ctx)
+        assert tool.main(["check"], ctx) == 1
     write_env(ctx, values, mode=0o640)
-    with pytest.raises(Refused, match="шире 600"):
-        check_like(ctx)
+    assert tool.main(["check"], ctx) == 1
     write_env(ctx, values)
     ctx.probe = lambda url: int(url.rsplit("/", 1)[-1])
-    with pytest.raises(ValueError, match="mkq07"):
-        check_like(ctx)
+    assert tool.main(["check"], ctx) == 1
     assert tool.main(["last"], ctx) == 0
     seen = ctx.out.getvalue() + "".join(capsys.readouterr())
     seen += "".join(p.read_text(encoding="utf-8") for p in ctx.paths.deploy_dir.iterdir())
     seen += "\n".join(" ".join(argv) for argv, _env in ctx.runner.calls)
     assert [mark for mark in MARKS if mark in seen] == []
-    assert "итог: сбой скрипта — ValueError" in seen and "общих 35, перезапусков 1" in seen
+    assert "итог: сбой скрипта — ValueError" in seen and "сбой скрипта: ValueError" in seen
+    assert "общих 35, перезапусков 1" in seen and "шире 600" in seen
 
 
 def test_a183_server_tree_ignores_env_and_journal_secrets_live_outside() -> None:

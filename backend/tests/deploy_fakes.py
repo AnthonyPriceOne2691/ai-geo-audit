@@ -43,6 +43,7 @@ Refused = tool.RefusedError
 PRUNE = {(kind, "prune") for kind in ("system", "volume", "image", "container", "network")}
 
 STOPS = {"stop", "kill", "rm", "restart", "pause"}
+PS_FLAGS = {"--all", "--quiet", "--no-trunc"}
 
 
 def forbidden(argv: tuple[str, ...], ours: set[str]) -> str | None:
@@ -66,7 +67,7 @@ class FakeRunner:
     def __init__(self, lines: list[str]) -> None:
         self.calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
         self.vanish: set[str] = set()
-        self.ps_code = 0
+        self.ps_code, self.ps_out, self.ps_err, self.inspect_err = 0, None, "", ""
         self.become(lines)
 
     def become(self, lines: list[str]) -> None:
@@ -81,9 +82,20 @@ class FakeRunner:
         self.calls.append((argv, dict(env or {})))
         if rule := forbidden(argv, self.ours):
             raise AssertionError(f"запрещённая команда ({rule}): {' '.join(argv[:3])}")
-        if argv == tool.PS_ALL:
-            return tool.Result(self.ps_code, "".join(f"{key}\n" for key in self.lines), "")
-        if argv[:5] == tool.INSPECT:
+        flags = set(argv[2:])
+        if argv[:2] == ("docker", "ps") and {"--quiet", "--no-trunc"} <= flags <= PS_FLAGS:
+            # Как настоящий docker: без `--all` остановленных в ответе нет.
+            running = {
+                key
+                for key, line in self.lines.items()
+                if json.loads(line).get("state", {}).get("Running", True)
+            }
+            listed = [key for key in self.lines if "--all" in flags or key in running]
+            out = "".join(f"{key}\n" for key in listed) if self.ps_out is None else self.ps_out
+            return tool.Result(self.ps_code, out, self.ps_err)
+        if argv[:4] == ("docker", "container", "inspect", "--format"):
+            if self.inspect_err:
+                return tool.Result(1, "", self.inspect_err)
             found = [key for key in argv[5:] if key in self.lines and key not in self.vanish]
             lost = [key for key in argv[5:] if key not in found]
             err = "".join(f"Error response from daemon: No such container: {k}\n" for k in lost)

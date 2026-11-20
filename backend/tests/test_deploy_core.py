@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import io
 import os
+import pwd
 import re
+import shutil
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -300,6 +304,10 @@ def test_a186_script_touches_files_only_through_the_file_function() -> None:
     assert disk_calls_outside_files(lawful) == []
 
 
+#: A184: три метки по 63 знака и точки — 192 знака; с `ai-geo-audit.` и меткой в 48 — ровно 253.
+LONG = "a" * 63 + "." + "b" * 63 + "." + "c" * 63 + "."
+
+
 @pytest.mark.parametrize(
     ("domain", "expected"),
     [
@@ -311,11 +319,15 @@ def test_a186_script_touches_files_only_through_the_file_function() -> None:
         ("example test", "«/» и пробелы"),
         (".".join(["c" * 60] * 4), "длиннее 253"),
         ("b" * 64 + ".example.test", "длиннее 63"),
+        ("Example.Test", "ai-geo-audit.example.test"),
+        (LONG + "d" * 48, "ai-geo-audit." + LONG + "d" * 48),
+        (LONG + "d" * 49, "длиннее 253"),
         ("exa_mple.test", "латинские буквы, цифры и дефис"),
     ],
 )
 def test_a184_site_name_from_server_file_only(domain: str, expected: str) -> None:
-    """A184: имя сайта — `ai-geo-audit.<SITE_DOMAIN>`; негодный домен — отказ без значения."""
+    """A184: имя сайта — `ai-geo-audit.<SITE_DOMAIN>` строчными; 253 знака — проходит, 254 —
+    отказ; негодный домен — отказ без значения."""
     if expected.startswith("ai-geo-audit."):
         assert tool.site_name(domain) == expected
         return
@@ -378,9 +390,16 @@ def test_a185_server_file_read_without_execution(ctx, text: str, expected: str) 
         tool.read_env(ctx.files, ctx.paths.env_file)
 
 
+def test_a185_server_file_comments_and_blank_lines_skipped(ctx) -> None:
+    """A185 (ядро): строки-комментарии и пустые строки файла сервера пропускаются, и с отступом."""
+    ctx.paths.env_file.write_text("# комментарий\n\n   # с отступом\nWEB_PORT=18100\n", "utf-8")
+    assert tool.read_env(ctx.files, ctx.paths.env_file).values == {"WEB_PORT": "18100"}
+
+
 def test_lock_second_run_refused_at_once_stale_mark_named(ctx) -> None:
     """Прогоны, вопросы 5 и 6: второй запуск разом — отказ сразу, с номером процесса и временем;
-    метка мёртвого процесса — устаревшая, названа и снята; `last` говорит, идёт ли выкат."""
+    метка мёртвого процесса — устаревшая, названа и снята; `last` говорит, идёт ли выкат, и
+    показывает последний журнал, а не первый."""
     lock, pid = ctx.paths.deploy_dir / "lock", os.getpid()
     assert tool.main(["last"], ctx) == 0
     assert ctx.out.getvalue() == "журналов хода нет\nвыката нет\n"
@@ -405,11 +424,32 @@ def test_lock_second_run_refused_at_once_stale_mark_named(ctx) -> None:
     shown = ctx.out.getvalue()
     assert "устаревшая метка: процесс 99999999 с 2026-11-20T00:00:00Z — процесс не живёт" in shown
     assert shown.endswith("итог: ок\nвыката нет\n") and "-check.log: строк " in shown
+    for stamp, text in (("29991231T235958Z", "старого"), ("29991231T235959Z", "нового")):
+        (ctx.paths.deploy_dir / f"{stamp}-check.log").write_text(f"строка {text}\n", "utf-8")
+    ctx.out = io.StringIO()
+    assert tool.main(["last"], ctx) == 0
+    assert "строка нового" in ctx.out.getvalue() and "строка старого" not in ctx.out.getvalue()
 
 
 def test_journal_written_first_and_lost_terminal_does_not_stop_the_step(ctx) -> None:
-    """Прогоны, вопрос 4: строка хода — сначала в журнал `.deploy/` с правами 600, время — UTC
-    с Z; терминал оборвался — шаг идёт дальше, журнал полный."""
+    """Прогоны, вопрос 4: строка хода — сначала в журнал `.deploy/` с правами 600, потом в
+    терминал; время — UTC с Z; свой каталог хода — 700, даже если был шире; терминал оборвался —
+    шаг идёт дальше, журнал полный."""
+    ctx.paths.deploy_dir.mkdir()
+    ctx.paths.deploy_dir.chmod(0o755)
+    journaled: list[bool] = []
+
+    class Watch(io.StringIO):
+        def write(self, text: str) -> int:
+            logs = list(ctx.paths.deploy_dir.glob("*-watch.log"))
+            journaled.append(bool(logs) and text in logs[0].read_text("utf-8"))
+            return super().write(text)
+
+    ctx.out = Watch()
+    with tool.session(ctx, "watch") as rep:
+        rep.line("шаг при терминале")
+    assert journaled == [True, True, True]
+    assert ctx.paths.deploy_dir.stat().st_mode & 0o777 == 0o700
 
     class Gone(io.StringIO):
         def write(self, _text: str) -> int:
@@ -426,6 +466,63 @@ def test_journal_written_first_and_lost_terminal_does_not_stop_the_step(ctx) -> 
     assert log.stat().st_mode & 0o777 == 0o600
 
 
+def test_refusal_journaled_and_shown_once_no_service_dir_named(ctx, monkeypatch, capsys) -> None:
+    """Прогоны, вопрос 7: отказ внутри команды — строкой «итог: отказ — …» в журнале хода и на
+    экране, один раз: `main` его не повторяет. Нет каталога сервиса — отказ словами."""
+
+    def refuse(c: object, _args: object) -> int:
+        with tool.session(c, "probe"):
+            raise Refused("проба отказа")
+
+    monkeypatch.setitem(tool.COMMANDS, "probe", (refuse, "проба отказа"))
+    assert tool.main(["probe"], ctx) == 1
+    shown = ctx.out.getvalue() + "".join(capsys.readouterr())
+    assert shown.count("проба отказа") == 1 and "итог: отказ — проба отказа" in shown
+    (log,) = ctx.paths.deploy_dir.glob("*-probe.log")
+    assert log.read_text("utf-8").rstrip().endswith("итог: отказ — проба отказа")
+    shutil.rmtree(ctx.paths.service)
+    assert tool.main(["probe"], ctx) == 1
+    assert "— сначала git clone по памятке" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("case", ["read", "append", "lock", "lock_state", "last"])
+def test_a186_not_a_regular_file_refused_without_waiting(ctx, capsys, case: str) -> None:
+    """A186: на месте своего файла — именованный канал: чтение, дозапись журнала, замок,
+    состояние замка и `last` отказывают словами сразу, не ожидая второго конца канала (находка
+    проверяющего: `last` висел)."""
+    ctx.paths.deploy_dir.mkdir()
+    fifo = ctx.paths.deploy_dir / ("lock" if case.startswith("lock") else "20261120T000000Z-a.log")
+    os.mkfifo(fifo)
+    act = {
+        "read": lambda: ctx.files.read(fifo),
+        "append": lambda: ctx.files.append(fifo, "x\n"),
+        "lock": lambda: ctx.files.lock(fifo),
+        "lock_state": lambda: ctx.files.lock_state(fifo),
+        "last": lambda: tool.main(["last"], ctx),
+    }[case]
+    box: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            box["value"] = act()
+        except (Refused, OSError) as error:
+            box["error"] = error
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(5)
+    hung = thread.is_alive()
+    for flags in (os.O_WRONLY | os.O_NONBLOCK, os.O_RDONLY | os.O_NONBLOCK):  # отпустить висящий
+        with contextlib.suppress(OSError):
+            os.close(os.open(fifo, flags))
+    thread.join(5)
+    assert not hung, "открытие канала ждёт второй конец"
+    if case == "last":
+        assert box.get("value") == 1 and "не обычный файл" in capsys.readouterr().err
+    else:
+        assert isinstance(box.get("error"), Refused) and "не обычный файл" in str(box["error"])
+
+
 def test_hangup_is_ignored_from_the_terminal_entry(ctx, monkeypatch) -> None:
     """Прогоны, вопрос 4: вход с терминала глушит SIGHUP — обрыв ssh шаг не роняет."""
     seen: list[tuple[int, object]] = []
@@ -436,15 +533,29 @@ def test_hangup_is_ignored_from_the_terminal_entry(ctx, monkeypatch) -> None:
 
 def test_a183_runner_values_only_through_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """A183 (исполнитель): значение уходит команде окружением процесса, не аргументом; stdin
-    пустой, окружение оператора не передаётся, дочерний процесс — в своей сессии."""
+    пустой, и когда у оператора он есть; окружение оператора не передаётся — HOME из учётной
+    записи пользователя процесса, а не оператора (находка проверяющего: docker читает настройки и
+    плагины из $HOME/.docker); дочерний процесс — в своей сессии."""
     monkeypatch.setenv("OPERATOR_MARK", "mkq17")
+    monkeypatch.setenv("HOME", "/nonexistent/mkq19-home")
     code = (
         "import os, sys; print(sys.stdin.read() == '', os.environ.get('MARK'), "
-        "'OPERATOR_MARK' in os.environ, os.getsid(0) != int(sys.argv[1]))"
+        "'OPERATOR_MARK' in os.environ, os.getsid(0) != int(sys.argv[1]), os.environ['HOME'])"
     )
     argv = [sys.executable, "-I", "-c", code, str(os.getsid(0))]
-    result = tool.Runner().run(argv, env={"MARK": "mkq16"})
-    assert (result.code, result.out.split()) == (0, ["True", "mkq16", "False", "True"])
+    reader, writer = os.pipe()
+    os.write(writer, b"mkq20 operator stdin\n")
+    os.close(writer)
+    saved = os.dup(0)
+    os.dup2(reader, 0)
+    try:
+        result = tool.Runner().run(argv, env={"MARK": "mkq16"})
+    finally:
+        os.dup2(saved, 0)
+        os.close(saved)
+        os.close(reader)
+    home = pwd.getpwuid(os.geteuid()).pw_dir
+    assert (result.code, result.out.split()) == (0, ["True", "mkq16", "False", "True", home])
     assert not any("mkq16" in arg for arg in argv)
 
 
