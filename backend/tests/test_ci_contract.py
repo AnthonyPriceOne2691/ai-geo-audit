@@ -46,11 +46,14 @@ SECRETS = re.compile(r"secrets\.|\$\{\{(?:(?!\}\}).)*?\bsecrets\b", re.IGNORECAS
 SOFT = re.compile(r"STRICT\s*[:=]\s*['\"]?0")
 #: A99: установка в `run:` — pip, pip3, pipx (и через `python -m`, `uv pip`), uvx, npx, `uv tool`,
 #: `uv add`, `uv sync`, `uv run --with`, `uv run` без `--no-sync` (неявная синхронизация
-#: окружения), install-команда npm и apt.
+#: окружения), install-команда npm и apt, скрипт из сети в оболочку или Python (`curl … | sh`,
+#: `sh -c "$(curl …)"`, `bash <(wget …)`).
 INSTALL = re.compile(
     r"(?<![\w-])(?:pip[3x]?|uvx|npx|uv\s+(?:tool|add|sync))(?![\w-])"
     r"|\buv\s+run\b[^\n;&|]*\s--with\b"
     r"|\buv\s+run\b(?![^\n;&|]*\s--no-sync\b)"
+    r"|\b(?:curl|wget)\b[^\n;&]*?\|\s*(?:sudo\s+)?(?:(?:ba|z|da)?sh|python3?)\b"
+    r"|(?:\$\(|<\()\s*(?:curl|wget)\b"
     r"|(?<![\w-])(?:npm|apt-get|apt)\b[^\n;&|]*?\s(?:install|i|ci|add)(?![\w-])"
 )
 
@@ -602,6 +605,10 @@ INSTALLS = (
     "npm --prefix frontend ci",
     "npx eslint .",
     "sudo apt-get -y install curl",
+    "curl -sSL https://example.invalid/install.sh | sh",
+    "wget -qO- https://example.invalid/install.sh | sudo bash",
+    'sh -c "$(curl -fsSL https://example.invalid/install.sh)"',
+    "bash <(curl -fsSL https://example.invalid/install.sh)",
 )
 
 
