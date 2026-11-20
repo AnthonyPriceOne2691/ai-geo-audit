@@ -108,13 +108,16 @@ class FakeProbe:
 
 
 def server_values(**over: str) -> dict[str, str]:
-    """Файл сервера после `env-init` и `put-secret`: значения выдуманы, адреса — RFC 5737."""
-    migrate, app, redis = over.pop("migrate", "a1" * 24), "b2" * 24, over.pop("redis", "c3" * 24)
+    """Файл сервера после `env-init` и `put-secret`: значения выдуманы, адреса — RFC 5737.
+    Пароли ролей, очереди и секрет подписи — именами `migrate`, `app`, `redis`, `signing`: адреса
+    несут те же пароли."""
+    migrate, app = over.pop("migrate", "a1" * 24), over.pop("app", "b2" * 24)
+    redis, signing = over.pop("redis", "c3" * 24), over.pop("signing", "d4" * 32)
     return {
         "POSTGRES_MIGRATE_PASSWORD": migrate,
         "POSTGRES_APP_PASSWORD": app,
         "REDIS_PASSWORD": redis,
-        "JWT_SECRET": "d4" * 32,
+        "JWT_SECRET": signing,
         "MIGRATE_DATABASE_URL": f"postgresql+asyncpg://migrator:{migrate}@db:5432/a",
         "API_DATABASE_URL": f"postgresql+asyncpg://app:{app}@db:5432/a",
         "API_REDIS_URL": f"redis://:{redis}@redis:6379/0",

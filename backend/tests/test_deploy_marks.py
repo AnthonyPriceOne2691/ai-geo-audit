@@ -40,10 +40,9 @@ def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys) -> None:
     отказами — меток нет ни в выводе, ни в журнале `.deploy/`, ни в аргументах команд."""
     values = server_values(
         migrate="a1a1mkq01",
-        POSTGRES_APP_PASSWORD="b2b2mkq02",
-        API_DATABASE_URL="postgresql+asyncpg://app:b2b2mkq02@db:5432/a",
+        app="b2b2mkq02",
         redis="c3c3mkq03",
-        JWT_SECRET="d4d4mkq04",
+        signing="d4d4mkq04",
         ALERT_TELEGRAM_BOT_TOKEN="1234567:mkq05",
         ALERT_TELEGRAM_CHAT_ID="-1004791234567",
         SITE_DOMAIN="mkq06.example.test",
@@ -67,7 +66,7 @@ def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys) -> None:
     for broken in (
         values | {"NEIGHBOR_HEALTH_URLS": "http://192.0.2.7:47916/mkq14"},
         values | {"SITE_DOMAIN": "*.mkq15.example.test"},
-        values | {"JWT_SECRET": "CHANGE_ME"},
+        values | {"JWT_SECRET": tool.PLACEHOLDER},
     ):
         write_env(ctx, broken)
         with pytest.raises(Refused):

@@ -83,7 +83,7 @@ def test_a186_changed_health_code_is_red(ctx) -> None:
         "http://example.test:9101/health",
         "http://localhost:9101/health",
         "https://127.0.0.1:9101/health",
-        "http://user:pass@127.0.0.1:9101/health",
+        "http://user:pass@127.0.0.1:9101/health",  # pragma: allowlist secret
         "http://127.0.0.1:99999/health",
         "127.0.0.1:9101/health",
     ],
