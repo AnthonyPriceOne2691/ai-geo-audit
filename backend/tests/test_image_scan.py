@@ -58,6 +58,7 @@ URL = (
     "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/"
     "trivy_0.76.2_Linux-64bit.tar.gz"
 )
+# pragma: allowlist nextline secret
 SHA256 = "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"
 BINARY = b"#!/bin/sh\necho trivy\n"
 #: Метаданные базы — как их пишет `--download-db-only` в `<cache-dir>/db/metadata.json`.
