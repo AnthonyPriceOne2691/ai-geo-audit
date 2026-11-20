@@ -57,6 +57,21 @@ React с Vite и Mantine, pytest, docker compose.
 - Статус — одно перечисление `StrEnum` в одном модуле, колонка — через `enum_column`.
 - Колонка, добавленная задним числом, получает NULL — «неизвестно», а не умолчание.
 
+## Стек compose и оракул
+
+- Стек — `docker-compose.yml`: db, redis, migrate и api, портов наружу нет. Переменные стека —
+  блок в `.env.example`; подъём — `docker compose up -d --wait`: migrate прогоняет миграции и
+  выходит, api стартует только после его успешного выхода. Сбой migrate назван по имени.
+- Образ сервиса — `deploy/backend/Dockerfile`, контекст — корень, белый список — рядом
+  (`Dockerfile.dockerignore`, нужен BuildKit). Базы — по дайджесту; обновление — правкой тега и
+  дайджеста со строкой в decisions поставки.
+- Правила файла — `python -m ai_geo_audit.ops.stack_rules` над выводом
+  `docker compose -f docker-compose.yml --profile '*' config --no-interpolate --format json`:
+  код 0 — нарушений нет, 1 — нарушения, 2 — отказ.
+- Оракул — `python3 scripts/stack_oracle.py`: собирает образ из чистой копии `git archive HEAD`,
+  поднимает стек под своим именем и убирает его в конце прогона. Нужны Docker с compose v2 и
+  BuildKit; код 0 — все шаги прошли.
+
 ## Фронт
 
 - Node 24 (`frontend/.nvmrc`); пакеты — `cd frontend && npm ci`: только по lock, скрипты
