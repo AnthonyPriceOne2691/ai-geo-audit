@@ -153,13 +153,28 @@ def method(self, *args, **kwargs):
     if getattr(depth, "n", 0) == 0:
         exc = sys.exc_info()[1] if name == "exception" or kwargs.get("exc_info") else None
         who = self.logger.name if isinstance(self, LoggerAdapter) else self.name
-        WATCH.records.append((who, name, args, kwargs.get("extra"), exc))
+        extra = kwargs.get("extra")
+        if isinstance(extra, dict):
+            extra = {key: printable(value) for key, value in extra.items()}
+        exc = None if exc is None else printable(exc)
+        WATCH.records.append((who, name, tuple(printable(a) for a in args), extra, exc))
     depth.n = getattr(depth, "n", 0) + 1
     try:
         return orig(self, *args, **kwargs)
     finally:
         depth.n -= 1
 """
+
+
+def printable(value: object) -> object:
+    """АДАПТАЦИЯ проекта (adapted.json): значение записи для стража — печатается — как есть, нет —
+    заглушка с именем типа. Страж превращает аргументы, `extra` и исключение в текст, и поле,
+    чей `__str__` падает, роняло весь прогон (INTERNALERROR, тест A48 Ч1.3б)."""
+    try:
+        str(value)
+    except Exception:  # noqa: BLE001 -- любой отказ печати — повод для заглушки, а не падения
+        return f"<{type(value).__name__}: не печатается>"
+    return value
 
 
 def wrap_logging() -> None:
@@ -174,7 +189,8 @@ def wrap_logging() -> None:
         for name in LOG_METHODS:
             if hasattr(cls, name):          # `fatal`/`warn` есть не у всех и не везде
                 ns = {"WATCH": WATCH, "depth": depth, "sys": sys, "name": name,
-                      "orig": getattr(cls, name), "LoggerAdapter": logging.LoggerAdapter}
+                      "orig": getattr(cls, name), "LoggerAdapter": logging.LoggerAdapter,
+                      "printable": printable}
                 exec(code, ns)  # noqa: S102 -- тело — константа выше, не внешний ввод
                 setattr(cls, name, ns["method"])
 
