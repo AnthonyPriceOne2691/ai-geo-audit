@@ -14,6 +14,7 @@ import envguard
 import pytest
 
 PROBE = dbtools.BACKEND / "tests" / "env_probe" / "probe_env.py"
+PYTEST = [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
 
 
 def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: Path) -> None:
@@ -24,7 +25,9 @@ def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: 
     трогается."""
     (tmp_path / ".env").write_text(
         "APP_ENV=prod\n"
+        # pragma: allowlist nextline secret
         "DATABASE_URL=postgresql+asyncpg://audit:dotenv-pass-5150@db:5432/audit\n"
+        # pragma: allowlist nextline secret
         "OPENAI_API_KEY=sk-dotenv-mark-5150\n",
         encoding="utf-8",
     )
@@ -34,8 +37,7 @@ def test_a31_dotenv_in_the_working_directory_does_not_reach_the_tests(tmp_path: 
         "TEST_DATABASE_URL": dbtools.server_url().render_as_string(hide_password=False),
     }
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
-        + [str(PROBE)],
+        [*PYTEST, str(PROBE)],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -107,9 +109,13 @@ def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
         "APP_ENV": "prod",
         "app_env": "prod",
         "ENV_FILE": str(prod_env),
+        # pragma: allowlist nextline secret
         "DATABASE_URL": "postgresql+asyncpg://audit:env-pass-123456@db:5432/audit",
+        # pragma: allowlist nextline secret
         "OPENAI_API_KEY": "sk-test-not-a-real-key-1",
+        # pragma: allowlist nextline secret
         "ANTHROPIC_API_KEY": "ak-test-not-a-real-key-1",
+        # pragma: allowlist nextline secret
         "GEMINI_API_KEY": "gm-test-not-a-real-key-1",
         "LOG_FORMAT": "json",
         "PGSSLMODE": "require",
@@ -117,8 +123,7 @@ def test_a31_dirty_environment_does_not_reach_the_tests(tmp_path: Path) -> None:
         "TEST_DATABASE_URL": dbtools.server_url().render_as_string(hide_password=False),
     }
     run = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", "-W", "error"]
-        + ["tests/env_probe/probe_env.py"],
+        [*PYTEST, "tests/env_probe/probe_env.py"],
         cwd=dbtools.BACKEND,
         env=dirty,
         capture_output=True,

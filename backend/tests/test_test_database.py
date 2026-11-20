@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ai_geo_audit.storage import session_scope
 
-BACKEND = Path(__file__).resolve().parents[1]
-DEAD = "postgresql+asyncpg://audit:audit@127.0.0.1:1/postgres"
+BACKEND = dbtools.BACKEND
+DEAD = "postgresql+asyncpg://audit@127.0.0.1:1/postgres"
 
 
 def test_a12_without_postgres_the_run_stops_once() -> None:
@@ -58,7 +58,7 @@ def test_a12_tests_take_their_address_from_test_database_url_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A12: DATABASE_URL на базу разработки тесты не читают — адрес только TEST_DATABASE_URL."""
-    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://audit:audit@10.0.0.9:5999/audit")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://audit@10.0.0.9:5999/audit")
     server, own = dbtools.server_url(), make_url(dbtools.own_url())
     assert (own.host, own.port, own.database) == (server.host, server.port, dbtools.own_name())
 

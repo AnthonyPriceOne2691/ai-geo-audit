@@ -2,11 +2,17 @@
 
 **Version:** 1.0
 **Ratified:** 2026-11-18
-**Canon stack:** delivery@2.21 · cqg@absent · okf@absent
+**Canon stack:** delivery@2.21 · cqg@3.14 · okf@absent
 <!-- Тексты канонов взяты из одной ревизии: delivery@2.21 · cqg@3.14 · okf@1.24 ·
      stack-map@1.57. Развёрнута ось ① (волна В0); ② и CI придут волной В1, ③ — волной В2.
-     absent = слой не развёрнут. -->
-**CI:** not-deployed   <!-- §10.4; GitHub Actions — волна В1 -->
+     absent = слой не развёрнут.
+     cqg@3.14 — с поставки В1а: половина Python оси ② и замок payload
+     `scripts/lint/payload.lock.json`; TS-половины — поставка В1б. -->
+**CI:** deployed (github-actions) merge-gate: server   <!-- §10.4: первый зелёный прогон quality
+     44706856356 на `580a608` (2026-11-20T08:59Z); защита main — 2026-11-20T14:02:23Z по слову
+     владельца 2026-11-20T13:15Z (A116, A118): обязательные проверки `gates`, `delivery`, `tests`,
+     `strict`, `enforce_admins`; гейт мержа в репозитории — `merge_guard.sh` (срез 5 В1а), слияние —
+     у ведущей по полному хешу. -->
 
 Продукт — веб-сервис аудита сайта: сбор данных о сайте, проверки по правилам и
 через модель, ответы ИИ-платформ о бренде, отчёт клиенту в PDF, XLS и Markdown на
@@ -86,6 +92,15 @@
     рабочие копии слитых поставок, временные скрипты и файлы, мёртвый код и
     отладочные вставки, оставленные процессы и контейнеры. Чужое не удаляется —
     о нём говорят тому, чьё оно. В сдаче — строка «убрано: …».
+11. Снимок секретов. Запись в `.secrets.baseline` — только для того, что править нельзя:
+    подписанных строк спек под `delivery/`. Остальное — пометкой `# pragma: allowlist secret`
+    (в Python и `.env.example` — строкой выше, `allowlist nextline`) со строкой в решениях;
+    новая запись вне `delivery/` — красный тест. Сдача: коммит сдачи переносит
+    `delivery/active` в архив (`git mv`) и тем же коммитом переписывает пути снимка —
+    `python3 scripts/secrets_baseline.py move delivery/active delivery/archive/<дата>-<имя>`.
+    Проверяющий на коммите сдачи сверяет пары «тип, хеш» с коммитом до неё:
+    `python3 scripts/secrets_baseline.py check <коммит сдачи>~1 <коммит сдачи>` — «пары те
+    же»; разные — пришедшие пары названы с файлами, и сдача не принимается.
 
 ## Coding-agent contract (thin ABC)
 
@@ -157,8 +172,8 @@ ask: WebFetch
 
 ## Pointers to sibling layers (fill if deployed)
 
-- Code shape oracles: `CODE_QUALITY_GATES.md` — [x] not deployed / [ ] deployed — волна В1: каркас первой части лежит в main
+- Code shape oracles: `CODE_QUALITY_GATES.md` — [ ] not deployed / [x] deployed — волна В1а: `cqg@3.14`, половина Python; TS-половина — В1б
 - Domain canon: `OKF_KNOWLEDGE_BUNDLE.md` / `knowledge/` — [x] not deployed / [ ] deployed — волна В2: справочник проверок, лимиты и формулы закреплены кодом и тестами
 - Agent hooks (§10): [x] not deployed / [ ] deployed
-- CI oracles (§10.4, workflow per CQG §8): [x] not deployed / [ ] deployed — волна В1
+- CI oracles (§10.4, workflow per CQG §8): [ ] not deployed / [x] deployed — волна В1а: `quality.yml` и `main-guard.yml`; защита main — A116 по слову владельца
 - Skills catalog: `skills/README.md` — [x] absent / [ ] present

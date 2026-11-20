@@ -7,13 +7,13 @@ import asyncio
 import contextlib
 import json
 import re
-import socket
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 
 import api_probes as probes
 import dbtools
+import httpx
 import pytest
 from sqlalchemy.engine import make_url
 
@@ -21,14 +21,6 @@ from ai_geo_audit.api import contract, health
 from ai_geo_audit.logs import setup as log_setup
 
 UNAVAILABLE = probes.sample("unavailable")
-
-
-def closed_port_url() -> str:
-    """Адрес базы на петле, где никто не слушает."""
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    return f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
 
 
 @dataclass
@@ -49,6 +41,7 @@ async def silent_db() -> AsyncIterator[Silent]:
 
     server = await asyncio.start_server(hold, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
+    # pragma: allowlist nextline secret
     found.url = f"postgresql+asyncpg://audit:probe-words-123456@127.0.0.1:{port}/audit"
     yield found
     for writer in found.accepted:
@@ -83,7 +76,7 @@ async def relay() -> AsyncIterator[Relay]:
             while data := await reader.read(65536):
                 if watch and found.freeze_on and found.freeze_on in data:
                     found.frozen = True
-                while found.frozen:
+                while found.frozen:  # noqa: ASYNC110 -- проба держит ответ, пока поднят флаг
                     await asyncio.sleep(0.02)
                 writer.write(data)
                 await writer.drain()
@@ -133,7 +126,7 @@ async def test_a39_closed_database_is_unavailable_in_words(
     """A39: адрес базы — петля и свободный порт; `GET /api/health` — 503, тело ровно образец
     `unavailable`, без адреса, порта и имени. В журнале — одна запись WARNING «здоровье: база не
     ответила» с `error` — `ConnectionRefusedError` (проба 1), без текста ошибки драйвера."""
-    url = closed_port_url()
+    url = probes.closed_port_url()
     probes.use_database(monkeypatch, url)
     app = probes.build()
     log_setup.setup_logging(fmt="json")
@@ -252,18 +245,44 @@ async def test_a41_requests_without_database_need_do_not_touch_it(
     assert (checked.status_code, len(silent_db.accepted)) == (503, 1)
 
 
-CONTRACT_HEADERS = ("content-type", "x-access-refusal", "allow")
+CONTRACT_HEADERS = ("content-type", "x-access-refusal", "allow", "retry-after")
+
+
+async def nothing() -> AsyncIterator[bytes]:
+    """Тело без байтов: размер объявляет заголовок, тело не нужно (проба 12)."""
+    for chunk in ():
+        yield chunk
+
+
+async def busy_answer(http: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch) -> object:
+    """Запросов в работе столько, сколько позволяет предел (подменён на 1); ещё один — здоровье."""
+    from ai_geo_audit.api import limits
+
+    monkeypatch.setattr(limits, "IN_FLIGHT_LIMIT", 1)
+    waiting = probes.Waiting()
+    monkeypatch.setattr(probes, "WAITING", waiting)
+    held = asyncio.create_task(http.get(probes.WAIT, headers={"X-Access-Token": probes.PASS}))
+    await waiting.until(1)
+    response = await http.get("/api/health")
+    waiting.release.set()
+    await held
+    return response
 
 
 async def answer(kind: str, monkeypatch: pytest.MonkeyPatch) -> object:
     """Запрос из `when` образца: по одному на вид."""
     token = {"X-Access-Token": probes.PASS}
     probes.use_database(
-        monkeypatch, closed_port_url() if kind == "unavailable" else dbtools.own_url()
+        monkeypatch, probes.closed_port_url() if kind == "unavailable" else dbtools.own_url()
     )
     async with probes.client(probes.build()) as http:
         if kind in ("health-ok", "unavailable"):
             return await http.get("/api/health")
+        if kind == "too-large":
+            size = {"Content-Length": "1048577"}
+            return await http.post(probes.BODY, content=nothing(), headers=token | size)
+        if kind == "busy":
+            return await busy_answer(http, monkeypatch)
         if kind == "signed-out":
             return await http.get("/api/nope")
         if kind == "not-found":
@@ -276,17 +295,18 @@ async def answer(kind: str, monkeypatch: pytest.MonkeyPatch) -> object:
 
 
 def test_a43_kinds_in_code_are_exactly_the_samples() -> None:
-    """A43: набор видов в коде Ч1.3 равен набору `id` файла без `health-ok`: вид в коде без
-    образца или образец без вида — красный."""
+    """A43, A58: набор видов в коде равен набору `id` раздела `samples` без `health-ok`: вид в
+    коде без образца или образец без вида — красный."""
     ids = {s["id"] for s in probes.SAMPLES["samples"]} - {"health-ok"}
     assert set(contract.KINDS) == ids
 
 
 @pytest.mark.parametrize("kind", [s["id"] for s in probes.SAMPLES["samples"]])
 async def test_a43_every_answer_is_its_sample(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
-    """A43: по каждому образцу — запрос из его `when`; ответ равен образцу: код, заголовки
-    договора, тело. У `internal` — номер по `header_patterns` и `detail_pattern`, номер в
-    `detail` равен `x-request-id`; у `invalid` ключи записей `errors` — ровно `errors_item_keys`."""
+    """A43, A58: по каждому образцу — запрос из его `when`; ответ равен образцу: код, заголовки
+    договора (и `retry-after` у `busy`), тело. У `internal` — номер по `header_patterns` и
+    `detail_pattern`, номер в `detail` равен `x-request-id`; у `invalid` ключи записей `errors` —
+    ровно `errors_item_keys`."""
     sample = probes.sample(kind)
     response = await answer(kind, monkeypatch)
     headers = {k: response.headers[k] for k in CONTRACT_HEADERS if k in response.headers}

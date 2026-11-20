@@ -18,6 +18,7 @@ from enum import StrEnum
 from pathlib import Path
 
 import asyncpg
+import envguard
 from sqlalchemy import CheckConstraint, ForeignKey, MetaData, func, select, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -26,9 +27,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from ai_geo_audit.storage import build_engine, models
 
 PREFIX = "audit_test_"
+# pragma: allowlist nextline secret
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
 START = "docker compose -f docker-compose.dev.yml up -d db"
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = envguard.ROOT
 BACKEND = ROOT / "backend"
 #: Предел одного прогона alembic в тестах: зависший называется командой, а не висит.
 ALEMBIC_TIMEOUT = 60
@@ -216,7 +218,11 @@ def finish(proc: subprocess.Popen[str], timeout: float = ALEMBIC_TIMEOUT) -> tup
     return proc.returncode, err
 
 
-async def lock_waiters(key: int, at_least: int = 1, timeout: float = 10) -> int:
+async def lock_waiters(
+    key: int,
+    at_least: int = 1,
+    timeout: float = 10,  # noqa: ASYNC109 -- опрос базы
+) -> int:
     """Сколько соединений своей базы ждут advisory-замок `key` (строки `pg_locks` с
     `granted=false`); ждать появления `at_least` не дольше `timeout`, а не «сном на глаз»."""
     conn = await asyncpg.connect(_raw(own_url()))

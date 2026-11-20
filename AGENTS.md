@@ -32,3 +32,12 @@
 - Do **not** duplicate code-quality rules here — use `CODE_QUALITY_GATES.md` if present.
 - Do **not** invent domain canon — use `knowledge/` / OKF if present.
 - Deploy order for missing layers: Delivery → CQG → OKF (see `AGENT_STACK.md`).
+
+## Гейты формы (CQG)
+
+- Развёрнут `cqg@3.14`, половина Python; правила и пороги — `CODE_QUALITY_GATES.md` (§2–§3),
+  здесь они не повторяются. Как ставить хуки и гонять гейты — `README.md`, «Гейты качества кода».
+- Тела `scripts/lint/` — payload канона, их сверяет замок `scripts/lint/payload.lock.json`:
+  правка — только с записью в `scripts/lint/adapted.json` (CQG §5.5), неприменимое —
+  в `scripts/lint/not-applicable.json` с причиной.
+- Снимки `scripts/lint/*_baseline.txt` и `.secrets.baseline` переснимаются только вниз.

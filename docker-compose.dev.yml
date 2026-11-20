@@ -8,7 +8,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: audit
-      POSTGRES_PASSWORD: audit
+      POSTGRES_PASSWORD: audit  # pragma: allowlist secret
       POSTGRES_DB: audit
     ports:
       - "127.0.0.1:5462:5432"

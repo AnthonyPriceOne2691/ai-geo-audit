@@ -5,16 +5,16 @@ from __future__ import annotations
 import re
 import typing
 from collections.abc import Iterable
-from pathlib import Path
 from urllib.parse import urlsplit
 
+import dbtools
 import pytest
 from pydantic import Field, SecretStr
 
 from ai_geo_audit import config
 from ai_geo_audit.config.startup_checks import PLACEHOLDER
 
-ENV_EXAMPLE = Path(__file__).resolve().parents[2] / ".env.example"
+ENV_EXAMPLE = dbtools.ROOT / ".env.example"
 
 
 def test_a1_dev_works_out_of_the_box() -> None:
@@ -37,8 +37,13 @@ CASES = [
     ("DB_POOL_SIZE", "7", config.StorageSettings, "pool_size", 7),
     ("DB_MAX_OVERFLOW", "0", config.StorageSettings, "max_overflow", 0),
     ("DB_TASK_POOL_SIZE", "3", config.StorageSettings, "task_pool_size", 3),
-    ("MIGRATION_LOCK_WAIT_SECONDS", "300", config.StorageSettings, "migration_lock_wait_seconds",
-     300),
+    (
+        "MIGRATION_LOCK_WAIT_SECONDS",
+        "300",
+        config.StorageSettings,
+        "migration_lock_wait_seconds",
+        300,
+    ),
     ("JWT_SECRET", "s" * 40, config.AccessSettings, "jwt_secret", None),
     ("JWT_TTL_HOURS", "24", config.AccessSettings, "jwt_ttl_hours", 24),
     ("JWT_ALGORITHM", "HS256", config.AccessSettings, "jwt_algorithm", "HS256"),
@@ -166,7 +171,7 @@ def test_a8_setting_named_as_a_secret_must_be_secret_str() -> None:
     assert "PROBE_API_TOKEN: имя секрета, а тип не SecretStr — его напечатает repr" in problems
 
 
-COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.dev.yml"
+COMPOSE = dbtools.ROOT / "docker-compose.dev.yml"
 
 
 def test_a13_dev_database_is_the_compose_one_on_5462() -> None:

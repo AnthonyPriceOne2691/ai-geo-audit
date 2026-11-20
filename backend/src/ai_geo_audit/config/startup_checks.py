@@ -24,7 +24,7 @@ MIN_SECRET_BYTES = 32
 #: Пароль базы в бою — не короче, по знакам после раскодирования процентной записи (A21).
 MIN_DB_PASSWORD = 12
 #: Причина, когда драйвер и `urlsplit` читают адрес базы по-разному: без адреса и его кусков.
-UNENCODED_PASSWORD = "в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23"
+DB_URL_UNENCODED_CHARS = "в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23"
 
 Process = Literal["api", "worker", "migrate"]
 
@@ -107,7 +107,7 @@ def _database(storage: config.StorageSettings) -> Problem | None:
         return problem
     parts = _read_by_both(storage.database_url.get_secret_value())
     if parts is None:
-        return Problem("DATABASE_URL", UNENCODED_PASSWORD)
+        return Problem("DATABASE_URL", DB_URL_UNENCODED_CHARS)
     password = parts[1] if isinstance(parts[1], str) else ""
     if len(password) < MIN_DB_PASSWORD:
         return Problem("DATABASE_URL", f"пароль базы короче {MIN_DB_PASSWORD} знаков")
