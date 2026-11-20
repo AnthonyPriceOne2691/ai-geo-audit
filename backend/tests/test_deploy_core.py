@@ -96,6 +96,7 @@ ROOT_CASES = [
     ("remove", "srv/ai-geo-audit-backups", False),
     ("write", "srv/nb-alpha/docker-compose.yml", False),
     ("write", "srv/ai-geo-audit-backups-old/x.dump", False),
+    ("write", "srv/ai-geo-audit-alias/x.log", False),
     ("write", "etc/nginx/sites-enabled/nb-alpha", False),
     ("write", "srv/ai-geo-audit/link/docker-compose.yml", False),
     ("rename", "srv/x.dump", False),
@@ -111,7 +112,8 @@ ROOT_CASES = [
 def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str, own: bool) -> None:
     """A186: запись, переименование, удаление и каталоги — только под своими корнями; путь наружу
     через `..` (ротация копий уровнем выше своего корня) и через ссылку — в середине пути и в
-    последнем звене — отказ; чужое цело, права чужого каталога прежние."""
+    последнем звене — отказ; путь в соседний каталог с той же приставкой имени — отказ, даже
+    если тот ссылкой ведёт внутрь своего корня; чужое цело, права чужого каталога прежние."""
     for name in ("srv/nb-alpha", "etc/nginx/sites-enabled", "srv/ai-geo-audit-backups"):
         (tmp_path / name).mkdir(parents=True)
     (tmp_path / "srv/nb-alpha").chmod(0o755)
@@ -124,6 +126,7 @@ def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str,
     (ctx.paths.service / ".deploy").mkdir()
     (ctx.paths.service / "link").symlink_to(tmp_path / "srv/nb-alpha")
     (ctx.paths.service / "file-link").symlink_to(tmp_path / "srv/x.dump")
+    (tmp_path / "srv/ai-geo-audit-alias").symlink_to(ctx.paths.service / ".deploy")
     path = tmp_path / rel
     if own and op == "write":
         path.parent.mkdir(parents=True, exist_ok=True)
