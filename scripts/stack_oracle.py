@@ -23,11 +23,10 @@ import tarfile
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
 
-from oracle_guard import LockBusyError, copy_lock, guarded, stack_name, start_cleanup
+from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, start_cleanup
 from stack_oracle_compose import APP_UID, STACK_STEPS, StepError
 from stack_oracle_compose import cleanup as stack_cleanup
 
@@ -76,10 +75,6 @@ print(json.dumps({
     "lists": sorted(set().union(*map(sc.required, ("api", "worker", "migrate")))),
 }))
 """
-
-
-def now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @dataclass
@@ -436,10 +431,10 @@ def run_steps(run: Run, steps: list[tuple[str, str, Callable[[Run], str], bool]]
     red = 0
     for examples, title, step, needed in steps:
         try:
-            print(f"{now()} {examples} {title} — ок: {step(run)}")
+            say(f"{examples} {title} — ок: {step(run)}")
         except (StepError, KeyError, TypeError, ValueError) as failure:
             red += 1
-            print(f"{now()} {examples} {title} — КРАСНОЕ: {failure}")
+            say(f"{examples} {title} — КРАСНОЕ: {failure}")
             if needed:
                 break
     return red
@@ -449,12 +444,12 @@ def finish(run: Run, steps: list[tuple[str, str, Callable[[Run], str], bool]] = 
     """Шаги под обвязкой (A74): сигнал — уборка одна и код 130 или 143; иначе — итог шагов и
     остатка после уборки."""
     stopped, red, left = guarded(lambda: run_steps(run, steps), run.cleanup)
-    print(f"{now()} уборка: " + (f"осталось {left}" if left else "своего не осталось"))
+    say("уборка: " + (f"осталось {left}" if left else "своего не осталось"))
     if stopped is not None:
-        print(f"{now()} прервано сигналом — код {stopped}")
+        say(f"прервано сигналом — код {stopped}")
         return stopped
     code, line = verdict(red or 0, left)
-    print(f"{now()} {line}")
+    say(line)
     return code
 
 
@@ -464,7 +459,7 @@ def main() -> int:
         with copy_lock(name):
             return run_oracle(name, Docker())
     except LockBusyError as busy:
-        print(f"{now()} {busy}")
+        say(str(busy))
         return 2
 
 
@@ -473,16 +468,16 @@ def run_oracle(name: str, docker: Docker) -> int:
     try:
         server = docker("version", "--format", "{{.Server.Version}}", limit="docker").strip()
     except (StepError, OSError):
-        print(f"{now()} {UP_HINT}")
+        say(UP_HINT)
         return 2
-    print(f"{now()} оракул: стек {name}, Docker {server}")
-    print(f"{now()} уборка на старте: своего имени убрано {start_cleanup(docker, name)}")
+    say(f"оракул: стек {name}, Docker {server}")
+    say(f"уборка на старте: своего имени убрано {start_cleanup(docker, name)}")
     with tempfile.TemporaryDirectory(prefix=f"{name}-") as tmp:
         copy = Path(tmp) / "copy"
         try:
             copy_head(copy)
         except (subprocess.SubprocessError, OSError) as failure:
-            print(f"{now()} копия не собралась: {type(failure).__name__}")
+            say(f"копия не собралась: {type(failure).__name__}")
             return 2
         label = f"oracle-canary-{secrets.token_hex(8)}"
         plant(copy, label)

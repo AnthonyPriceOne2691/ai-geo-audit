@@ -392,3 +392,59 @@ def test_a75_second_oracle_of_the_same_copy_is_refused_before_docker(tmp_path: P
     assert done.returncode == 2, done.stdout + done.stderr
     assert "оракул этой копии уже идёт" in done.stdout
     assert "Docker не отвечает" not in done.stdout
+
+
+def joined(text: str) -> str:
+    """Вывод со склеенными строками продолжения: перенос заменил пробел переводом строки с
+    отступом, склейка возвращает строку как была."""
+    return text.replace("\n" + guard.INDENT, " ")
+
+
+def test_output_line_is_wrapped_at_100_signs_on_spaces_with_an_indent() -> None:
+    """Спека, Non-functional: строка вывода оракула и сканера — до 100 знаков. Длинная
+    переносится по пробелам, продолжение — с отступом; склейка возвращает её слово в слово."""
+    text = "2026-11-20T11:26:16Z A60 Python и инструменты — ок: " + " ".join(
+        f"слово{i}" for i in range(60)
+    )
+    lines = guard.wrapped(text)
+    assert len(lines) > 1
+    assert all(len(line) <= guard.WIDTH for line in lines), [len(line) for line in lines]
+    assert all(line.startswith(guard.INDENT) for line in lines[1:])
+    assert not lines[0].startswith(" ")
+    assert joined("\n".join(lines)) == text
+
+
+def test_table_rows_and_short_lines_are_not_wrapped() -> None:
+    """Строка таблицы длиннее 100 знаков — как есть (спека: «кроме строк таблиц»); короткая
+    строка — как есть."""
+    row = "| " + " | ".join(["CVE-2026-0001"] * 12) + " |"
+    assert len(row) > guard.WIDTH
+    assert guard.wrapped(row) == [row]
+    assert guard.wrapped("короткая строка") == ["короткая строка"]
+
+
+def test_say_starts_with_utc_time_and_keeps_lines_short(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`say`: время UTC с Z в начале, строки до 100 знаков."""
+    guard.say("уборка: " + "своё " * 40)
+    lines = capsys.readouterr().out.splitlines()
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", lines[0][:20])
+    assert len(lines) > 1
+    assert all(len(line) <= guard.WIDTH for line in lines)
+
+
+def test_oracle_step_with_a_long_result_prints_lines_of_at_most_100_signs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Шаг оракула с длинным итогом (у A60 в живом журнале — 222 знака): строки вывода до
+    100 знаков, итог шага после склейки — целиком."""
+    detail = (
+        "Python 3.12.16; requires-python и uv.lock — 3.12; "
+        + ("uv, pytest, uvloop — ModuleNotFoundError; " * 5).strip()
+    )
+    steps = [("A60", "Python и инструменты", lambda _run: detail, False)]
+    assert oracle.run_steps(None, steps) == 0
+    out = capsys.readouterr().out
+    assert all(len(line) <= guard.WIDTH for line in out.splitlines()), out
+    assert f"A60 Python и инструменты — ок: {detail}" in joined(out)

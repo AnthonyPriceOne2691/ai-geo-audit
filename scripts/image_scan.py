@@ -12,7 +12,8 @@
 подменяют тесты. У каждого вызова `trivy` — без проверки версии и телеметрии: наружу он ходит
 только за базой. `trivy version` не зовётся: в 0.76.2 этих флагов у него нет. Версия сканера —
 из отчёта скана, даты базы — из её метаданных в кеше: тот же файл читает `trivy version`.
-Время в выводе — UTC с Z. Код 0 — чисто, 1 — красное.
+Вывод — `say` из `oracle_guard.py`: время UTC с Z, строки до 100 знаков, кроме строк таблиц.
+Код 0 — чисто, 1 — красное.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
+
+from oracle_guard import say
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -111,14 +114,6 @@ class Finding(NamedTuple):
     version: str
     fixed: str
     severity: str
-
-
-def now() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def say(text: str) -> None:
-    print(f"{now()} {text}", flush=True)
 
 
 def tail(err: bytes) -> str:

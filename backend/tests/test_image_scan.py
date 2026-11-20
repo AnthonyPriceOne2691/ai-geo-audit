@@ -25,6 +25,7 @@ from typing import Any
 import dbtools
 import pytest
 
+sys.path.insert(0, str(dbtools.ROOT / "scripts"))  # соседний oracle_guard — вывод `say`
 _spec = importlib.util.spec_from_file_location(
     "image_scan", dbtools.ROOT / "scripts" / "image_scan.py"
 )
@@ -35,6 +36,19 @@ sys.modules["image_scan"] = scan
 _spec.loader.exec_module(scan)
 
 ROOT = dbtools.ROOT
+
+
+def joined(text: str) -> str:
+    """Вывод со склеенными строками продолжения: `say` переносит строку длиннее 100 знаков по
+    пробелам, продолжение — с отступом из четырёх пробелов."""
+    return text.replace("\n    ", " ")
+
+
+def short(text: str) -> bool:
+    """Строки вывода — до 100 знаков, кроме строк таблиц (спека, Non-functional)."""
+    return all(len(line) <= 100 for line in text.splitlines() if not line.startswith("|"))
+
+
 VERSION = "0.76.2"
 URL = (
     "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/"
@@ -244,7 +258,7 @@ def test_a124_install_refuses_and_leaves_the_directory_empty(
     target.mkdir()
     code = scan.install(target, release(archive, "0" * 64 if wrong_sum else None))
     assert code != 0
-    assert reason in capsys.readouterr().out
+    assert reason in joined(capsys.readouterr().out)
     assert list(target.iterdir()) == []
     assert not (wrong_sum and opened), "архив открыт до сверки суммы"
 
@@ -264,7 +278,7 @@ def test_a124_install_broken_mid_copy_leaves_the_directory_empty(
     target = tmp_path / "bin"
     target.mkdir()
     assert scan.install(target, release(archive)) == 1
-    assert "диск полон" in capsys.readouterr().out
+    assert "диск полон" in joined(capsys.readouterr().out)
     assert list(target.iterdir()) == []
 
 
@@ -276,7 +290,9 @@ def test_a125_a126_canary_is_found_and_the_journal_names_scanner_db_and_packages
     каталог с `site-packages/PyYAML-5.3.dist-info/METADATA`."""
     fake = Fake()
     assert scan.run("trivy", tmp_path, fake) == 0
-    out = capsys.readouterr().out
+    raw = capsys.readouterr().out
+    assert short(raw), raw
+    out = joined(raw)
     journal = ("Trivy 0.76.2", "CVE-2020-14343", "база уязвимостей v2", "пакетов 3")
     for text in (*journal, "собрана 2026-11-20T06:12:03Z", "получена 2026-11-20T10:01:02Z"):
         assert text in out, text
@@ -302,7 +318,7 @@ def test_a125_blind_or_foreign_scanner_is_red_before_the_images(
     2026 года) — красное. Образ после этого не собирается и не сканируется."""
     fake = Fake(canary=canary)
     assert scan.run("trivy", tmp_path, fake) == 1
-    assert reason in capsys.readouterr().out
+    assert reason in joined(capsys.readouterr().out)
     assert [call for call in fake.calls if call[0] == "docker" or "--input" in call] == []
 
 
@@ -319,7 +335,9 @@ def test_a126_fixed_findings_are_a_table_and_code_1(
         vuln("CVE-2026-0004", "curl", "8.14.1-1", "8.14.1-2", "MEDIUM"),
     )
     assert scan.run("trivy", tmp_path, Fake(image=image)) == 1
-    out = capsys.readouterr().out
+    raw = capsys.readouterr().out
+    assert short(raw), raw
+    out = joined(raw)
     assert "| идентификатор | пакет | версия | исправление |" in out
     assert "| CVE-2026-0001 | libssl3 | 3.5.1-1 | 3.5.1-2 |" in out
     assert "| CVE-2026-0002 | starlette | 0.47.0 | 0.47.2 |" in out
@@ -334,7 +352,7 @@ def test_a126_findings_without_a_fix_are_listed_and_do_not_fail(
     (решение владельца)."""
     image = report(vuln("CVE-2026-0003", "zlib1g", "1:1.3.dfsg-3", "", "CRITICAL"))
     assert scan.run("trivy", tmp_path, Fake(image=image)) == 0
-    out = capsys.readouterr().out
+    out = joined(capsys.readouterr().out)
     assert "без исправления — CVE-2026-0003 zlib1g" in out
     assert "| CVE-2026-0003" not in out
 
@@ -346,7 +364,7 @@ def test_a126_db_download_failure_is_red_and_not_zero_findings(
     уязвимостей не получена» с причиной сканера, а не «находок нет»; сканов после отказа нет."""
     fake = Fake(db=False)
     assert scan.run("trivy", tmp_path, fake) == 1
-    out = capsys.readouterr().out
+    out = joined(capsys.readouterr().out)
     assert "база уязвимостей не получена" in out
     assert "failed to download vulnerability DB" in out
     assert "пакетов" not in out
@@ -362,7 +380,7 @@ def test_a126_empty_scan_is_not_zero_findings(
     """A126, вторая строка: скан вышел с кодом 0, а отчёта нет или в нём ноль пакетов — красное,
     а не «находок нет»."""
     assert scan.run("trivy", tmp_path, Fake(image=image)) == 1
-    out = capsys.readouterr().out
+    out = joined(capsys.readouterr().out)
     assert "backend: КРАСНОЕ" in out
     assert "с исправлением 0" not in out
 
@@ -383,7 +401,9 @@ def test_a126_every_dockerfile_in_deploy_is_in_the_scan_list(
     monkeypatch.setattr(scan, "IMAGES", ())
     fake = Fake()
     assert scan.run("trivy", tmp_path / "work", fake) == 1
-    assert "deploy/backend/Dockerfile — Dockerfile вне списка скана" in capsys.readouterr().out
+    assert "deploy/backend/Dockerfile — Dockerfile вне списка скана" in joined(
+        capsys.readouterr().out
+    )
     assert fake.calls == []
 
 
@@ -409,7 +429,9 @@ def test_a127_bom_of_the_same_image_file_and_its_count_and_sum_in_the_journal(
     assert scan.run("trivy", tmp_path, fake) == 0
     capsys.readouterr()
     assert scan.sbom("trivy", tmp_path, fake) == code
-    out = capsys.readouterr().out
+    raw = capsys.readouterr().out
+    assert short(raw), raw
+    out = joined(raw)
     digest = hashlib.sha256(json.dumps(BOM).encode()).hexdigest()
     assert f"компонентов {len(BOM['components'])}, sha256 {digest}" in out
     assert text in out
@@ -437,7 +459,7 @@ def test_a127_sbom_without_the_image_file_is_refused(
     """A127: без файла образа из `run` описи нет — отказ, код 1; разбор аргументов — тот же, что
     у джобы."""
     assert scan.main(["sbom", "--work", str(tmp_path), "--trivy", "trivy"]) == 1
-    assert "сначала run" in capsys.readouterr().out
+    assert "сначала run" in joined(capsys.readouterr().out)
 
 
 GOOD = "# PyYAML без выпуска с исправлением; by=human:owner at=2026-11-20T12:00Z\n"

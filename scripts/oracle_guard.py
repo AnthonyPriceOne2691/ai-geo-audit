@@ -7,7 +7,9 @@
 - уборка на старте — остатки прошлого прогона только своего имени, по метке проекта compose;
 - сигналы — SIGINT и SIGTERM прерывают тело, уборка идёт ровно одна; первый сигнал глушит оба до
   конца уборки, поэтому второй (отмена джобы на GitHub шлёт SIGINT, затем SIGTERM) второй уборки
-  не даёт. Код выхода — 128 + номер первого сигнала: 130 и 143.
+  не даёт. Код выхода — 128 + номер первого сигнала: 130 и 143;
+- вывод оракула и сканера — `say`: время UTC с Z, строка до 100 знаков — длинная переносится по
+  пробелам, продолжение с отступом; строки таблиц не переносятся (спека, Non-functional).
 """
 
 from __future__ import annotations
@@ -16,8 +18,10 @@ import fcntl
 import hashlib
 import signal
 import tempfile
+import textwrap
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
 from typing import Protocol
@@ -26,6 +30,9 @@ PREFIX = "ai-geo-audit-oracle-"
 LOCK_BUSY = "оракул этой копии уже идёт"
 SIGNALS = (signal.SIGINT, signal.SIGTERM)
 PROJECT = "label=com.docker.compose.project="
+#: Строка вывода — до 100 знаков; продолжение длинной — с этим отступом (спека, Non-functional).
+WIDTH = 100
+INDENT = "    "
 #: Остатки по виду: запрос по метке и команда удаления. Порядок — контейнеры раньше томов и сетей.
 REMOVAL = {
     "container": (("-a",), ("rm", "-f", "-v")),
@@ -50,6 +57,20 @@ class Interrupted(BaseException):
     def __init__(self, signum: int) -> None:
         super().__init__(signum)
         self.code = 128 + signum
+
+
+def wrapped(text: str, width: int = WIDTH) -> list[str]:
+    """Строка вывода — в строки до `width` знаков: перенос по пробелам, продолжение с отступом;
+    слово длиннее строки режется. Строка таблицы (начинается с `|`) и короткая — как есть."""
+    if text.startswith("|") or len(text) <= width:
+        return [text]
+    return textwrap.wrap(text, width, subsequent_indent=INDENT, break_on_hyphens=False)
+
+
+def say(text: str) -> None:
+    """Строка вывода оракула и сканера: время UTC с Z, перенос до 100 знаков."""
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print("\n".join(wrapped(f"{stamp} {text}")), flush=True)
 
 
 def stack_name(path: Path) -> str:
