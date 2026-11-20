@@ -42,7 +42,8 @@ Derived from spec acceptance. Run during verify. Прогоны на GitHub — 
 - [x] A107 — покрытие `src` и `migrations`: ветка-проба A108 2026-11-20T08:21Z — `env.py`
       98,4 %, `0001` 100 %. Копия: alembic без `COVERAGE_*` — тест A22 красный, `KeyError` по
       `COVERAGE_PROCESS_START`
-- [x] A115 — pre-push 1,22 с, два хука (`DRY_RUN=1 merge_guard.sh`, A113). Копия: полный набор в
+- [x] A115 — pre-push 1,03 с, пять хуков (2026-11-20 на `1a83743` с рецептом §8.5 ③; до него — 1,22 с,
+      два хука). Доктор: «бюджет pre-push — на push 5 хук(ов), набора тестов нет». Копия: полный набор в
       pre-push — доктор WEAK «бюджет pre-push: набор тестов на push… его место CI»
 - [ ] A116 — защита main, чтение через API: проверки ровно `gates`, `delivery`, `tests`;
       `strict`, `enforce_admins`; force-push и удаление запрещены; одобрений нет. После слова

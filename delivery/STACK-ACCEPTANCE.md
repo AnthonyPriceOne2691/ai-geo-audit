@@ -27,7 +27,7 @@ stale_after: 2026-12-20
 | Слой | Состояние | Примечание |
 |---|---|---|
 | ① delivery/ | deployed | дерево §2.3 для класса S; конституция под продукт; права агента = `.claude/settings.json`; hook A.5 в `AGENTS.md`; подпись необратимого парой скриптов |
-| ② гейты | deployed (половина Python) | 23 роли каталога: 15 как есть, 4 адаптированы, 4 n/a — карта ниже; хуков 30: на коммите 28, на push — мёртвый код и размер файлов, аудит зависимостей — ручной хук, его исполняет шаг CI; адаптации — `scripts/lint/adapted.json`, объявления — `scripts/lint/not-applicable.json`; TS-половины, jscpd и ратчет eslint — поставка В1б |
+| ② гейты | deployed (половина Python) | 23 роли каталога: 15 как есть, 4 адаптированы, 4 n/a — карта ниже; хуков 33: на коммите 28, на push пять — размер файлов, мёртвый код, гейт поставки, ратчет снимков и новая зависимость (рецепт §8.5 ③), аудит зависимостей — ручной хук, его исполняет шаг CI; адаптации — `scripts/lint/adapted.json`, объявления — `scripts/lint/not-applicable.json`; TS-половины, jscpd и ратчет eslint — поставка В1б |
 | ③ knowledge/ | absent | волна В2: справочник проверок, лимиты и формулы закреплены кодом и тестами |
 | ④ CI + гейт мержа | tooling | GitHub Actions: `quality.yml` — джобы gates, delivery, tests; `main-guard.yml` — задача «RED on main»; первый зелёный прогон — 44706856356 (gates, delivery); merge_guard: да, статус CI — последним шагом; branch protection: нет — её включает проверяющий словом владельца, тогда deployed (A116, A118) |
 | ⑤ поведение модели | n/a | волна В3: с первым вызовом модели в коде |
@@ -61,11 +61,11 @@ stale_after: 2026-12-20
 | Сообщения ошибок с контекстом | `check_grep_gate.sh --rule blind-error` | хук `blind-error`, коммит; область `backend/`; CI: `gates` | как есть |
 | Логи ищутся по полю | `check_grep_gate.sh --rule unstructured-log` | хук `unstructured-log`, коммит; область `backend/`; CI: `gates` | как есть |
 | Зависимости без известных уязвимостей | `check_deps_audit.sh` | хук `deps-audit` ручной, сам не идёт; CI: `gates`, шаг «Vulnerable dependencies»: «python-зависимости не проверены» — красное (A102, A103) | адаптирован (`check_deps_audit.sh`) — итог «манифестов нет» смотрит найденный манифест, а не корень; JS-половина выключена до В1б адаптацией шага CI (`quality.yml`) |
-| Новая зависимость — только с решением | `check_new_dependency.py` | CI: `gates`, шаг «New dependency declared»; база — шаг «Diff base», отказ вслух (A104) | как есть |
+| Новая зависимость — только с решением | `check_new_dependency.py` | хук `new-dependency`, push; CI: `gates`, шаг «New dependency declared»; база — шаг «Diff base», отказ вслух (A104) | как есть |
 | Тесты действительно утверждают | `check_mutation_gate.sh` | CI: `tests`, шаг «Mutation testing» — только на запросе, бюджет 300 с, один воркер (A109) | адаптирован (`mutation_py.sh`, `backend/pyproject.toml`) — глоб мутантов на раскладке `src/`; узлы тестов с кириллицей без экранирования. TS-половина (Stryker) — n/a до В1б |
 | Направление зависимостей | `check_layers_gate.sh` | хук `layers-gate`, коммит; конфиг `backend/.importlinter`; своя канарейка — `canaries.json`; CI: `gates` | адаптирован (`backend/.importlinter`) — один контракт слоёв `api → storage → logs → config → refusal`; контракты интеграций и моделей не заведены: пакета интеграций нет, модели держит контракт слоёв. TS-половина — n/a до В1б |
 | Покрытие изменённого кода | `check_diff_coverage.sh` | CI: `tests`, шаг «Diff coverage» — по отчёту этой джобы, цель 70 % (A108); на машине — ручной шаг | как есть |
-| Снимки только вниз | `check_baseline_ratchet.sh` | CI: `gates`, шаг «Baseline ratchet»; `scripts/merge_guard.sh` | как есть |
+| Снимки только вниз | `check_baseline_ratchet.sh` | хук `baseline-ratchet`, push; CI: `gates`, шаг «Baseline ratchet»; `scripts/merge_guard.sh` | как есть |
 | Все гейты подключены | `check_gate_coverage.sh` | хук `gate-coverage`, коммит; CI: `gates`, шаг «Gate coverage» | адаптирован — только комментарий тела: имя человека заменено, код не тронут; то же в `gate_coverage_roles.sh` |
 
 Строка шаблона карты и базовые хуки — вне счёта 23:

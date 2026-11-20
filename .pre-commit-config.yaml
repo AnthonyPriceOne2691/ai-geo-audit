@@ -407,6 +407,41 @@ repos:
         entry: bash -c 'export LINT_PY_SRC="backend/src"; cd "$(git rev-parse --show-toplevel)" || exit 1; P=""; for c in "${LINT_BE_DIR:-backend}/${LINT_VENV:-.venv}/bin/python" "${LINT_VENV:-.venv}/bin/python" "backend/.venv/bin/python"; do [ -x "$c" ] && { P="$c"; break; }; done; [ -n "$P" ] || P="$(command -v python3)"; "$P" scripts/lint/check_dead_code.py'
         stages: [pre-push]
         pass_filenames: false
+      # ⚠ База — ЦЕЛЬ МЕРЖА, а не upstream ветки, и это стоило отказа правила на
+      # живом проекте (`cqg@2.05`). Прежняя редакция брала `@{u}`: пока ветка не
+      # запушена, это цель мержа и всё верно, а ПОСЛЕ первого push'а `@{u}` — сама
+      # ветка, и «дифф поставки» схлопывается в последний инкремент. Замер:
+      # по цели мержа 27 файлов и 8 цитат в блоке ревью, по `@{u}` — 1 файл и 0
+      # цитат при пороге §12.5 «≥2». Порог становится недостижим АРИФМЕТИЧЕСКИ:
+      # чинить нечего, а пройти нельзя — это не строгость, а отказ.
+      # И второе: тот же блок в CI судится против цели мержа и зелёный, то есть
+      # два оракула одного правила расходились по базе, причём локальный был
+      # строже там, где прав был CI. Базу обязаны брать одинаково — держит оракул.
+      - id: delivery-gate
+        name: delivery phase gate + breakers (pre-push)
+        entry: bash -c 'b(){ git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null && return 0; for c in origin/main origin/master; do git rev-parse --verify --quiet "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }; done; echo origin/main; }; PY=$(command -v python3 || command -v python); "$PY" scripts/delivery_check.py --diff-base "$(b)"'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+      - id: baseline-ratchet
+        name: baseline only melts (pre-push)
+        entry: bash scripts/lint/check_baseline_ratchet.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+      # Гейт, который исполняется только в CI, — не автоматика, а украшение: на
+      # проекте без раннера он не срабатывал НИ РАЗУ (lab-12). Замер: 0.06 c на
+      # манифест — бюджет §8.6 (≤10 c) он не трогает. База — та же ЦЕЛЬ МЕРЖА, что
+      # у delivery-gate: вопрос «вносит ли ПОСТАВКА необъявленную зависимость», а
+      # не «внёс ли её последний push». По `@{u}` зависимость, добавленную первым
+      # push'ом, следующие уже не видят — и объявление можно снять из STATUS
+      # безнаказанно.
+      - id: new-dependency
+        name: новая зависимость объявлена в STATUS (pre-push)
+        entry: bash -c 'b(){ git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null && return 0; for c in origin/main origin/master; do git rev-parse --verify --quiet "$c" >/dev/null 2>&1 && { echo "$c"; return 0; }; done; echo origin/main; }; PY=$(command -v python3 || command -v python); BASE="$(b)" "$PY" scripts/lint/check_new_dependency.py'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
 
   # Мета-гейт — ПОСЛЕДНИМ. Проверяет, что все гейты выше вообще подключены:
   # забытый в этом файле скрипт молча не работает (§3, gate-coverage).
