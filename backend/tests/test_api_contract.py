@@ -320,9 +320,7 @@ async def test_a49_every_answer_carries_no_store_nosniff_and_one_number(
         got["500"] = await http.get(probes.BOOM, headers=PASS)
         declared = PASS | {"Content-Length": "1048577"}
         got["413 объявленный"] = await http.post(probes.BODY, content=nothing(), headers=declared)
-        got["413 потоковый"] = await http.post(
-            probes.BODY, content=(b"x" * 65536 for _ in range(80)), headers=PASS
-        )
+        got["413 потоковый"] = await http.post(probes.BODY, content=stream([]), headers=PASS)
         monkeypatch.setattr(limits, "IN_FLIGHT_LIMIT", 0)
         got["503 busy"] = await http.get("/api/health")
         monkeypatch.setattr(limits, "IN_FLIGHT_LIMIT", 32)

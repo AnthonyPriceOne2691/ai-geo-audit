@@ -1,6 +1,8 @@
 """Слой входа — чистый ASGI; не-`http` области (`lifespan`) идут насквозь.
 
-Порядок снаружи внутрь: перехват падения; номер запроса; секреты запроса; предел запросов в
+Порядок снаружи внутрь: перехват падения — его `send` ставит на каждый ответ по одной копии
+`Cache-Control: no-store`, `X-Content-Type-Options: nosniff` и номера запроса, одноимённые
+заголовки маршрута заменяются (A49); номер запроса; секреты запроса; предел запросов в
 работе; ворота; предел тела; строка доступа — после ответа и после перехвата. Номер и секреты слой
 кладёт в область запроса: оттуда их берут перехват, обработчики отказов и журнал. Присланный
 `X-Request-ID` принимается, только если он один и весь по образцу, иначе — свой (A46). Секреты
@@ -128,7 +130,10 @@ class EntryLayer:
             nonlocal status
             if message["type"] == "http.response.start":
                 status = message["status"]
-                MutableHeaders(scope=message)[REQUEST_ID_HEADER] = state["request_id"]
+                head = MutableHeaders(scope=message)
+                head["Cache-Control"] = "no-store"
+                head["X-Content-Type-Options"] = "nosniff"
+                head[REQUEST_ID_HEADER] = state["request_id"]
             await send(message)
 
         try:

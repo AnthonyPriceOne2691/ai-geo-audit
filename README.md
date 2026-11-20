@@ -31,6 +31,8 @@ React с Vite и Mantine, pytest, docker compose.
   — не больше 1 МБ, сверх — 413 `too-large`; запросов в работе — не больше 32 на процесс, сверх —
   503 `busy` с `Retry-After: 60`, и у здоровья тоже. Предел тела равен `client_max_body_size`
   прокси web и стоит в тексте отказа: меняются вместе.
+- Схема API и консоли — в `dev` и `test` без пропуска: `/api/openapi.json`, `/api/docs`,
+  `/api/redoc`; в бою их нет. На каждом ответе — `Cache-Control: no-store` и `nosniff`.
 
 ## Миграции
 
