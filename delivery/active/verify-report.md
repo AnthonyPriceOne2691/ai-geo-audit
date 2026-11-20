@@ -1,7 +1,7 @@
 # Verify report
 
 **Date:** 2026-11-20
-**Verifier:** agent:lead-session
+**Verifier:** agent:reviewer2-session
 **asserts_reviewed_by:** deferred (reason=подпись владельца под утверждениями просит проверяющий после вердикта; до неё — эта отметка, L46)
 
 **CI run:** quality на запросе №1: 44706856356 на `580a608` — зелёный (gates, delivery);
