@@ -186,6 +186,7 @@ def install(target: Path, release: Release = RELEASE) -> int:
                 raise ScanError(f"sha256 не совпала: {digest}, в записи — {release.sha256}")
             take_trivy(archive, target / "trivy")
         except (ScanError, OSError, tarfile.TarError) as failure:
+            (target / "trivy").unlink(missing_ok=True)  # оборванная запись — не установка
             say(f"установка Trivy {release.version} — КРАСНОЕ: {failure}")
             return 1
     say(f"Trivy {release.version} — {target / 'trivy'}; sha256 архива сверена до распаковки")

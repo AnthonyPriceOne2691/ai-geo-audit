@@ -249,6 +249,25 @@ def test_a124_install_refuses_and_leaves_the_directory_empty(
     assert not (wrong_sum and opened), "архив открыт до сверки суммы"
 
 
+def test_a124_install_broken_mid_copy_leaves_the_directory_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A124, вторая строка: сумма сошлась, но запись `trivy` оборвалась (диск полон) — отказ,
+    код 1, причина в выводе; недописанного файла в каталоге установки нет."""
+    archive = tarball(tmp_path / "release.tar.gz", {"trivy": b"#!/bin/sh\n" * 1000})
+
+    def broken(source: Any, out: Any, *args: Any) -> None:
+        out.write(source.read(64))
+        raise OSError("диск полон")
+
+    monkeypatch.setattr(scan.shutil, "copyfileobj", broken)
+    target = tmp_path / "bin"
+    target.mkdir()
+    assert scan.install(target, release(archive)) == 1
+    assert "диск полон" in capsys.readouterr().out
+    assert list(target.iterdir()) == []
+
+
 def test_a125_a126_canary_is_found_and_the_journal_names_scanner_db_and_packages(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
