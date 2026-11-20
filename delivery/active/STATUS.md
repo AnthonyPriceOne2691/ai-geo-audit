@@ -12,9 +12,11 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** plan
+- **phase:** implement
 - **builder:** agent:front-session
-- **verifier:** agent:lead-session
+- **verifier:** agent:reviewer2-session
+  <!-- С 2026-11-20T09:49Z по слову владельца приёмку полосы третьей сессии ведёт вторая
+       проверяющая сессия; подписи, вопросы владельцу и выкладка — у ведущей. -->
 - **human_ok_spec:** yes (by=human:owner at=2026-11-20T09:38Z)
   <!-- Подпись внёс проверяющий: слово записывает тот, кто его слышал. Слово владельца —
        «Подписываю сканер»: десять новых строк (пятая A76 и девять A124–A129, сумма
