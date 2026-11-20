@@ -132,6 +132,24 @@ SPOILS = [
     ("снят --locked", r"uv sync --locked --no-dev --no-editable", "uv sync --no-dev", "--locked"),
     ("снят --no-dev", r"uv sync --locked --no-dev --no-editable", "uv sync --locked", "--no-dev"),
     ("pip вместо uv", r"uv sync --locked --no-dev --no-editable", "pip install .", "не через uv"),
+    (
+        "COPY --from образа без дайджеста",
+        r"COPY --from=install /opt/venv /opt/venv",
+        "COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv",
+        "не стадия выше",
+    ),
+    (
+        "RUN --mount from образа без дайджеста",
+        r"--mount=from=uv,",
+        "--mount=from=ghcr.io/astral-sh/uv:latest,",
+        "не стадия выше",
+    ),
+    (
+        "ADD из сети",
+        r"(?=COPY backend/alembic\.ini)",
+        "ADD https://example.invalid/tool.tar.gz /opt/tool/\n",
+        "ADD",
+    ),
 ]
 
 
