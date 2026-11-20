@@ -206,18 +206,10 @@ def _unbuilt(record: logging.LogRecord, error: BaseException | None) -> dict[str
 class JsonFormatter(logging.Formatter):
     """Одна запись — одна строка JSON; поля из `extra` остаются полями."""
 
-    def format(self, record: logging.LogRecord) -> str:
-        try:
-            return self._format(record)
-        except Exception as error:
-            # silent-ok: несобравшаяся запись — записью-заменой без сырого текста; запись в журнал
-            # из форматтера ушла бы по кругу
-            return self.unbuilt(record, error)
-
     def unbuilt(self, record: logging.LogRecord, error: BaseException | None) -> str:
         return json.dumps(_unbuilt(record, error), ensure_ascii=False)
 
-    def _format(self, record: logging.LogRecord) -> str:
+    def format(self, record: logging.LogRecord) -> str:
         trusted = _trusted(record)
         payload: dict[str, object] = {
             "ts": _utc(record),
@@ -234,20 +226,12 @@ class JsonFormatter(logging.Formatter):
 class TextFormatter(logging.Formatter):
     """Строка для человека; поля из `extra` — в хвосте."""
 
-    def format(self, record: logging.LogRecord) -> str:
-        try:
-            return self._format(record)
-        except Exception as error:
-            # silent-ok: несобравшаяся запись — записью-заменой без сырого текста; запись в журнал
-            # из форматтера ушла бы по кругу
-            return self.unbuilt(record, error)
-
     def unbuilt(self, record: logging.LogRecord, error: BaseException | None) -> str:
         fields = _unbuilt(record, error)
         head = " ".join(fields.pop(name) for name in ("ts", "level", "logger", "message"))
         return head + " | " + " ".join(f"{k}={v}" for k, v in sorted(fields.items()) if v)
 
-    def _format(self, record: logging.LogRecord) -> str:
+    def format(self, record: logging.LogRecord) -> str:
         trusted = _trusted(record)
         name, message = redact(record.name), _written(record.getMessage())
         line = f"{_utc(record)} {record.levelname} {name} {message}"
@@ -262,26 +246,26 @@ class TextFormatter(logging.Formatter):
 
 
 class _Handler(logging.StreamHandler[TextIO]):
-    """Обработчик журнала: сбой записи в поток не печатает сырое сообщение и аргументы —
-    стандартный `handleError` пишет их мимо форматтера."""
+    """Обработчик журнала: запись, которая не собралась (ошибка формата, поле, что не печатается),
+    или сбой записи в поток — запись-замена вместо сырого сообщения и аргументов, которые
+    стандартный `handleError` печатает мимо форматтера. Замена — в `stderr`, как у стандартного."""
+
+    def __init__(self, stream: TextIO, formatter: JsonFormatter | TextFormatter) -> None:
+        super().__init__(stream)
+        self.setFormatter(formatter)
+        self.ours = formatter
 
     @override
     def handleError(self, record: logging.LogRecord) -> None:
-        formatter = self.formatter
-        if isinstance(formatter, JsonFormatter | TextFormatter):
-            line = formatter.unbuilt(record, sys.exc_info()[1])
-        else:
-            line = UNBUILT
         with contextlib.suppress(Exception):
-            sys.stderr.write(line + "\n")
+            sys.stderr.write(self.ours.unbuilt(record, sys.exc_info()[1]) + self.terminator)
 
 
 def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     """Собрать корневой логгер; повторный вызов заменяет обработчик, а не добавляет второй."""
     register_config_secrets(config.storage, config.access, config.keys)
-    handler = _Handler(sys.stderr)
     chosen = (fmt or config.logs.format).lower()
-    handler.setFormatter(JsonFormatter() if chosen == "json" else TextFormatter())
+    handler = _Handler(sys.stderr, JsonFormatter() if chosen == "json" else TextFormatter())
     handler.addFilter(ContextFilter())
     root = logging.getLogger()
     for existing in list(root.handlers):
