@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 import dbtools
+import pytest
 
 from ai_geo_audit.api import probe
 
@@ -121,3 +122,16 @@ def test_a70_bad_setting_is_one_line_without_the_value() -> None:
     done = entry("port-9x7q")
     assert done.returncode == 1
     assert one_clean_line(done.stdout + done.stderr, "port-9x7q")
+
+
+def test_a70_connect_is_under_the_same_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A70: соединение — под тем же пределом 3 с: зависший `connect` не уводит пробу за срок."""
+    limits: list[object] = []
+
+    def hang(address: tuple[str, int], timeout: object = None) -> socket.socket:
+        limits.append(timeout)
+        raise TimeoutError
+
+    monkeypatch.setattr(probe.socket, "create_connection", hang)
+    assert probe.check(closed_port()) == (1, "здоровье: нет ответа за 3 с")
+    assert limits == [3.0]
