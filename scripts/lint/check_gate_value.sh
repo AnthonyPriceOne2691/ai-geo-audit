@@ -63,7 +63,9 @@ if grep -qi 'gitlab' <<< "$ORIGIN" || [[ -z "$ORIGIN" && -f .gitlab-ci.yml ]]; t
   printf 'своим скриптом на `glab ci list` либо объяви её в `not-applicable.json`.\n' >&2
   exit 0
 fi
-if ! command -v gh >/dev/null 2>&1 || ! gh auth token >/dev/null 2>&1; then
+# АДАПТАЦИЯ проекта (adapted.json): проверки `gh auth token` нет — она выводит токен, а на
+# машинах проекта токен не выводится; вход проверяет сам `gh run list` ниже.
+if ! command -v gh >/dev/null 2>&1; then
   printf '%s⚠ gate-value: нужен авторизованный gh — без него данных о срабатываниях нет.%s\n' \
     "$yellow" "$reset" >&2
   printf 'Решение «убрать гейт» без данных принимать нельзя (§9.1a).\n' >&2
@@ -93,8 +95,15 @@ if (( ${#gates[@]} == 0 )); then
   echo "gate-value: гейтов не найдено" >&2; exit 0
 fi
 
+gh_err=$(mktemp) || exit 1
 ids=$(gh run list --workflow "$CI_WORKFLOW" --limit "$RUNS" \
-        --json databaseId,conclusion --jq '.[] | "\(.databaseId) \(.conclusion)"' 2>/dev/null)
+        --json databaseId,conclusion --jq '.[] | "\(.databaseId) \(.conclusion)"' 2>"$gh_err")
+gh_code=$?; why="gh run list — код $gh_code: $(sed -n '1p' "$gh_err")"; rm -f "$gh_err"
+if (( gh_code != 0 )); then   # АДАПТАЦИЯ: отказ вызова (нет входа, сеть) — не «нет прогонов»
+  printf '%s⚠ gate-value: данных о срабатываниях нет: %s%s\n' "$yellow" "$why" "$reset" >&2
+  printf 'Решение «убрать гейт» без данных принимать нельзя (§9.1a).\n' >&2
+  exit 0
+fi
 if [[ -z "$ids" ]]; then
   printf '%s⚠ gate-value: нет прогонов workflow "%s"%s\n' "$yellow" "$CI_WORKFLOW" "$reset" >&2
   exit 0

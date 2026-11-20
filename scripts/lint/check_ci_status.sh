@@ -166,12 +166,11 @@ fi
 # правки, которая осталась на `gh auth status` и лишь разбирала текст ошибки.
 # Разбор оставлен ниже, для СЕТЕВЫХ отказов самого вызова: там причина
 # по-прежнему бывает неотличима, и тогда её называют неизвестной.
-if ! gh auth token >/dev/null 2>&1; then
-  printf '%s⚠ ci-status: gh без сохранённых учёток (`gh auth login`) — статус CI не проверен%s\n' \
-    "$yellow" "$reset" >&2
-  no_ci_evidence "gh без учёток" || exit 1
-  exit 0
-fi
+#
+# АДАПТАЦИЯ проекта (adapted.json): проверки `gh auth token` здесь нет — она выводит токен
+# (выше — в /dev/null), а на машинах проекта токен не выводится. Вход проверяет сам вызов
+# `gh run list` ниже: его отказ — «статус CI не проверен» с причиной из stderr, выход — как у
+# ветки «нет входа» канона.
 
 # stderr НЕ глушим: «репозитория на хостинге нет» и «workflow ни разу не гонялся» —
 # разные состояния, и раньше оба выглядели одинаково («нет прогонов»). Для первого
@@ -179,13 +178,19 @@ fi
 # Три развёртывания споткнулись об это независимо.
 gh_err=$(mktemp); trap 'rm -f "$gh_err"' EXIT
 run=$(gh run list --workflow "$CI_WORKFLOW" --branch "$BRANCH" --limit 1 \
-        --json status,conclusion,url,headSha,displayTitle 2>"$gh_err")
+        --json status,conclusion,url,headSha,displayTitle 2>"$gh_err"); gh_code=$?
 if [[ -s "$gh_err" ]] && grep -qiE 'no.*repositor|not a git repositor|could not resolve|base repo' "$gh_err"; then
   printf '%s⚠ ci-status: у репозитория нет хостинга с Actions — CI не существует, а не «пока нет прогонов»%s\n' \
     "$yellow" "$reset" >&2
   sed -n '1,3p' "$gh_err" >&2
   printf 'Это не «дождись прогона»: ci-oracles обязан остаться weak, пока хостинга нет (§10.4).\n' >&2
   no_ci_evidence "у репозитория нет хостинга с Actions" || exit 1
+  exit 0
+fi
+if (( gh_code != 0 )); then   # АДАПТАЦИЯ: отказ вызова (нет входа, сеть) — не «нет прогонов»
+  why="gh run list — код $gh_code: $(sed -n '1p' "$gh_err")"
+  printf '%s⚠ ci-status: статус CI не проверен: %s%s\n' "$yellow" "$why" "$reset" >&2
+  no_ci_evidence "$why" || exit 1
   exit 0
 fi
 if [[ -z "$run" || "$run" == "[]" ]]; then
