@@ -25,7 +25,9 @@ import dbtools
 import pytest
 from hypothesis import settings
 from run_summary import (  # noqa: F401 -- хуки итога A106 подключаются по именам
+    pytest_collection,
     pytest_collection_finish,
+    pytest_collectreport,
     pytest_runtest_logreport,
     pytest_sessionfinish,
     pytest_terminal_summary,
