@@ -103,6 +103,39 @@ pytest exit=0
 
 - Счёт — 2342 строки и 16 файлов. Тестовая база клона снята, клон удалён.
 
+### На коммите сдачи `e0ef540` (вершина `4686958`)
+
+Один прогон после коммита сдачи `e0ef540` и правки блоков отчёта `4686958`, с
+2026-11-20T10:47:15Z по 10:47:56Z, нагрузка 3,71. Клон свежий, база диффа — `origin/main` клона,
+`a8e4597`. Оракул не гонялся: после `373c118` стек и оракул не менялись, его прогон на `7d599b3`
+— выше. Вывод дословный, длинные строки обрезаны знаком «…»:
+
+```
+$ git log --format="%h %p %s" -2 && git merge-base HEAD origin/main
+4686958 e0ef540 docs(delivery): Ч1.5а — отчёт архива: блоки «Ревью рисковых мест» и «Исполнение рисковых путей»
+e0ef540 d12619c chore(delivery): handoff Ч1.5а — фаза, метрики, наблюдение, уроки L49–L53, перенос в архив
+a8e4597b8e431a08d844d5c580aec00aec40e4eb
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно a8e4597b8e43..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-20-ch1-05a-image-compose (phase=handoff)
+debt: снимков долга на HEAD не прочитано — таять нечему
+breakers: files=16 net_loc=2342 (+2343/-1), excluded=12 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scripts/delivery_|scripts/okf_|.claude/|docs…
+наблюдение §13.1: поставок в архиве 11, окон со сроком 11, истекших без observed.md 0
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Создай STATUS по шаблону A.2
+WARNING: delivery/archive/2026-11-20-ch1-05a-image-compose: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given`…
+WARNING: delivery/archive/2026-11-20-ch1-05a-image-compose: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to ve…
+delivery_check: 0 error(s), 3 warning(s)
+exit=0
+$ cd backend && uv sync --frozen -q; echo "uv sync exit=$?"
+uv sync exit=0
+$ uv run pytest -q -p no:cacheprovider -W error | tail -1
+433 passed in 34.97s
+pytest exit=0
+```
+
+- Счёт — 2342 строки и 16 файлов; судится архив поставки, фаза handoff. Тестовая база клона
+  снята, клон удалён.
+
 ## Пробный прогон гейтов В1а
 
 Временный клон вершины, `git merge --no-commit` вершины `contour-b1a` (`1ac5a09`), конфликты —
