@@ -349,3 +349,7 @@ jobs:
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
+
+      - name: Проба A109 — путь импорта пакета
+        if: always() && github.event_name == 'pull_request'
+        run: sort "$RUNNER_TEMP/import-path.txt" | uniq -c

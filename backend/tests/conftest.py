@@ -116,3 +116,14 @@ async def committed(engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
     await dbtools.require_empty(engine)
     yield engine
     await dbtools.truncate(engine)
+
+
+# ПРОБА A109, вторая строка: путь импорта пакета в прогоне — в файл раннера, его печатает шаг
+# «Проба A109 — путь импорта пакета». Под mutmut ждём каталог мутантов, а не `backend/src`.
+if os.environ.get("RUNNER_TEMP"):
+    import ai_geo_audit
+
+    with open(
+        os.path.join(os.environ["RUNNER_TEMP"], "import-path.txt"), "a", encoding="utf-8"
+    ) as _f:
+        _f.write(f"{os.getcwd()} -> {ai_geo_audit.__file__}\n")
