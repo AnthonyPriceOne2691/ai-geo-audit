@@ -4,45 +4,46 @@
 **Verifier:** agent:reviewer2-session
 **asserts_reviewed_by:** deferred (reason=подпись владельца под утверждениями просит проверяющий после вердикта; до неё — эта отметка, L46)
 
-**CI run:** quality на запросе №1: 44725764860 на `669d40c` (код вершины; дальше — только
-документы) — success: `delivery`, `tests`, `gates`; джоба `tests` 11:13:08Z → 11:25:32Z, шаг
+**CI run:** прогон на вершине сдачи — после выкладки (код поменялся в `c7987cc`: два скрипта
+гейтов и тест); до правки 2б — quality на запросе №1: 44725764860 на `669d40c` — success:
+`delivery`, `tests`, `gates`; джоба `tests` 11:13:08Z → 11:25:32Z, шаг
 мутаций 620 с из бюджета 1200 — «убито 525 из 594 (88%)», «Замок свежий» — «Resolved 86
 packages», набор 531 из 531, покрытие диффа 6 файлов 98,2–100 % (журнал — вторая проверяющая).
 Раньше: 44706856356 на `580a608` — зелёный (gates, delivery); 44708717514 на `1a18f5c` — красный
 шаг мутаций, причина и правка — ниже.
-**Commit:** код вершины — `669d40c` (CI 44725764860); прогон в чистом клоне — на `7b4273e`,
-вершина сдачи — коммит с этим разделом поверх `7b4273e`.
+**Commit:** код вершины — `c7987cc` (до правки 2б — `669d40c`, CI 44725764860); прогон в чистом
+клоне — на `bd16208`, вершина сдачи — коммит с этим разделом поверх `bd16208`.
 
 ## Прогон в чистом клоне
 
-Клон свежий, из локального репозитория, ветка `contour-b1a` на `7b4273e` (код как у `669d40c`,
-дальше — только документы); база диффа — `origin/main` клона, `1518276`.
-2026-11-20T11:45:28Z–11:46:28Z, нагрузка 4,18 в начале и 4,83 в конце. Вывод дословный, цвета
+Клон свежий, из локального репозитория, ветка `contour-b1a` на `bd16208` — код вершины сдачи
+(после `c7987cc` — только документы); база диффа — `origin/main` клона, `1518276`.
+2026-11-20T12:03:49Z–12:04:49Z, нагрузка 2,37 в начале и 3,26 в конце. Вывод дословный, цвета
 сняты, длинные строки обрезаны знаком «…»:
 
 ```
 $ git log --format="%h %p %s" -2 && git rev-parse --short origin/main && git merge-base HEAD origin/main
-7b4273e e5921fe docs(delivery): В1а — A109, первая строка, и A98: прогон запроса поставки 44725764860 на 669d40c
-e5921fe 7189be8 docs(delivery): В1а — A109, третья строка, показана: «убито 0 из 4 (0%)», цель ≥60%; доктор из CI
+bd16208 7cef6a6 docs(delivery): В1а — пояснение A91 по слову владельца 12:02Z в своих документах; доктор из чистого кло…
+7cef6a6 c7987cc docs(delivery): В1а — пояснение A91 по слову владельца: WEAK 18, адаптаций 9
 1518276
 1518276a1b0130b2fab77113ddfbed9acfb6683a
 $ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
-breakers: files=38 net_loc=2265 (+2322/-57), excluded=76 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scr…
+breakers: files=39 net_loc=2434 (+2491/-57), excluded=76 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scr…
 наблюдение §13.1: поставок в архиве 11, окон со сроком 11, истекших без observed.md 0
 delivery_check: 0 error(s), 0 warning(s)
 exit=0
 $ cd backend && uv sync --frozen -q; echo "uv sync exit=$?"
 uv sync exit=0
 $ cd backend && uv run pytest -q -p no:cacheprovider -W error | tail -3; echo "pytest exit=${PIPESTATUS[0]}"
-стражи исполнения: записей прочитано 1455 · секретов под меткой 7 (CLAUDE_CODE_MESSAGING_TOKEN, JWT_SECRET, JWT_SECRET,…
+стражи исполнения: записей прочитано 1460 · секретов под меткой 7 (CLAUDE_CODE_MESSAGING_TOKEN, JWT_SECRET, JWT_SECRET,…
 ⚠ текст пользователя НЕ судился: ни один тест не отправил свободный текст и не взял canary_text (§2.7)
-собрано 531, прошло 531, пропущено 0
+собрано 536, прошло 536, пропущено 0
 pytest exit=0
 $ uv run --project backend pre-commit run --all-files > ../precommit.log 2>&1; echo "pre-commit exit=$?"; grep -c "Pass…
 pre-commit exit=0
 27
 $ CI=true uv run --project backend python3 scripts/lint/contour_doctor.py | grep -E "contour-doctor:"; echo "doctor exi…
-contour-doctor: AUTO 40 · WEAK 16 · ABSENT 2 · TOOL 3 · SKIP 9 · DEAD 0
+contour-doctor: AUTO 40 · WEAK 18 · ABSENT 2 · TOOL 3 · SKIP 9 · DEAD 0
 doctor exit=0
 $ bash scripts/lint/check_gate_coverage.sh | tail -1; echo "gate-coverage exit=${PIPESTATUS[0]}"
 gate-coverage: OK — 16 скрипт(ов), подключено 11, осознанно нет 5; правил сверено 8 (4 конфиг(ов))
@@ -51,10 +52,12 @@ $ git status --short | head -5; echo "status lines: $(git status --short | wc -l
 status lines: 0
 ```
 
-- Счёт — 38 файлов и 2265 строк при пределах 50 и 2500. В «секретов под меткой» — имена
+- Счёт — 39 файлов и 2434 строки при пределах 50 и 2500. В «секретов под меткой» — имена
   переменных стражей исполнения, значений нет.
-- После прогона тестовая база клона `audit_test_0416a31528` снята («было 1, стало 0»), клон
-  удалён.
+- Раньше так же зелёными прошли клоны на `7b4273e` (11:45:28Z, до правки 2б: набор 531, WEAK
+  16) и на `c7987cc` (12:01:34Z, после неё: набор 536, WEAK 18).
+- После каждого прогона тестовая база клона `audit_test_0416a31528` снята («было 1, стало 0»),
+  клон удалён.
 
 ## Дайджест утверждений
 
