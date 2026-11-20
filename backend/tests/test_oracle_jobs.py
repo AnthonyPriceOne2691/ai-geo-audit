@@ -18,7 +18,8 @@ import yaml
 ROOT = envguard.ROOT
 QUALITY = ROOT / ".github" / "workflows" / "quality.yml"
 COMPOSE = ROOT / "docker-compose.yml"
-SOFT_EXIT = re.compile(r"\|\|\s*true\b")
+#: Мягкий выход шага: `|| true`, `|| :` и `|| exit 0` — итог команды теряется.
+SOFT_EXIT = re.compile(r"\|\|\s*(?:true|:|exit\s+0)(?![\w-])")
 SCAN_COMMANDS = ("install", "run", "sbom")
 
 
@@ -34,19 +35,41 @@ def soft_exit(job_name: str, job: dict[str, Any], marker: str) -> list[str]:
     problems = [] if found else [f"{job_name}: нет шага с `{marker}`"]
     if job.get("continue-on-error"):
         problems.append(f"{job_name}: continue-on-error у джобы")
+    if "if" in job:
+        problems.append(f"{job_name}: условие у джобы — {job['if']}")
     for step in found:
         name = step.get("name", marker)
         if step.get("continue-on-error"):
             problems.append(f"{job_name}: шаг «{name}» — continue-on-error")
         if SOFT_EXIT.search(str(step.get("run", ""))):
-            problems.append(f"{job_name}: шаг «{name}» — || true")
+            problems.append(f"{job_name}: шаг «{name}» — мягкий выход")
+        if "if" in step:
+            problems.append(f"{job_name}: шаг «{name}» — условие {step['if']}")
+    return problems
+
+
+def trigger_problems(workflow: dict[Any, Any], job_name: str) -> list[str]:
+    """Workflow идёт на запросе в main и на push в main: фильтр веток main не исключает."""
+    triggers = workflow.get(True) or workflow.get("on") or {}
+    request = triggers.get("pull_request", False)
+    push = (triggers.get("push") or {}).get("branches", [])
+    problems = []
+    if request is False or "main" not in push:
+        problems.append(f"{job_name}: workflow идёт не на запросе и не на push в main")
+    request = request or {}
+    if "main" not in request.get("branches", ["main"]) or "main" in request.get(
+        "branches-ignore", []
+    ):
+        problems.append(f"{job_name}: запрос в main джобу не запустит — фильтр веток")
     return problems
 
 
 def stack_problems(workflow: dict[Any, Any]) -> list[str]:
-    """A76: джоба `stack` гоняет оракул, и её итог — итог оракула."""
+    """A76: джоба `stack` гоняет оракул на запросе, и её итог — итог оракула."""
     job = workflow.get("jobs", {}).get("stack")
-    return soft_exit("stack", job, "scripts/stack_oracle.py") if job else ["джобы stack нет"]
+    if not job:
+        return ["джобы stack нет"]
+    return trigger_problems(workflow, "stack") + soft_exit("stack", job, "scripts/stack_oracle.py")
 
 
 def scan_problems(workflow: dict[Any, Any]) -> list[str]:
@@ -54,19 +77,13 @@ def scan_problems(workflow: dict[Any, Any]) -> list[str]:
     job = workflow.get("jobs", {}).get("image-scan")
     if not job:
         return ["джобы image-scan нет"]
-    problems = []
-    triggers = workflow.get(True) or workflow.get("on") or {}
-    push = (triggers.get("push") or {}).get("branches", [])
-    if "pull_request" not in triggers or "main" not in push:
-        problems.append("image-scan: workflow идёт не на запросе и не на push в main")
-    if "if" in job:
-        problems.append(f"image-scan: условие у джобы — {job['if']}")
+    problems = trigger_problems(workflow, "image-scan")
     rights = job.get("permissions", workflow.get("permissions"))
     if rights != {"contents": "read"}:
         problems.append(f"image-scan: права {rights!r}, а не contents: read")
     for command in SCAN_COMMANDS:
         problems += soft_exit("image-scan", job, f"scripts/image_scan.py {command}")
-    return problems
+    return list(dict.fromkeys(problems))
 
 
 def db_image_problems(workflow: dict[Any, Any], compose: dict[Any, Any]) -> list[str]:
@@ -111,31 +128,54 @@ def step_with(job: dict[str, Any], marker: str) -> dict[str, Any]:
     return next(s for s in job["steps"] if marker in str(s.get("run", "")))
 
 
-def spoil_stack(workflow: dict[Any, Any], case: str) -> None:
-    step = step_with(workflow["jobs"]["stack"], "scripts/stack_oracle.py")
+def spoil_stack(workflow: dict[Any, Any], case: str) -> str:
+    """Порча джобы `stack`; возвращает, что обязано быть названо."""
+    job = workflow["jobs"]["stack"]
+    step = step_with(job, "scripts/stack_oracle.py")
+    tails = {"or-true": " || true", "or-colon": " || :", "or-exit-0": " || exit 0"}
     if case == "continue":
         step["continue-on-error"] = True
+    elif case in tails:
+        step["run"] += tails[case]
+    elif case == "step-if":
+        step["if"] = "false"
+    elif case == "job-if":
+        job["if"] = "false"
+        return "условие у джобы"
     else:
-        step["run"] = f"{step['run']} || true"
+        (workflow.get(True) or workflow["on"])["pull_request"] = {"branches": ["release"]}
+        return "фильтр веток"
+    return str(step["name"])
 
 
-@pytest.mark.parametrize("case", ["continue", "or-true"])
-def test_a76_stack_copies_are_red_with_the_step_name(case: str) -> None:
-    """A76, четвёртая строка, копии: «continue-on-error: true» или «|| true» у шага оракула —
-    красное с именем шага."""
+STACK_COPIES = ["continue", "or-true", "or-colon", "or-exit-0", "step-if", "job-if", "pr-branches"]
+
+
+@pytest.mark.parametrize("case", STACK_COPIES)
+def test_a76_stack_copies_are_red_and_named(case: str) -> None:
+    """A76, четвёртая строка, копии: «continue-on-error: true», мягкий выход (`|| true`, `|| :`,
+    `|| exit 0`), условие у шага или джобы, запрос с фильтром веток без main — красное с именем
+    шага или правила."""
     workflow = load(QUALITY)
-    name = step_with(workflow["jobs"]["stack"], "scripts/stack_oracle.py")["name"]
-    spoil_stack(workflow, case)
-    assert any(name in p for p in stack_problems(workflow))
+    named = spoil_stack(workflow, case)
+    assert any(named in p for p in stack_problems(workflow))
 
 
-SCAN_COPIES = ["no-push", "job-if", "write-token", *(f"soft-{c}" for c in SCAN_COMMANDS)]
+SCAN_COPIES = [
+    "no-push",
+    "job-if",
+    "write-token",
+    "step-if-run",
+    "or-exit-0-sbom",
+    "pr-ignore-main",
+    *(f"soft-{c}" for c in SCAN_COMMANDS),
+]
 
 
 @pytest.mark.parametrize("case", SCAN_COPIES)
 def test_a129_scan_copies_are_red_and_named(case: str) -> None:
-    """A129, копии: без push в main, условие у джобы, токен на запись, «|| true» у шага
-    сканера — красное с именем правила или шага."""
+    """A129, копии: без push в main, условие у джобы или шага, токен на запись, мягкий выход у
+    шага сканера, запрос без main в фильтре веток — красное с именем правила или шага."""
     workflow = load(QUALITY)
     job = workflow["jobs"]["image-scan"]
     if case == "no-push":
@@ -147,6 +187,17 @@ def test_a129_scan_copies_are_red_and_named(case: str) -> None:
     elif case == "write-token":
         job["permissions"] = {"contents": "write"}
         named = "права"
+    elif case == "step-if-run":
+        step = step_with(job, "scripts/image_scan.py run")
+        step["if"] = "false"
+        named = str(step["name"])
+    elif case == "or-exit-0-sbom":
+        step = step_with(job, "scripts/image_scan.py sbom")
+        step["run"] += " || exit 0"
+        named = str(step["name"])
+    elif case == "pr-ignore-main":
+        (workflow.get(True) or workflow["on"])["pull_request"] = {"branches-ignore": ["main"]}
+        named = "фильтр веток"
     else:
         step = step_with(job, f"scripts/image_scan.py {case.removeprefix('soft-')}")
         step["run"] = f"{step['run']} || true"

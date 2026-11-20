@@ -276,3 +276,25 @@ def test_a76_finish_result_is_the_steps_result(
     out = capsys.readouterr().out
     assert f"красных {int(red)}" in out
     assert ("КРАСНОЕ" in out) is red
+
+
+class DockerDown(oracle.Docker):
+    """Подставной исполнитель: `docker version` не отвечает — нет команды или нет службы."""
+
+    def __init__(self, missing: bool) -> None:
+        super().__init__()
+        self.missing = missing
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        if self.missing:
+            raise FileNotFoundError("docker")
+        return subprocess.CompletedProcess(["docker", *args], 1, b"", b"Cannot connect to daemon")
+
+
+@pytest.mark.parametrize("missing", [True, False], ids=["no-binary", "no-daemon"])
+def test_a76_docker_down_is_code_2_not_a_green_run(
+    missing: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A76: Docker не отвечает — код 2 и подсказка, а не зелёный прогон без единого шага."""
+    assert oracle.run_oracle("ai-geo-audit-oracle-test", DockerDown(missing)) == 2
+    assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
