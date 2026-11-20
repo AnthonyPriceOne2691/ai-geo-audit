@@ -1,22 +1,28 @@
-"""Маршруты-пробы и сборка приложения для тестов API (A42, A44, A45).
+"""Маршруты-пробы и сборка приложения для тестов API (A36, A38–A47).
 
 Закрытая проба отвечает именем вошедшего, проба с телом — по схеме с запретом лишних полей,
-падающая проба падает с меткой. Подставные проверки пропуска: одна признаёт тестовый пропуск,
-другая падает. Схема тела — на уровне модуля: FastAPI ищет аннотации по имени, схему внутри
-функции он не найдёт (проба 7 среза 0). Пропуск и пароль сайта — из слов-заглушек.
+падающая проба падает с меткой, проба журнала пишет запись INFO. Подставные проверки
+пропуска: одна признаёт тестовый пропуск, другая падает. Схема тела — на уровне модуля:
+FastAPI ищет аннотации по имени, схему внутри функции он не найдёт (проба 7 среза 0, L43).
+Пропуск и пароль сайта — из слов-заглушек.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import Mapping
 from typing import Annotated, Any
 
 import dbtools
 import httpx
+import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, Security
+from pydantic import SecretStr
+from starlette.types import ASGIApp
 
+from ai_geo_audit import config
 from ai_geo_audit.api import access
 from ai_geo_audit.api.app import create_app
 from ai_geo_audit.api.contract import RequestModel
@@ -28,6 +34,7 @@ BODY = "/api/probe/body"
 BOOM = "/api/probe/boom"
 UNAUTHORIZED = "/api/probe/unauthorized"
 BARE_503 = "/api/probe/bare-503"
+JOURNAL = "/api/probe/journal"
 #: Вызовы закрытой пробы: по ним видно, дошёл ли запрос до обработчика.
 CALLS: list[str] = []
 SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_text("utf-8"))
@@ -74,6 +81,12 @@ async def bare_503() -> None:
     raise HTTPException(503, detail="bare-503-mark-5e1f")
 
 
+@probes.get("/journal")
+async def journal() -> dict[str, str]:
+    logging.getLogger("ai_geo_audit.api.probe").info("проба", extra={"probe": 7})
+    return {}
+
+
 async def known_pass(token: str) -> access.Visitor | None:
     """Подставная проверка: признаёт только тестовый пропуск."""
     return access.Visitor("probe-visitor") if token == PASS else None
@@ -93,9 +106,18 @@ def build(
     return app
 
 
-def client(app: FastAPI, **transport: Any) -> httpx.AsyncClient:
-    """ASGI-клиент в том же цикле событий; адрес соединения — петля."""
+def use_database(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    """Движок процесса смотрит в эту базу: настройка подменяется до первого вызова движка."""
+    storage = config.StorageSettings()
+    monkeypatch.setattr(storage, "database_url", SecretStr(url))
+    monkeypatch.setattr(config, "storage", storage)
+
+
+def client(
+    app: ASGIApp, address: tuple[str, int] = ("127.0.0.1", 40000), **transport: Any
+) -> httpx.AsyncClient:
+    """ASGI-клиент в том же цикле событий; адрес соединения — петля, если не задан свой."""
     return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 40000), **transport),
+        transport=httpx.ASGITransport(app=app, client=address, **transport),
         base_url="http://test",
     )

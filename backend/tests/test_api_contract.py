@@ -104,9 +104,10 @@ async def test_a42_failed_check_does_not_open_the_entry(capsys: pytest.CaptureFi
     """A42: проверка пропуска падает `RuntimeError("check-down-7a1")` — 500 `internal` с номером
     запроса, проба не вызвана, метки в ответе нет; в журнале — ERROR с трассировкой и тем же
     номером."""
-    log_setup.setup_logging(fmt="json")
     probes.CALLS.clear()
-    async with probes.client(probes.build(check=probes.broken_check)) as http:
+    app = probes.build(check=probes.broken_check)
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http:
         response = await http.get(probes.CLOSED, headers={"X-Access-Token": probes.PASS})
     number = response.headers["x-request-id"]
     assert (response.status_code, response.json()["kind"]) == (500, "internal")
@@ -252,9 +253,10 @@ async def test_a45_crash_is_a_500_in_form_and_one_error_record(
     получает ответ, а не исключение: 500 по образцу `internal`, номер в `detail` — из
     `X-Request-ID`, метки в ответе нет. В журнале ровно одна запись ERROR с трассировкой, меткой
     и тем же `request_id`."""
-    log_setup.setup_logging(fmt="json")
     internal = probes.sample("internal")
-    async with probes.client(probes.build(), raise_app_exceptions=True) as http:
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app, raise_app_exceptions=True) as http:
         response = await http.get(probes.BOOM, headers={"X-Access-Token": probes.PASS})
     number = response.headers["x-request-id"]
     found = re.fullmatch(internal["detail_pattern"], response.json()["detail"])
