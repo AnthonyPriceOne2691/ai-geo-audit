@@ -1,13 +1,15 @@
 """Приложение API и настройки его сервера.
 
 `create_app()` — фабрика для uvicorn: проверка старта `api` — до сборки; схема и консоль API
-выключены во всех режимах, консоль разработки — Ч1.3б. `server_settings()` — все поля uvicorn
+выключены во всех режимах, консоль разработки — Ч1.3б. Остановка закрывает движок процесса:
+соединения пула не живут до конца процесса (A37). `server_settings()` — все поля uvicorn
 явно: своё окружение (`FORWARDED_ALLOW_IPS`, `WEB_CONCURRENCY`) uvicorn тогда не читает.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
@@ -18,9 +20,17 @@ from ai_geo_audit.api import access, contract, health
 from ai_geo_audit.api.middleware import EntryLayer
 from ai_geo_audit.config.startup_checks import check_startup
 from ai_geo_audit.logs.setup import setup_logging
+from ai_geo_audit.storage import dispose_engine
 
 #: Мягкая остановка: запросы в работе доживают до этого предела, затем процесс кончается.
 GRACEFUL_SHUTDOWN_SECONDS = 20
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Остановка закрывает движок процесса (A37): иначе соединения пула живут до конца процесса."""
+    yield
+    await dispose_engine()
 
 
 def create_app(
@@ -35,7 +45,11 @@ def create_app(
     check_startup("api")
     setup_logging()
     app = FastAPI(
-        openapi_url=None, docs_url=None, redoc_url=None, swagger_ui_oauth2_redirect_url=None
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+        swagger_ui_oauth2_redirect_url=None,
+        lifespan=_lifespan,
     )
     app.add_exception_handler(HTTPException, contract.on_http_exception)
     app.add_exception_handler(RequestValidationError, contract.on_validation_error)
