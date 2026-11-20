@@ -121,6 +121,13 @@ React с Vite и Mantine, pytest, docker compose.
 - Оракул — `python3 scripts/stack_oracle.py`: собирает образ из чистой копии `git archive HEAD`,
   поднимает стек под своим именем и убирает его в конце прогона. Нужны Docker с compose v2 и
   BuildKit; код 0 — все шаги прошли.
+- Уборка оракула — по своему имени `ai-geo-audit-oracle-` и 10 знакам sha256 пути копии: остатки
+  прошлого прогона снимаются на старте, по Ctrl-C и SIGTERM уборка идёт ровно одна; второй прогон
+  той же копии ждёт замка. В CI оракул — джоба `stack` на запросе и на push в main.
+- Сканер образа — `python3 scripts/image_scan.py install --dir D`, затем `run --work W --trivy
+  D/trivy` и `sbom --work W --trivy D/trivy`: Trivy 0.76.2 файлом выпуска по sha256, скан файла
+  `docker save`. Только на раннере — джоба `image-scan`; после ручного прогона на Linux —
+  `docker image rm ai-geo-audit-scan:backend` и каталог `--work`.
 
 ## Фронт
 
