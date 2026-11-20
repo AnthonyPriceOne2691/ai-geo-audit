@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import secrets
 import shutil
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -30,6 +32,10 @@ from typing import IO, Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = "deploy/backend/Dockerfile"
+COMPOSE = "docker-compose.yml"
+#: Адрес web для доверия api — петля, выдуманный: сам web — Ч1.5б.
+WEB_ADDRESS = "127.0.0.1"
+DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
 WHITELIST = DOCKERFILE + ".dockerignore"
 TARGET = "backend"
 PACKAGE = "backend/src/ai_geo_audit"
@@ -56,7 +62,7 @@ PROBE_DATA = "_oracle_probe.txt"
 APP_UID = "10001"
 CACHE = re.compile(r"(^|/)__pycache__(/|$)|\.py[co]$")
 #: Пределы команд, секунды: зависший шаг называется своим пределом, а не висит.
-LIMITS = {"docker": 30, "build": 1200, "run": 120, "export": 300}
+LIMITS = {"docker": 30, "build": 1200, "run": 120, "export": 300, "up": 300}
 UP_HINT = "Docker не отвечает: поднимите Docker Desktop (open -a Docker) или службу docker"
 #: Что оракул спрашивает у собранного образа: версия Python, инструменты, файлы, списки.
 INSPECT = """
@@ -87,6 +93,26 @@ def stack_name(path: Path) -> str:
 
 def now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_time(text: str) -> datetime | None:
+    """Время Docker (RFC 3339, до наносекунд); нулевое `0001-01-01…` — None: не стартовал."""
+    found = re.match(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d{1,6})?", text or "")
+    if not found or found[1].startswith("0001-"):
+        return None
+    return datetime.fromisoformat(found[1] + (found[2] or "")).replace(tzinfo=UTC)
+
+
+def top_uids(text: str) -> set[str]:
+    """Пользователи процессов из `docker compose top`: столбец UID под строкой заголовка."""
+    uids, under = set(), False
+    for line in text.splitlines():
+        words = line.split()
+        if words[:1] == ["UID"]:
+            under = True
+        elif under and words:
+            uids.add(words[0])
+    return uids
 
 
 @dataclass
@@ -151,6 +177,32 @@ def files_under(root: Path) -> set[str]:
     return {n for n in names if not CACHE.search(n) and not n.rsplit("/", 1)[-1].startswith(".env")}
 
 
+_UV_PIN = re.compile(r'\buv==(?P<pip>[\w.]+)|required-version\s*=\s*"==(?P<required>[\w.]+)"')
+_UV_IMAGE = re.compile(r"^FROM\s+ghcr\.io/astral-sh/uv:(?P<tag>[\w.]+)@", re.MULTILINE)
+
+
+def uv_versions(root: Path) -> tuple[dict[str, str], list[str], str]:
+    """Версии uv по местам — образ, файл проекта, файлы CI — и что с ними не так (A60). Файлов
+    CI нет — это говорится словами: пустая сверка не выглядит зелёной."""
+    image = _UV_IMAGE.search((root / DOCKERFILE).read_text(encoding="utf-8"))
+    versions = {"Dockerfile": image["tag"]} if image else {}
+    workflows = root / ".github" / "workflows"
+    places = [root / "backend" / "pyproject.toml", *sorted(workflows.glob("*.y*ml"))]
+    for place in (p for p in places if p.is_file()):
+        for number, line in enumerate(place.read_text(encoding="utf-8").splitlines(), 1):
+            for pin in _UV_PIN.finditer(line):
+                versions[f"{place.name}:{number}"] = pin["pip"] or pin["required"]
+    ci = [place for place in versions if not place.startswith(("Dockerfile", "pyproject.toml"))]
+    problems = ["CI есть, а версии uv в нём нет"] * (workflows.is_dir() and not ci)
+    problems += [f"версии uv разошлись: {versions}"] * (len(set(versions.values())) > 1)
+    problems += ["в Dockerfile нет образа uv"] * (not image)
+    return (
+        versions,
+        problems,
+        "" if workflows.is_dir() else "файлов CI нет — сверять uv с CI не с чем",
+    )
+
+
 def minor(text: str) -> str:
     """Минорная версия Python из строки вида `>=3.12,<3.13` или `==3.12.*`."""
     found = re.search(r"\d+\.\d+", text)
@@ -174,14 +226,25 @@ class Docker:
     containers: list[str] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
 
-    def __call__(self, *args: str, limit: str = "run", check: bool = True) -> str:
-        seconds = LIMITS[limit]
+    def result(
+        self, *args: str, limit: str = "run", **kw: Any
+    ) -> subprocess.CompletedProcess[bytes]:
+        """Команда Docker под пределом; `stdin` — байты на вход, `env` — окружение команды."""
+        seconds, stdin = LIMITS[limit], kw.pop("stdin", None)
         try:
-            done = subprocess.run(
-                ["docker", *args], capture_output=True, timeout=seconds, check=False
+            return subprocess.run(
+                ["docker", *args],
+                input=stdin,
+                capture_output=True,
+                timeout=seconds,
+                check=False,
+                **kw,
             )
         except subprocess.TimeoutExpired:
-            raise StepFailed(f"docker {args[0]} не уложился в {seconds} с") from None
+            raise StepFailed(f"docker {' '.join(args[:2])} не уложился в {seconds} с") from None
+
+    def __call__(self, *args: str, limit: str = "run", check: bool = True, **kw: Any) -> str:
+        done = self.result(*args, limit=limit, **kw)
         if check and done.returncode:
             tail = done.stderr.decode("utf-8", "replace").strip().splitlines()[-6:]
             raise StepFailed(f"docker {args[0]} — код {done.returncode}: {' | '.join(tail)}")
@@ -218,6 +281,10 @@ class Run:
     label: str
     args: dict[str, str]
     facts: dict[str, Any] = field(default_factory=dict)
+    #: Секреты стека выдумывает оракул: пароль 24 знака hex и секрет подписи 64 знака — проверка
+    #: старта в бою их принимает (A21, A3).
+    password: str = field(default_factory=lambda: secrets.token_hex(12))
+    jwt: str = field(default_factory=lambda: secrets.token_hex(32))
 
     @property
     def image(self) -> str:
@@ -235,6 +302,89 @@ class Run:
             scan = scan_tar(stream, self.label, prefix)
         tar.unlink()
         return scan
+
+    def stack_env(self, migrate_password: str | None = None) -> dict[str, str]:
+        """Окружение compose: переменные сервера стека без чужих `COMPOSE_*`."""
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
+        return clean | {
+            "BACKEND_IMAGE": self.image,
+            "DB_PASSWORD": self.password,
+            "MIGRATE_DATABASE_URL": DB_URL.format(migrate_password or self.password),
+            "API_DATABASE_URL": DB_URL.format(self.password),
+            "JWT_SECRET": self.jwt,
+            "WEB_ADDRESS": WEB_ADDRESS,
+            "KEYS_MASTER_KEY_HOST_FILE": str(self.copy.parent / "master.key"),
+        }
+
+    def compose(self, *args: str, wrong: str | None = None, **kw: Any) -> str:
+        """Команда compose стека оракула: своё имя, файл назван явно, `.env` копии не читается."""
+        base = [
+            "compose",
+            "-p",
+            self.name,
+            "-f",
+            str(self.copy / COMPOSE),
+            "--env-file",
+            os.devnull,
+        ]
+        return self.docker(*base, *args, env=self.stack_env(wrong), **kw)
+
+    def compose_result(self, *args: str, wrong: str | None = None, **kw: Any) -> Any:
+        base = [
+            "compose",
+            "-p",
+            self.name,
+            "-f",
+            str(self.copy / COMPOSE),
+            "--env-file",
+            os.devnull,
+        ]
+        return self.docker.result(*base, *args, env=self.stack_env(wrong), **kw)
+
+    def inspect(self, service: str) -> dict[str, Any]:
+        """Состояние контейнера сервиса стека по `docker inspect`."""
+        ids = self.compose("ps", "--all", "--quiet", service, limit="docker").split()
+        if not ids:
+            raise StepFailed(f"контейнера {service} нет")
+        return json.loads(self.docker("inspect", ids[0], limit="docker"))[0]
+
+    def cleanup(self) -> list[str]:
+        """Уборка своего имени: стек с томами, контейнеры и образы; остаток — по меткам compose."""
+        if (self.copy / COMPOSE).is_file():
+            try:
+                self.compose("down", "--volumes", "--remove-orphans", limit="up", check=False)
+            except StepFailed:
+                pass
+        left = self.docker.cleanup()
+        mark = f"label=com.docker.compose.project={self.name}"
+        for kind, flags in (("container", ["-a"]), ("volume", []), ("network", [])):
+            ids = self.docker(kind, "ls", "-q", *flags, "--filter", mark, check=False).split()
+            left += [f"{kind} {item}" for item in ids]
+        return left
+
+
+def output(done: subprocess.CompletedProcess[bytes]) -> str:
+    return (done.stdout + done.stderr).decode("utf-8", "replace")
+
+
+def health(run: Run, service: str) -> str | None:
+    return run.inspect(service)["State"].get("Health", {}).get("Status")
+
+
+def wait_health(run: Run, service: str, status: str, limit: float) -> float:
+    """Ждать состояния здоровья сервиса не дольше `limit` с; время монотонных часов."""
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        if health(run, service) == status:
+            return time.monotonic()
+        time.sleep(0.5)
+    raise StepFailed(f"{service} не стал {status} за {limit:g} с")
+
+
+def alembic(run: Run, command: str) -> list[str]:
+    """Ревизии alembic из образа: `current` или `heads` разовым migrate."""
+    out = run.compose("run", "--rm", "-T", "--no-deps", "migrate", "alembic", command)
+    return sorted(re.findall(r"(?m)^(\w+)(?: \(head\))?\s*$", out))
 
 
 def plant(copy: Path, label: str) -> None:
@@ -281,9 +431,15 @@ def step_python(run: Run) -> str:
         raise StepFailed(f"Python {facts['python']}, а в pyproject и uv.lock — {sorted(wanted)}")
     if facts["dev"] or facts["uv"]:
         raise StepFailed(f"в образе инструменты разработки: {facts['dev']}, uv — {facts['uv']}")
+    versions, problems, note = uv_versions(run.copy)
+    if problems:
+        raise StepFailed("; ".join(problems))
+    uv = f"uv {set(versions.values()).pop()} в {len(versions)} местах" + (
+        f"; {note}" if note else ""
+    )
     return (
         f"Python {facts['python']}; requires-python и uv.lock — {minor(facts['python'])}; "
-        f"{', '.join(DEV_TOOLS)} — ModuleNotFoundError, uv в PATH нет"
+        f"{', '.join(DEV_TOOLS)} — ModuleNotFoundError, uv в PATH нет; {uv}"
     )
 
 
@@ -355,6 +511,114 @@ def step_secrets(run: Run) -> str:
     return f"значений {len(run.args)} имён нет в истории и Config.Env"
 
 
+def step_rules_on_file(run: Run) -> str:
+    """A73: правила на настоящем файле внутри собранного образа. Файл назван явно — чужой
+    `docker-compose.override.yml` не подмешается; профили включены все; без `-p`."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
+    base = ["compose", "-f", str(run.copy / COMPOSE), "--env-file", os.devnull, "--profile", "*"]
+    raw = run.docker(*base, "config", "--no-interpolate", "--format", "json", env=env)
+    services = run.docker(*base, "config", "--no-interpolate", "--services", env=env).split()
+    container = f"{run.name}-rules"
+    run.docker.containers.append(container)
+    flags = ["--rm", "-i", "--name", container, "--network", "none", "--entrypoint", "python"]
+    rules = ["-m", "ai_geo_audit.ops.stack_rules"]
+    done = run.docker.result("run", *flags, run.image, *rules, stdin=raw.encode())
+    lines = output(done).strip().splitlines()
+    if done.returncode or lines[-1:] != [f"итог: сервисов {len(services)}, правил 16, нарушений 0"]:
+        raise StepFailed(f"правила — код {done.returncode}: {' | '.join(lines[-5:])}")
+    return f"{lines[-1]}; config --services — {len(services)}"
+
+
+def step_up(run: Run) -> str:
+    """A65, A63: стек одной командой — migrate вышел 0 до старта api, api healthy; ревизия в базе
+    равна голове, обе — из образа; migrate и процессы api — от uid 10001."""
+    done = run.compose_result("up", "--detach", "--wait", "--wait-timeout", "240", limit="up")
+    if done.returncode:
+        raise StepFailed(f"up --wait — код {done.returncode}: {output(done)[-500:]}")
+    migrate, api = run.inspect("migrate"), run.inspect("api")
+    finished, started = (
+        parse_time(migrate["State"]["FinishedAt"]),
+        parse_time(api["State"]["StartedAt"]),
+    )
+    current, heads = alembic(run, "current"), alembic(run, "heads")
+    uid = run.compose("run", "--rm", "-T", "--no-deps", "migrate", "id", "-u").strip()
+    uids = top_uids(run.compose("top", "api", limit="docker"))
+    problems = [f"migrate вышел с кодом {migrate['State']['ExitCode']}"] * bool(
+        migrate["State"]["ExitCode"]
+    )
+    problems += ["api стартовал не после выхода migrate"] * (
+        not (finished and started and started > finished)
+    )
+    problems += [f"api — {health(run, 'api')}"] * (health(run, "api") != "healthy")
+    problems += [f"alembic current {current}, heads {heads}"] * (not current or current != heads)
+    problems += [f"id -u в migrate — {uid}, процессы api — {sorted(uids)}"] * (
+        uid != APP_UID or uids != {APP_UID}
+    )
+    if problems:
+        raise StepFailed("; ".join(problems))
+    return f"migrate — код 0 до старта api; alembic current = heads {current}; uid {APP_UID}"
+
+
+def step_health(run: Run) -> str:
+    """A69: api healthy не позже 50 с от старта (20 с + 3 × 10 с); проба внутри — код 0."""
+    api = run.inspect("api")
+    started = parse_time(api["State"]["StartedAt"])
+    oks = [parse_time(e["End"]) for e in api["State"]["Health"]["Log"] if e["ExitCode"] == 0]
+    seconds = (min(t for t in oks if t) - started).total_seconds()
+    probe = run.compose_result("exec", "-T", "api", "python", "-m", "ai_geo_audit.api.probe")
+    if seconds > 50 or probe.returncode:
+        raise StepFailed(f"healthy через {seconds:.1f} с; проба — код {probe.returncode}")
+    return f"healthy через {seconds:.1f} с от старта api; проба в контейнере — код 0"
+
+
+def step_repeat(run: Run) -> str:
+    """A66: migrate второй раз — код 0, ревизия прежняя, «Running upgrade» в выводе нет."""
+    before = alembic(run, "current")
+    done = run.compose_result("run", "--rm", "-T", "--no-deps", "migrate")
+    after = alembic(run, "current")
+    if done.returncode or "Running upgrade" in output(done) or after != before:
+        raise StepFailed(f"повтор — код {done.returncode}, ревизия {before} → {after}")
+    return f"код 0, ревизия {after}, «Running upgrade» нет"
+
+
+def step_outage(run: Run) -> str:
+    """A69: db остановлена — api unhealthy через 20–35 с; db снова healthy — api healthy не позже
+    15 с; перезапусков api — 0."""
+    run.compose("stop", "db", limit="up")
+    stopped = time.monotonic()
+    unhealthy = wait_health(run, "api", "unhealthy", 60) - stopped
+    run.compose("start", "db", limit="up")
+    db_back = wait_health(run, "db", "healthy", 90)
+    back = wait_health(run, "api", "healthy", 60) - db_back
+    restarts = run.inspect("api")["RestartCount"]
+    times = f"unhealthy через {unhealthy:.1f} с после остановки db, healthy через {back:.1f} с"
+    if not 20 <= unhealthy <= 35 or back > 15 or restarts:
+        raise StepFailed(f"{times} после db, перезапусков {restarts}")
+    return f"{times} после возврата db; перезапусков 0"
+
+
+def step_bad_migrate(run: Run) -> str:
+    """A67: у migrate неверный пароль базы, у api верный — up --wait не 0; migrate назван с кодом
+    выхода; api не стартовал (created, StartedAt нулевое); db healthy; пароля нет в выводе."""
+    run.compose("down", "--volumes", "--remove-orphans", limit="up")
+    wrong = secrets.token_hex(12)
+    done = run.compose_result(
+        "up", "--detach", "--wait", "--wait-timeout", "240", wrong=wrong, limit="up"
+    )
+    migrate, api = run.inspect("migrate"), run.inspect("api")
+    code = migrate["State"]["ExitCode"]
+    seen = output(done) + run.compose("logs", "--no-color", "migrate", limit="docker")
+    problems = ["up --wait — код 0"] * (done.returncode == 0) + ["migrate — код 0"] * (code == 0)
+    problems += [f"api — {api['State']['Status']}"] * (
+        api["State"]["Status"] != "created" or parse_time(api["State"]["StartedAt"]) is not None
+    )
+    problems += [f"db — {health(run, 'db')}"] * (health(run, "db") != "healthy")
+    problems += ["пароль в выводе"] * (wrong in seen or run.password in seen)
+    if problems:
+        raise StepFailed("; ".join(problems))
+    return f"up --wait — код {done.returncode}; migrate — код выхода {code}; api — created"
+
+
 #: Шаги: примеры, название, функция, нужен ли он следующим шагам.
 STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A60 A64", "сборка из чистой копии", step_build, True),
@@ -364,7 +628,21 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A62", "файлы пакета и рабочего каталога", step_package, False),
     ("A63", "пользователь образа", step_user, False),
     ("A64", "секреты сборки", step_secrets, False),
+    ("A73", "правила на настоящем docker-compose.yml", step_rules_on_file, False),
+    ("A65 A63", "подъём стека и migrate", step_up, True),
+    ("A69", "здоровье api после старта", step_health, False),
+    ("A66", "повтор migrate", step_repeat, False),
+    ("A69", "остановка и старт db", step_outage, False),
+    ("A67", "неверный пароль у migrate", step_bad_migrate, False),
 ]
+
+
+def verdict(red: int, left: list[str]) -> tuple[int, str]:
+    """Итог прогона: красные шаги или своё, оставшееся после уборки, — код 1 и «КРАСНОЕ»."""
+    line = f"итог: шагов {len(STEPS)}, красных {red}"
+    if left:
+        return 1, f"{line}; КРАСНОЕ: после уборки осталось {', '.join(left)}"
+    return (1 if red else 0), line
 
 
 def copy_head(target: Path) -> None:
@@ -393,6 +671,9 @@ def main() -> int:
             return 2
         label = f"oracle-canary-{secrets.token_hex(8)}"
         plant(copy, label)
+        key = Path(tmp) / "master.key"
+        key.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+        key.chmod(0o644)  # читает uid 10001 в контейнере; права машины переходят как есть
         values = {n: f"oracle-build-{n.lower()}-{secrets.token_hex(6)}" for n in BUILD_ARG_NAMES}
         run = Run(docker, copy, name, label, values)
         try:
@@ -405,10 +686,11 @@ def main() -> int:
                     if needed:
                         break
         finally:
-            left = docker.cleanup()
+            left = run.cleanup()
             print(f"{now()} уборка: " + (f"осталось {left}" if left else "своего не осталось"))
-    print(f"{now()} итог: шагов {len(STEPS)}, красных {red}")
-    return 1 if red else 0
+    code, line = verdict(red, left)
+    print(f"{now()} {line}")
+    return code
 
 
 if __name__ == "__main__":

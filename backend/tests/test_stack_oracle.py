@@ -144,7 +144,7 @@ def test_a63_process_users_are_read_under_the_top_header() -> None:
 
 
 class LeftBehind(oracle.Docker):
-    """Подставной исполнитель: уборка проходит, а по меткам compose остались свой контейнер и том."""
+    """Подставной исполнитель: уборка прошла, а по меткам compose остались контейнер и том."""
 
     def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
         left = {("container", "ls"): b"c0ffee000001\n", ("volume", "ls"): b"oracle_db-data\n"}
