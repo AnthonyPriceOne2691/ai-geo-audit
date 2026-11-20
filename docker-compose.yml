@@ -1,0 +1,81 @@
+# Стек сервиса: db, redis, migrate, api. Web, урезанные права, сети и боевые отличия — Ч1.5б.
+# Портов наружу нет. Секреты — только окружением сервера, ${VAR:?причина}: у процесса ровно
+# переменные его проверки старта, прочее — поля конфига. Правила файла —
+# ai_geo_audit.ops.stack_rules над `docker compose config --no-interpolate --format json`.
+name: ai-geo-audit
+
+services:
+  db:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: audit
+      POSTGRES_DB: audit
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?задайте пароль базы — .env.example, блок стека}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U audit -d audit"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  redis:
+    image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  # Миграции — тем же образом до api, одноразово: без перезапуска, сбой называется по имени.
+  migrate:
+    build:
+      context: .
+      dockerfile: deploy/backend/Dockerfile
+      target: backend
+    image: ${BACKEND_IMAGE:-ai-geo-audit-backend:local}
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: prod
+      DATABASE_URL: ${MIGRATE_DATABASE_URL:?задайте адрес базы migrate — .env.example}
+
+  api:
+    image: ${BACKEND_IMAGE:-ai-geo-audit-backend:local}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: prod
+      LOG_FORMAT: json
+      DATABASE_URL: ${API_DATABASE_URL:?задайте адрес базы api — .env.example}
+      # Очередь без пароля до «Учёток хранилищ»; там адрес — переменная сервера API_REDIS_URL.
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?задайте секрет подписи — openssl rand -hex 32}
+      KEYS_MASTER_KEY_FILE: /run/secrets/master_key
+      API_TRUSTED_PROXIES: ${WEB_ADDRESS:?задайте адрес web — единственный доверенный прокси}
+    secrets:
+      - master_key
+    healthcheck:
+      test: ["CMD", "python", "-m", "ai_geo_audit.api.probe"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  db-data:
+
+secrets:
+  master_key:
+    file: ${KEYS_MASTER_KEY_HOST_FILE:?задайте путь к файлу мастер-ключа на машине}
