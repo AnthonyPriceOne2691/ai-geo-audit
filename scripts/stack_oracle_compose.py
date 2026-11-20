@@ -118,7 +118,7 @@ def cleanup(run: Run) -> list[str]:
     """Уборка своего имени: стек с томами, контейнеры и образы; остаток — по меткам compose."""
     if (run.copy / COMPOSE).is_file():
         with contextlib.suppress(StepError):
-            compose(run, "down", "--volumes", "--remove-orphans", limit="up", check=False)
+            compose(run, "down", "-v", "--remove-orphans", limit="up", check=False)
     left = run.docker.cleanup()
     mark = f"label=com.docker.compose.project={run.name}"
     for kind, flags in (("container", ["-a"]), ("volume", []), ("network", [])):
