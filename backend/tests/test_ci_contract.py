@@ -1,7 +1,9 @@
 """Контракт CI (A99–A101, A103, A104, A117, A121, A123): workflow, хуки, STATUS и замок uv.
 
 Тесты читают файлы дерева и в сеть не ходят. Каждое правило — функция, которая возвращает
-список нарушений словами: копия-порча называет правило и место, а не падает молча.
+список нарушений словами: копия-порча называет правило и место, а не падает молча. Правила
+workflow судят разобранный YAML, место — путь в нём (номер в списке — с 1); регулярка по тексту
+файла — только для комментария версии у `uses`: запись в одну строку прячет `uses:` от регулярки.
 """
 
 from __future__ import annotations
@@ -30,9 +32,25 @@ STATUS = ROOT / "delivery" / "active" / "STATUS.md"
 LOCK_EXCEPTIONS = {"sqlalchemy", "pydantic-settings", "pytest-asyncio"}
 #: Шаг аудита смотрит JS-половину в несуществующий каталог: npm в CI — поставка В1б.
 AUDIT_FE_DIR = ".frontend-not-here"
-PINNED = re.compile(r"^\s*-?\s*uses:\s*([\w.-]+/[\w./-]+)@([0-9a-f]{40})\s+#\s*v\d+\.\d+\.\d+\s*$")
+#: A100: значение `uses` — `владелец/репо[/путь]@<полный хеш коммита>`; судится разобранное.
+PINNED = re.compile(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}")
+#: A100: версия — комментарием на строке значения `uses`. Единственная регулярка по тексту файла:
+#: в разобранном YAML комментариев нет.
+VERSION = re.compile(r"\s#\s*v\d+\.\d+\.\d+\s*$")
 EXPORT = re.compile(r'export (LINT_[A-Z_]+)="([^"]*)"')
 REQUEST_FIELDS = re.compile(r"\$\{\{\s*github\.(head_ref|event\.pull_request\.)")
+#: A100: контекст `secrets` — через точку в любой строке или любым видом внутри `${{ }}`
+#: (`secrets['X']`, `toJSON(secrets)`): выражение раннер подставляет до оболочки.
+SECRETS = re.compile(r"secrets\.|\$\{\{(?:(?!\}\}).)*?\bsecrets\b", re.IGNORECASE | re.DOTALL)
+#: A103: мягкий режим строкой сценария — `STRICT=0`, `STRICT: 0`.
+SOFT = re.compile(r"STRICT\s*[:=]\s*['\"]?0")
+#: A99: установка в `run:` — pip, pip3, pipx (и через `python -m`, `uv pip`), uvx, npx, `uv tool`,
+#: `uv add`, `uv sync`, `uv run --with`, install-команда npm и apt.
+INSTALL = re.compile(
+    r"(?<![\w-])(?:pip[3x]?|uvx|npx|uv\s+(?:tool|add|sync))(?![\w-])"
+    r"|\buv\s+run\b[^\n;&|]*\s--with\b"
+    r"|(?<![\w-])(?:npm|apt-get|apt)\b[^\n;&|]*?\s(?:install|i|ci|add)(?![\w-])"
+)
 
 
 def load(path: Path) -> dict[Any, Any]:
@@ -42,20 +60,46 @@ def load(path: Path) -> dict[Any, Any]:
     return data
 
 
-def code_lines(text: str) -> list[tuple[int, str]]:
-    """Строки без комментариев: правило судит то, что исполняется, а не пояснение."""
-    out = []
-    for number, line in enumerate(text.splitlines(), 1):
-        stripped = line.split(" #", 1)[0] if not line.lstrip().startswith("#") else ""
-        if stripped.strip():
-            out.append((number, stripped))
-    return out
+def strings(node: Any, place: str = "") -> list[tuple[str, str]]:
+    """Каждое значение разобранного YAML строкой, с путём: весь текст `run:` — да, вместе с ` #…`
+    сценария; комментариев самого YAML в разобранном нет."""
+    if isinstance(node, dict):
+        return [found for key, value in node.items() for found in strings(value, f"{place}/{key}")]
+    if isinstance(node, list):
+        return [found for n, item in enumerate(node, 1) for found in strings(item, f"{place}/{n}")]
+    return [(place.lstrip("/"), str(node))]
 
 
 def steps(workflow: dict[Any, Any]) -> list[tuple[str, dict[Any, Any], dict[Any, Any]]]:
     return [
         (name, job, step) for name, job in workflow["jobs"].items() for step in job.get("steps", [])
     ]
+
+
+def placed_steps(workflow: dict[Any, Any]) -> list[tuple[str, dict[Any, Any]]]:
+    """Шаги с местом — путём `jobs/<джоба>/steps/<N>`, как у `strings`."""
+    return [
+        (f"jobs/{name}/steps/{number}", step)
+        for name, job in workflow["jobs"].items()
+        for number, step in enumerate(job.get("steps", []), 1)
+    ]
+
+
+def uses_values(workflow: dict[Any, Any]) -> list[tuple[str, Any]]:
+    """A100: каждое значение `uses` разобранного YAML с местом — у джобы и у шагов."""
+    jobs = [
+        (f"jobs/{name}/uses", job["uses"])
+        for name, job in workflow["jobs"].items()
+        if "uses" in job
+    ]
+    return jobs + [
+        (f"{at}/uses", step["uses"]) for at, step in placed_steps(workflow) if "uses" in step
+    ]
+
+
+def runs(workflow: dict[Any, Any]) -> list[tuple[str, str]]:
+    """Текст `run:` каждого шага с местом — целиком, с комментариями сценария."""
+    return [(f"{at}/run", str(step["run"])) for at, step in placed_steps(workflow) if "run" in step]
 
 
 def hook_exports() -> dict[str, dict[str, str]]:
@@ -85,48 +129,92 @@ def lint_env_problems(workflow: dict[Any, Any], exports: dict[str, dict[str, str
     return problems
 
 
-def strict_problems(text: str, workflow: dict[Any, Any]) -> list[str]:
-    """A99, A103: режим строгий везде, у каждой джобы предохранитель по времени."""
-    problems = []
-    if workflow.get("env", {}).get("STRICT") != "1":
-        problems.append('STRICT: сверху не "1"')
-    for number, line in code_lines(text):
-        if re.search(r"STRICT\s*[:=]\s*['\"]?0", line):
-            problems.append(f"STRICT: строка {number} включает мягкий режим")
+def strict_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A99, A103: режим строгий везде — в `env` и в тексте `run:`; у каждой джобы предохранитель
+    по времени."""
+    problems = [] if workflow.get("env", {}).get("STRICT") == "1" else ['STRICT: сверху не "1"']
+    for place, value in strings(workflow):
+        if (place.endswith("env/STRICT") and value != "1") or SOFT.search(value):
+            problems.append(f"STRICT: {place} включает мягкий режим")
     for name, job in workflow["jobs"].items():
         if not isinstance(job.get("timeout-minutes"), int):
             problems.append(f"timeout-minutes: у джобы {name} нет предохранителя")
     return problems
 
 
-def install_problems(text: str, uv_version: str) -> list[str]:
-    """A99, A123: инструменты — из замка; `pip install` — только сам uv нужной версии."""
-    problems = []
-    runs = [line for _, line in code_lines(text)]
-    if not any(re.search(r"\buv sync --frozen\b", line) for line in runs):
-        problems.append("установка: нет `uv sync --frozen`")
-    for line in runs:
-        for found in re.findall(r"pip install ([^\s|;&]+(?: [^\s|;&]+)*)", line):
-            if found != f"uv=={uv_version}":
-                problems.append(
-                    f"установка: `pip install {found}`, а разрешён только uv=={uv_version}"
-                )
-        if re.search(r"\buv sync\b(?! --frozen)", line):
-            problems.append(f"установка: `uv sync` без --frozen — {line.strip()}")
-    return problems
-
-
-def uses_problems(text: str) -> list[str]:
-    """A100: действие — по полному хешу коммита, версия — в комментарии строки."""
+def install_problems(workflow: dict[Any, Any], uv_version: str) -> list[str]:
+    """A99, A123: в `run:` нет установок, кроме закреплённых, что стоят в файлах сейчас, — uv
+    точной версии пакетом и dev-группа из замка. Закреплённое вырезается целой командой, остаток
+    судится."""
+    pinned = re.compile(
+        rf"(?:python -m pip install uv=={re.escape(uv_version)}|uv sync --frozen)"
+        r"(?=[ \t]*(?:$|&&|;)|[ \t]+#)"
+    )
     return [
-        f"не закреплено по коммиту: строка {number}: {line.strip()}"
-        for number, line in enumerate(text.splitlines(), 1)
-        if re.match(r"^\s*-?\s*uses:", line) and not PINNED.match(line)
+        f"установка: {place} — `{line.strip()}`; закреплены только uv=={uv_version}"
+        " и `uv sync --frozen`"
+        for place, run in runs(workflow)
+        for line in run.replace("\\\n", " ").splitlines()
+        if INSTALL.search(pinned.sub("", line))
     ]
 
 
-def token_problems(text: str, workflow: dict[Any, Any], writers: dict[str, str]) -> list[str]:
-    """A100: сверху только чтение, запись — у названных джоб; без чужих триггеров и секретов."""
+def frozen_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A99, A123: инструменты гейтов — dev-группа из замка: в `run:` есть `uv sync --frozen`."""
+    frozen = any("uv sync --frozen" in run for _, run in runs(workflow))
+    return [] if frozen else ["установка: нет `uv sync --frozen`"]
+
+
+def uses_problems(text: str, workflow: dict[Any, Any]) -> list[str]:
+    """A100: каждое `uses` разобранного YAML — у джобы и у шагов, блоком, в одну строку или якорем —
+    по полному хешу коммита."""
+    values = uses_values(workflow)
+    pinned = [value for _, value in values if isinstance(value, str) and PINNED.fullmatch(value)]
+    return [
+        *(
+            f"не закреплено по коммиту: {at} = {value}"
+            for at, value in values
+            if value not in pinned
+        ),
+        *version_problems(text, set(pinned)),
+    ]
+
+
+def version_problems(text: str, pinned: set[str]) -> list[str]:
+    """A100: на каждой строке текста с закреплённым значением `uses` — комментарий `# vX.Y.Z`;
+    строки-комментарии YAML не в счёт."""
+    lines = [
+        (n, line)
+        for n, line in enumerate(text.splitlines(), 1)
+        if not line.lstrip().startswith("#")
+    ]
+    problems = []
+    for value in sorted(pinned):
+        found = [(n, line) for n, line in lines if value in line]
+        if not found:
+            problems.append(f"версия: значение {value} не найдено ни в одной строке")
+        problems += [
+            f"версия: строка {n} без комментария # vX.Y.Z — {line.strip()}"
+            for n, line in found
+            if not VERSION.search(line)
+        ]
+    return problems
+
+
+def secret_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A100: контекста `secrets` нет ни в одной строке разобранного YAML, и во всём тексте `run:`:
+    там ` #` — текст сценария, а выражение раннер подставляет до оболочки. Комментарии самого YAML
+    не в счёт. Токен прогона — `github.token`, а не `secrets.GITHUB_TOKEN`."""
+    return [
+        f"секреты: {place} читает secrets"
+        for place, value in strings(workflow)
+        if SECRETS.search(value)
+    ]
+
+
+def token_problems(workflow: dict[Any, Any], writers: dict[str, str]) -> list[str]:
+    """A100: сверху только чтение, запись — у названных джоб; без чужих триггеров; службы — по
+    дайджесту."""
     problems = []
     if workflow.get("permissions") != {"contents": "read"}:
         problems.append(
@@ -145,14 +233,12 @@ def token_problems(text: str, workflow: dict[Any, Any], writers: dict[str, str])
             problems.append("checkout: токен сохраняется — нужен persist-credentials: false")
         if REQUEST_FIELDS.search(str(step.get("run", ""))):
             problems.append(f"run: поле запроса в команде — {step.get('name', '')}")
-    for number, line in code_lines(text):
-        if "secrets." in line:
-            problems.append(f"секреты: строка {number} читает secrets.")
-    for name, job in workflow["jobs"].items():
-        for service in job.get("services", {}).values():
-            if "@sha256:" not in str(service.get("image", "")):
-                problems.append(f"служба джобы {name}: образ не по дайджесту")
-    return problems
+    return problems + [
+        f"служба джобы {name}: образ не по дайджесту"
+        for name, job in workflow["jobs"].items()
+        for service in job.get("services", {}).values()
+        if "@sha256:" not in str(service.get("image", ""))
+    ]
 
 
 def concurrency_problems(workflow: dict[Any, Any]) -> list[str]:
@@ -224,11 +310,13 @@ def uv_version() -> str:
 def quality_check(text: str) -> list[str]:
     workflow = yaml.safe_load(text)
     return [
-        *uses_problems(text),
-        *token_problems(text, workflow, {}),
+        *uses_problems(text, workflow),
+        *token_problems(workflow, {}),
+        *secret_problems(workflow),
         *concurrency_problems(workflow),
-        *strict_problems(text, workflow),
-        *install_problems(text, uv_version()),
+        *strict_problems(workflow),
+        *install_problems(workflow, uv_version()),
+        *frozen_problems(workflow),
         *lint_env_problems(workflow, hook_exports()),
     ]
 
@@ -236,8 +324,10 @@ def quality_check(text: str) -> list[str]:
 def guard_check(text: str) -> list[str]:
     workflow = yaml.safe_load(text)
     return [
-        *uses_problems(text),
-        *token_problems(text, workflow, {"alert": "issues"}),
+        *uses_problems(text, workflow),
+        *token_problems(workflow, {"alert": "issues"}),
+        *secret_problems(workflow),
+        *install_problems(workflow, uv_version()),
         *guard_problems(workflow),
     ]
 
@@ -361,6 +451,63 @@ QUALITY_COPIES = [
         'LINT_PY_SRC: "backend"',
         "LINT_PY_SRC",
     ),
+    # Находки проверяющей 2026-11-20: запись `uses` в одну строку, `secrets.` за ` #` внутри
+    # `run: |`, `pip3 install` (A99 — копии ниже, `INSTALLS`); и порчи, которые краснели и прежде.
+    (
+        "A100-uses-in-one-line",
+        r"- uses: actions/checkout@[0-9a-f]{40}  # v[\d.]+\n\s+with:\n[^\n]*\n"
+        r"[^\n]*persist-credentials: false[^\n]*",
+        "- {uses: actions/checkout@v7, with: {fetch-depth: 0, persist-credentials: false}}",
+        "не закреплено по коммиту: jobs/gates/steps/1/uses = actions/checkout@v7",
+    ),
+    (
+        "A100-job-uses-by-tag",
+        r"\njobs:\n",
+        "\njobs:\n  reuse:\n    uses: octo-org/flows/.github/workflows/ci.yml@v1\n",
+        "не закреплено по коммиту: jobs/reuse/uses = octo-org/flows/.github/workflows/ci.yml@v1",
+    ),
+    (
+        "A100-version-not-in-comment",
+        r"  # v[\d.]+\n",
+        "\n",
+        "без комментария # vX.Y.Z — - uses: actions/checkout@",
+    ),
+    (
+        "A100-secret-after-hash-in-run-block",
+        r"run: bash scripts/lint/check_gate_coverage.sh",
+        "run: |\n          bash scripts/lint/check_gate_coverage.sh # ${{ secrets.X }}",
+        "секреты: jobs/gates/steps/7/run",
+    ),
+    (
+        "A100-secrets-whole-context",
+        r"run: bash scripts/lint/check_gate_coverage.sh",
+        "run: echo '${{ toJSON(secrets) }}'",
+        "секреты: jobs/gates/steps/7/run",
+    ),
+    (
+        "A100-persist-credentials-dropped",
+        r"\n\s+persist-credentials: false[^\n]*",
+        "",
+        "checkout: токен сохраняется",
+    ),
+    (
+        "A103-strict-off-after-quoted-hash",
+        r"run: bash scripts/lint/check_gate_coverage.sh",
+        "run: |\n          echo ' #'; STRICT=0 bash scripts/lint/check_gate_coverage.sh",
+        "STRICT: jobs/gates/steps/7/run",
+    ),
+    (
+        "A103-job-without-timeout",
+        r"\n    timeout-minutes: 20",
+        "",
+        "timeout-minutes: у джобы gates нет предохранителя",
+    ),
+    (
+        "A123-uv-sync-without-frozen",
+        r"uv sync --frozen",
+        "uv sync",
+        "установка: jobs/gates/steps/4/run — `cd backend && uv sync`",
+    ),
 ]
 
 
@@ -368,7 +515,8 @@ QUALITY_COPIES = [
     ("case", "old", "new", "named"), QUALITY_COPIES, ids=[c[0] for c in QUALITY_COPIES]
 )
 def test_quality_copies_are_red_and_named(case: str, old: str, new: str, named: str) -> None:
-    """A99, A100, A101, A103, A123, копии: порча `quality.yml` — красный, названо правило."""
+    """A99, A100, A101, A103, A123, копии: порча `quality.yml` — красный, названо правило; у порч
+    записи, `run:` и установки — и место, путь в YAML."""
     text = QUALITY.read_text(encoding="utf-8")
     spoiled, count = re.subn(old, lambda _: new, text, count=1)
     assert count == 1, f"{case}: в quality.yml нет места порчи {old!r}"
@@ -383,6 +531,24 @@ GUARD_COPIES = [
         "permissions:\n  contents: read\n  issues: write",
         "права токена",
     ),
+    (
+        "A100-guard-token-from-secrets",
+        r"\$\{\{ github\.token \}\}",
+        "${{ secrets.GITHUB_TOKEN }}",
+        "секреты: jobs/alert/steps/1/env/GH_TOKEN",
+    ),
+    (
+        "A100-guard-uses-by-tag",
+        r"- run: exit 1",
+        "- uses: actions/checkout@v7",
+        "не закреплено по коммиту: jobs/alert/steps/2/uses = actions/checkout@v7",
+    ),
+    (
+        "A99-guard-install",
+        r"- run: exit 1",
+        "- run: npm i -g left-pad && exit 1",
+        "установка: jobs/alert/steps/2/run",
+    ),
 ]
 
 
@@ -390,11 +556,44 @@ GUARD_COPIES = [
     ("case", "old", "new", "named"), GUARD_COPIES, ids=[c[0] for c in GUARD_COPIES]
 )
 def test_guard_copies_are_red_and_named(case: str, old: str, new: str, named: str) -> None:
-    """A100, A117, копии: порча `main-guard.yml` — красный, названо правило."""
+    """A99, A100, A117, копии: порча `main-guard.yml` — красный, названо правило; правила `uses`,
+    секретов и установки — те же, что у `quality.yml`."""
     text = GUARD.read_text(encoding="utf-8")
     spoiled, count = re.subn(old, lambda _: new, text, count=1)
     assert count == 1, f"{case}: в main-guard.yml нет места порчи {old!r}"
     assert named in "\n".join(guard_check(spoiled))
+
+
+COVERAGE = "bash scripts/lint/check_gate_coverage.sh"
+#: A99: установка в `run:` мимо закреплённых — каждая красная; первая — проба проверяющей.
+INSTALLS = (
+    "pip3 install requests",
+    "pip install pre-commit",
+    "python3 -m pip install requests",
+    "python -m pip install uv==0.11.26 requests",
+    "uv pip install requests",
+    "uv tool install ruff",
+    "uvx ruff check",
+    "pipx install ruff",
+    "uv add requests",
+    "uv run --no-sync --with requests python -V",
+    "npm install left-pad",
+    "npm i left-pad",
+    "npm --prefix frontend ci",
+    "npx eslint .",
+    "sudo apt-get -y install curl",
+)
+
+
+@pytest.mark.parametrize("command", INSTALLS, ids=[c.replace(" ", "-") for c in INSTALLS])
+def test_a99_copy_install_in_run_is_red_and_named(command: str) -> None:
+    """A99, копии: установка в `run:` мимо закреплённых (uv точной версии, `uv sync --frozen`) —
+    красный; названы правило, место и команда."""
+    text = QUALITY.read_text(encoding="utf-8")
+    spoiled = text.replace(f"run: {COVERAGE}", f"run: {command} && {COVERAGE}", 1)
+    assert spoiled != text, f"в quality.yml нет места порчи `run: {COVERAGE}`"
+    named = f"установка: jobs/gates/steps/7/run — `{command} && {COVERAGE}`"
+    assert named in "\n".join(quality_check(spoiled))
 
 
 def test_a100_copy_external_hook_repo_is_named() -> None:
