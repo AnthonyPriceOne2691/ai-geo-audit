@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import subprocess
 import sys
 import tarfile
 from pathlib import Path
@@ -121,3 +122,40 @@ def test_a61_stack_name_is_the_prefix_and_ten_signs_of_the_path_hash() -> None:
     assert name.startswith("ai-geo-audit-oracle-") and len(name) == len("ai-geo-audit-oracle-") + 10
     assert name != oracle.stack_name(Path("/work/copy-b"))
     assert name == oracle.stack_name(Path("/work/copy-a"))
+
+
+def test_a65_a67_docker_times_and_the_zero_time() -> None:
+    """A65, A67: время Docker с наносекундами читается; нулевое время — «не стартовал»."""
+    assert oracle.parse_time("0001-01-01T00:00:00Z") is None
+    early = oracle.parse_time("2026-11-20T09:30:01.123456789Z")
+    late = oracle.parse_time("2026-11-20T09:30:02Z")
+    assert early is not None and late is not None
+    assert early < late and early.microsecond == 123456
+
+
+def test_a63_process_users_are_read_under_the_top_header() -> None:
+    """A63: пользователи процессов — столбец UID под заголовком `docker compose top`."""
+    head = "stack-api-1\nUID    PID   PPID  C  STIME  TTY  TIME  CMD\n"
+    rows = (
+        "10001  101   1     0  09:30  ?    0:00  tini\n10001  102   101   0  09:30  ?    0:01  py\n"
+    )
+    assert oracle.top_uids(head + rows) == {"10001"}
+    assert oracle.top_uids(head + rows.replace("10001  102", "root   102")) == {"10001", "root"}
+
+
+class LeftBehind(oracle.Docker):
+    """Подставной исполнитель: уборка проходит, а по меткам compose остались свой контейнер и том."""
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        left = {("container", "ls"): b"c0ffee000001\n", ("volume", "ls"): b"oracle_db-data\n"}
+        return subprocess.CompletedProcess(["docker", *args], 0, left.get(args[:2], b""), b"")
+
+
+def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -> None:
+    """A65: своё, оставшееся после уборки, — красное и код не ноль, даже если шаги зелёные."""
+    run = oracle.Run(LeftBehind(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    left = run.cleanup()
+    assert left == ["container c0ffee000001", "volume oracle_db-data"]
+    code, line = oracle.verdict(0, left)
+    assert code == 1 and "КРАСНОЕ" in line and "oracle_db-data" in line
+    assert oracle.verdict(0, []) == (0, f"итог: шагов {len(oracle.STEPS)}, красных 0")
