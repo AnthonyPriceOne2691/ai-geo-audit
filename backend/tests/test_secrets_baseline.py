@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import envguard
+import pytest
 
 ROOT = envguard.ROOT
 _spec = importlib.util.spec_from_file_location(
@@ -45,23 +47,33 @@ def entry(name: str, kind: str, digest: str, line: int = 1) -> dict[str, Any]:
     }
 
 
-def outside_delivery(baseline: dict[str, Any]) -> list[str]:
-    """Файлы снимка вне `delivery/`: их место — пометка в самом файле, а не запись."""
-    return sorted(name for name in baseline["results"] if not name.startswith("delivery/"))
+#: Подписанная спека — активной поставки или в архиве; больше записей снимку держать некому.
+SIGNED_SPEC = re.compile(r"^delivery/(active|archive/[^/]+)/spec\.md$")
+
+
+def not_signed_specs(baseline: dict[str, Any]) -> list[str]:
+    """Файлы снимка, кроме подписанных спек: их место — пометка в самом файле, а не запись."""
+    return sorted(name for name in baseline["results"] if not SIGNED_SPEC.match(name))
 
 
 def test_baseline_holds_only_signed_spec_lines() -> None:
-    """Записи снимка — только у файлов под `delivery/`; в коде, тестах и настройках — пометки."""
+    """Записи снимка — только у подписанных спек (`delivery/active/spec.md` и спеки в архиве);
+    в коде, тестах, настройках и прочих документах поставки — пометки."""
     baseline = json.loads((ROOT / ".secrets.baseline").read_text(encoding="utf-8"))
-    assert outside_delivery(baseline) == []
+    assert not_signed_specs(baseline) == []
 
 
-def test_baseline_copy_with_a_test_entry_is_red_and_named() -> None:
-    """Копия: новая запись снимка для файла теста — красный, назван файл."""
+@pytest.mark.parametrize(
+    "name",
+    ["backend/tests/test_logs.py", "delivery/active/decisions.md", "delivery/archive/x/plan.md"],
+)
+def test_baseline_copy_with_an_entry_outside_signed_specs_is_red_and_named(name: str) -> None:
+    """Копии: запись снимка у теста, у решений поставки, у плана в архиве — красный, назван файл;
+    спека в архиве — законна."""
     baseline = json.loads((ROOT / ".secrets.baseline").read_text(encoding="utf-8"))
-    name = "backend/tests/test_logs.py"
-    baseline["results"][name] = [entry(name, "Secret Keyword", "a" * 40, 16)]
-    assert outside_delivery(baseline) == [name]
+    for path in (name, "delivery/archive/x/spec.md"):
+        baseline["results"][path] = [entry(path, "Secret Keyword", "a" * 40, 16)]
+    assert not_signed_specs(baseline) == [name]
 
 
 def test_move_rewrites_only_paths_under_the_old_directory() -> None:
