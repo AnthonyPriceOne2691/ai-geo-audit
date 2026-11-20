@@ -123,11 +123,13 @@ class Fake:
         *,
         db: bool = True,
         env: list[tuple[str, str]] | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> None:
         self.image = report() if image is None else image
         self.canary = report(CANARY) if canary is None else canary
         self.db = db
         self.env = ENV if env is None else env
+        self.meta = META if meta is None else meta
         self.calls: list[list[str]] = []
 
     def __call__(self, argv: list[str], limit: int) -> subprocess.CompletedProcess[bytes]:
@@ -143,7 +145,7 @@ class Fake:
         elif "--download-db-only" in argv:
             db = Path(argv[argv.index("--cache-dir") + 1]) / "db"
             db.mkdir(parents=True)
-            (db / "metadata.json").write_text(json.dumps(META), encoding="utf-8")
+            (db / "metadata.json").write_text(json.dumps(self.meta), encoding="utf-8")
             out = b""
         elif argv[1] == "rootfs":
             out = self.canary
@@ -372,17 +374,35 @@ def test_a126_db_download_failure_is_red_and_not_zero_findings(
 
 
 @pytest.mark.parametrize(
-    "image", [b"", b" \n", report(packages=0)], ids=["пустой вывод", "пробелы", "пакетов 0"]
+    ("image", "reason"),
+    [
+        (b"", "пустой вывод — отчёта нет"),
+        (b" \n", "пустой вывод — отчёта нет"),
+        (report(packages=0), "пакетов 0 — сканер не видит образ"),
+    ],
+    ids=["пустой вывод", "пробелы", "пакетов 0"],
 )
 def test_a126_empty_scan_is_not_zero_findings(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], image: bytes
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], image: bytes, reason: str
 ) -> None:
-    """A126, вторая строка: скан вышел с кодом 0, а отчёта нет или в нём ноль пакетов — красное,
-    а не «находок нет»."""
+    """A126, вторая строка: скан вышел с кодом 0, а отчёта нет или в нём ноль пакетов — красное
+    со своей причиной, а не «находок нет»."""
     assert scan.run("trivy", tmp_path, Fake(image=image)) == 1
     out = joined(capsys.readouterr().out)
     assert "backend: КРАСНОЕ" in out
+    assert reason in out
     assert "с исправлением 0" not in out
+
+
+def test_a126_zero_db_build_date_is_a_db_not_received(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A126, вторая строка: метаданные базы с нулевой датой сборки («0001-01-01») — база не
+    получена: красное «база уязвимостей не получена» до канарейки и образов."""
+    fake = Fake(meta={**META, "UpdatedAt": "0001-01-01T00:00:00Z"})
+    assert scan.run("trivy", tmp_path, fake) == 1
+    assert "база уязвимостей не получена: метаданные" in joined(capsys.readouterr().out)
+    assert [call for call in fake.calls if "--download-db-only" not in call] == []
 
 
 def test_a126_every_dockerfile_in_deploy_is_in_the_scan_list(
