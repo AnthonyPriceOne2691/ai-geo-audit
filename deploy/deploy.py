@@ -125,18 +125,23 @@ class Runner:
 
 
 class Files:
-    """Единственный путь на диск — только под своими корнями. Запись — временным файлом, сразу
-    600, и переименованием: обрыв прежний файл не портит. Операции видны тесту (`ops`)."""
+    """Единственный путь к своим файлам — запись, чтение и обход только под своими корнями и не
+    по ссылке. Запись — временным файлом, сразу 600, и переименованием: обрыв прежний файл не
+    портит. Операции видны тесту (`ops`)."""
 
     def __init__(self, roots: Sequence[Path]) -> None:
         self.roots = tuple(Path(os.path.abspath(root)) for root in roots)
         self.ops: list[tuple[str, ...]] = []
 
     def own(self, path: Path, *, root_itself: bool = False) -> Path:
-        """Путь под своим корнем и по написанию, и по настоящему каталогу; иначе отказ."""
+        """Путь под своим корнем и по написанию, и по настоящему каталогу; ни корень, ни сам путь
+        — не ссылка. Иначе отказ: за ссылкой может быть чужое."""
         full = Path(os.path.abspath(path))
         for root in self.roots:
             if full.is_relative_to(root) and (full != root or root_itself):
+                if root.is_symlink() or full.is_symlink():
+                    link = root if root.is_symlink() else full
+                    raise RefusedError(f"{link} — ссылка: скрипт по ссылкам не ходит")
                 parent = os.path.realpath(full if full == root else full.parent)
                 if Path(parent).is_relative_to(os.path.realpath(root)):
                     return full
@@ -166,11 +171,36 @@ class Files:
         self.ops.append(("append", str(target)))
 
     def mkdir(self, path: Path, *, mode: int = 0o700) -> None:
+        """Свой каталог; права — через дескриптор самого каталога, не по ссылке."""
         target = self.own(path, root_itself=True)
-        if not target.is_dir():
+        if not os.path.lexists(target):
             os.mkdir(target, mode)
             self.ops.append(("mkdir", str(target)))
-        os.chmod(target, mode)
+        try:
+            fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except NotADirectoryError:
+            raise RefusedError(f"{target} — не каталог") from None
+        try:
+            os.fchmod(fd, mode)
+        finally:
+            os.close(fd)
+
+    def read(self, path: Path) -> tuple[str, os.stat_result]:
+        """Свой файл целиком, не по ссылке, — с правами и владельцем того же открытого файла."""
+        fd = os.open(self.own(path), os.O_RDONLY | os.O_NOFOLLOW)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            os.close(fd)
+            raise RefusedError(f"{path.name} — не обычный файл")
+        with os.fdopen(fd, encoding="utf-8", errors="replace") as source:
+            return source.read(), info
+
+    def names(self, path: Path) -> list[str]:
+        """Имена в своём каталоге, не по ссылке; каталога нет — пусто."""
+        try:
+            return sorted(os.listdir(self.own(path, root_itself=True)))
+        except FileNotFoundError:
+            return []
 
     def remove(self, path: Path) -> None:
         target = self.own(path)
@@ -205,28 +235,27 @@ class Files:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
+    def lock_state(self, path: Path) -> str:
+        """Идёт ли выкат — по своему замку, не трогая метку."""
+        try:
+            fd = os.open(self.own(path), os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return "выката нет"
+        try:
+            mark = os.pread(fd, 200, 0).decode(errors="replace").strip()
+            try:
+                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return f"идёт выкат: {describe(mark)}"
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+        return f"устаревшая метка: {describe(mark)} — процесс не живёт" if mark else "выката нет"
+
 
 def describe(mark: str) -> str:
     pid, _, since = mark.partition(" ")
     return f"процесс {pid} с {since}" if pid.isdigit() and since else "метка без процесса"
-
-
-def lock_state(path: Path) -> str:
-    """Идёт ли выкат — по замку, не трогая метку."""
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except FileNotFoundError:
-        return "выката нет"
-    try:
-        mark = os.pread(fd, 200, 0).decode(errors="replace").strip()
-        try:
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return f"идёт выкат: {describe(mark)}"
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        return f"устаревшая метка: {describe(mark)} — процесс не живёт" if mark else "выката нет"
-    finally:
-        os.close(fd)
 
 
 class Report:
@@ -309,16 +338,14 @@ class EnvFile(NamedTuple):
     uid: int
 
 
-def read_env(path: Path) -> EnvFile:
+def read_env(files: Files, path: Path) -> EnvFile:
     """Строки «ИМЯ=значение»; пустые и `#` — мимо; ничего не подставляется и не исполняется."""
     try:
-        info = os.stat(path, follow_symlinks=False)
+        text, info = files.read(path)
     except FileNotFoundError:
         raise RefusedError("файла окружения нет — сначала env-init") from None
-    if not stat.S_ISREG(info.st_mode):
-        raise RefusedError("файл окружения — не обычный файл")
     values: dict[str, str] = {}
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -365,7 +392,7 @@ def site_name(domain: str) -> str:
 
 def server_env(ctx: Context, *, may_be_empty: frozenset[str] = frozenset()) -> EnvFile:
     """Файл сервера и имя сайта — до любой внешней команды (A184, A185)."""
-    env = read_env(ctx.paths.env_file)
+    env = read_env(ctx.files, ctx.paths.env_file)
     problems = env_problems(env, owner=ctx.owner, may_be_empty=may_be_empty)
     if problems:
         raise RefusedError("файл окружения: " + "; ".join(problems))
@@ -489,16 +516,17 @@ def compare(before: Snapshot, after: Snapshot) -> Comparison:
 
 
 def cmd_last(ctx: Context, _args: argparse.Namespace) -> int:
-    """Последний журнал хода и идёт ли выкат; журнала не пишет, замка не берёт."""
-    logs = sorted(ctx.paths.deploy_dir.glob("*.log"))
+    """Последний журнал хода и идёт ли выкат — функцией файлов; журнала не пишет, замка не
+    берёт."""
+    logs = [name for name in ctx.files.names(ctx.paths.deploy_dir) if name.endswith(".log")]
     if logs:
-        lines = logs[-1].read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = ctx.files.read(ctx.paths.deploy_dir / logs[-1])[0].splitlines()
         shown = lines[-LAST_LINES:]
-        print(f"журнал {logs[-1].name}: строк {len(lines)}, показано {len(shown)}", file=ctx.out)
+        print(f"журнал {logs[-1]}: строк {len(lines)}, показано {len(shown)}", file=ctx.out)
         print(*shown, sep="\n", file=ctx.out)
     else:
         print("журналов хода нет", file=ctx.out)
-    print(lock_state(ctx.paths.deploy_dir / "lock"), file=ctx.out)
+    print(ctx.files.lock_state(ctx.paths.deploy_dir / "lock"), file=ctx.out)
     return 0
 
 
