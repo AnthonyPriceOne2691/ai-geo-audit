@@ -308,6 +308,24 @@ def test_a124_install_replaces_a_planted_link_and_leaves_its_target_intact(tmp_p
     assert [path.name for path in target.iterdir()] == ["trivy"]
 
 
+@pytest.mark.parametrize("old", ["файл", "ссылка"])
+def test_a124_failed_install_over_an_old_trivy_leaves_no_trivy(tmp_path: Path, old: str) -> None:
+    """A124: отказ установки поверх прежнего `trivy` — файла или ссылки — `trivy` в каталоге нет:
+    следующий шаг не возьмёт старый или чужой сканер; цель ссылки цела."""
+    archive = tarball(tmp_path / "release.tar.gz", {"trivy": BINARY})
+    target = tmp_path / "bin"
+    target.mkdir()
+    foreign = tmp_path / "foreign"
+    foreign.write_bytes(b"old")
+    if old == "файл":
+        (target / "trivy").write_bytes(b"old trivy")
+    else:
+        (target / "trivy").symlink_to(foreign)
+    assert scan.install(target, release(archive, "0" * 64)) == 1
+    assert list(target.iterdir()) == []
+    assert foreign.read_bytes() == b"old"
+
+
 class Trickle(http.server.BaseHTTPRequestHandler):
     """Сервер на петле: заголовки сразу, тело — по байту раз в 0,2 с."""
 
