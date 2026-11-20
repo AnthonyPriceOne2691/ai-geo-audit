@@ -104,14 +104,19 @@ def parse_time(text: str) -> datetime | None:
 
 
 def top_uids(text: str) -> set[str]:
-    """Пользователи процессов из `docker compose top`: столбец UID под строкой заголовка."""
-    uids, under = set(), False
+    """Пользователи процессов из `docker compose top`: столбец UID под строкой заголовка. Вид у
+    версий разный: у 5.x первые столбцы — SERVICE и #, у 2.x — блок на контейнер с именем над
+    заголовком и пустой строкой между блоками."""
+    uids: set[str] = set()
+    column: int | None = None
     for line in text.splitlines():
         words = line.split()
-        if words[:1] == ["UID"]:
-            under = True
-        elif under and words:
-            uids.add(words[0])
+        if "UID" in words and "PID" in words:
+            column = words.index("UID")
+        elif not words:
+            column = None
+        elif column is not None and len(words) > column:
+            uids.add(words[column])
     return uids
 
 
