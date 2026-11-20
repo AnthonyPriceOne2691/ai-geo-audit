@@ -320,8 +320,11 @@ def uv_version() -> str:
 def declared_problems(workflow: dict[Any, Any]) -> list[str]:
     """A91, In scope: причины объявлений n/a, половины `имя:ts` тоже, печатает шаг джобы gates."""
     gates = workflow.get("jobs", {}).get("gates", {})
-    shown = any("not-applicable.json" in str(s.get("run", "")) for s in gates.get("steps", []))
-    return [] if shown else ["объявления n/a: в джобе gates нет шага, печатающего причины"]
+    shown = [s for s in gates.get("steps", []) if "not-applicable.json" in str(s.get("run", ""))]
+    if not shown:
+        return ["объявления n/a: в джобе gates нет шага, печатающего причины"]
+    always = all(s.get("if") == "always()" for s in shown)
+    return [] if always else ["объявления n/a: у шага причин нет `if: always()`"]
 
 
 def quality_check(text: str) -> list[str]:
@@ -537,6 +540,12 @@ QUALITY_COPIES = [
         r"\n      - name: Объявления n/a с причинами\n(?:        .*\n)+",
         "\n",
         "объявления n/a",
+    ),
+    (
+        "A91-declarations-not-always",
+        r"(- name: Объявления n/a с причинами\n)        if: always\(\)\n",
+        "- name: Объявления n/a с причинами\n",
+        "`if: always()`",
     ),
     (
         "A123-uv-sync-without-frozen",
