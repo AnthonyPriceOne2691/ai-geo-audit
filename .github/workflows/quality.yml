@@ -1,0 +1,245 @@
+name: quality
+
+# Шаблон канона cqg@3.14 с адаптациями — scripts/lint/adapted.json, запись `.github/workflows/quality.yml`.
+# Правила этого файла держит тест контракта backend/tests/test_ci_contract.py (A99–A101, A103, A123).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Токен прогона — только чтение (A100); записи не нужно ни одной джобе.
+permissions:
+  contents: read
+
+# Устаревший прогон отменяется только у запроса на слияние; у main группа — по хешу коммита,
+# и каждый прогон идёт до конца (A101).
+concurrency:
+  group: quality-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  STRICT: "1"                 # мягкий режим в CI запрещён (Delivery §10.4)
+  LINT_BE_DIR: backend
+  LINT_FE_DIR: frontend
+  LINT_PY_SRC: "backend/src"  # как у хуков гейтов, которые зовутся здесь напрямую (A99)
+  LINT_COV_PKG: "src/ai_geo_audit"
+  LINT_LENGTH_GLOBS: "*.py *.ts *.tsx *.mjs"
+
+jobs:
+  gates:
+    runs-on: ubuntu-24.04
+    # §8.7: предохранитель, а не оптимизация — гейты идут минуты; 20 значит «что-то повисло».
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0              # база диффа: ратчет снимков и новые зависимости
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+      # §8.3a: база диффа — одна на джобу, отказ — вслух; тихого фолбэка на HEAD нет (A104).
+      - name: Diff base (одна на джобу, отказ — вслух)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            before="${{ github.event.before }}"
+            zero="0000000000000000000000000000000000000000"
+            if [ -n "$before" ] && [ "$before" != "$zero" ] \
+               && git cat-file -e "${before}^{commit}" 2>/dev/null; then
+              base="$before"
+            else
+              default="${{ github.event.repository.default_branch }}"
+              base="$(git merge-base "origin/$default" HEAD 2>/dev/null || true)"
+              if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ]; then
+                echo "::error::база диффа не определима (before=$before, default=$default):"\
+                     "первый push репозитория или переписанная история." \
+                     "Открой PR или сделай второй коммит — гейт не имеет права судить пустоту."
+                exit 1
+              fi
+            fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "база диффа: $base"
+
+      # Версия — минор из requires-python (A99).
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      # Инструменты гейтов — dev-группа uv из замка, те же версии, что на машине (A99, A123).
+      - name: Инструменты из замка
+        run: |
+          python -m pip install uv==0.11.26
+          cd backend && uv sync --frozen
+
+      # Пропуск гейта из-за неставшего инструмента в CI — красное, а не «честный пропуск» (§8.3).
+      - name: Инструменты гейтов на месте (иначе пропуск читается как успех)
+        run: |
+          missing=""
+          expect() { [ -x "backend/.venv/bin/$1" ] || missing="$missing $1"; }
+          expect detect-secrets; expect ruff; expect mypy; expect pip-audit
+          expect mutmut; expect vulture; expect lint-imports
+          if [ -n "$missing" ]; then
+            echo "::error::инструменты гейтов не поставились:$missing"
+            echo "Гейты ниже уйдут в честный пропуск, и джоба будет ВЫГЛЯДЕТЬ проверенной."
+            exit 1
+          fi
+          echo "toolchain: на месте — detect-secrets ruff mypy pip-audit mutmut vulture lint-imports"
+
+      # `--verbose`: без него pre-commit глотает «просмотрено N» прошедших хуков (A98).
+      - name: pre-commit (all files, STRICT=1)
+        run: uv run --project backend --no-sync pre-commit run --all-files --show-diff-on-failure --verbose
+
+      # `if: always()` у каждого независимого гейта: упавший шаг не уносит гейты за собой.
+      - name: Gate coverage (все гейты подключены)
+        if: always()
+        run: bash scripts/lint/check_gate_coverage.sh
+
+      - name: Contour doctor (гейты не только вписаны, но и судят)
+        if: always()
+        run: python3 scripts/lint/contour_doctor.py
+
+      - name: Baseline ratchet (снимки только вниз)
+        if: always()
+        run: bash scripts/lint/check_baseline_ratchet.sh
+
+      - name: New dependency declared
+        if: always()
+        run: python scripts/lint/check_new_dependency.py
+
+      - name: Dead code (ratchet)
+        if: always()
+        run: python scripts/lint/check_dead_code.py
+
+      # JS-половина — поставка В1б: шаг смотрит фронт в несуществующий каталог (A99, A102).
+      # Python-половина, не проверенная по любой причине, — красное (A103).
+      - name: Vulnerable dependencies (python; JS — поставка В1б)
+        if: always()
+        env:
+          LINT_FE_DIR: .frontend-not-here
+        run: |
+          set +e
+          out=$(bash scripts/lint/check_deps_audit.sh 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if printf '%s' "$out" | grep -q "python-зависимости не проверены"; then
+            echo "::error::python-половина аудита зависимостей не проверена — шаг красный (A103)"
+            exit 1
+          fi
+          exit "$rc"
+
+  delivery:
+    runs-on: ubuntu-24.04
+    # §8.7: фазовый гейт читает файлы; 10 минут с запасом.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0              # breakers и метрики считаются по merge-base..HEAD
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+      - name: Diff base (одна на джобу, отказ — вслух)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            before="${{ github.event.before }}"
+            zero="0000000000000000000000000000000000000000"
+            if [ -n "$before" ] && [ "$before" != "$zero" ] \
+               && git cat-file -e "${before}^{commit}" 2>/dev/null; then
+              base="$before"
+            else
+              default="${{ github.event.repository.default_branch }}"
+              base="$(git merge-base "origin/$default" HEAD 2>/dev/null || true)"
+              if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ]; then
+                echo "::error::база диффа не определима (before=$before, default=$default):"\
+                     "первый push репозитория или переписанная история." \
+                     "Открой PR или сделай второй коммит — гейт не имеет права судить пустоту."
+                exit 1
+              fi
+            fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "база диффа: $base"
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Delivery phase gate + circuit breakers
+        run: python scripts/delivery_check.py --require-ci --diff-base "$BASE"
+
+      # Подпись объявления необратимого (§3.4a, A105): без активной поставки — строка словами.
+      - name: Irreversible signature
+        if: always()
+        run: |
+          if [ ! -f delivery/active/STATUS.md ]; then
+            echo "подпись: активной поставки нет — объявления и подписи судить нечем"
+            exit 0
+          fi
+          bash scripts/check_irreversible_signature.sh
+
+      - name: Canon sync gate (code <-> knowledge)
+        if: always()
+        run: |
+          if [ -f scripts/okf_sync_gate.py ]; then
+            python scripts/okf_sync_gate.py --base "$BASE"
+          else
+            echo "no OKF sync gate — skip"
+          fi
+
+      - name: Harness metrics (report only, never fails)
+        if: always()
+        run: |
+          if [ -f scripts/delivery_metrics.py ]; then
+            python scripts/delivery_metrics.py --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Smoke evals (product oracles)
+        if: always()
+        run: |
+          if [ -f delivery/evals/smoke/run.sh ]; then
+            bash delivery/evals/smoke/run.sh
+          else
+            echo "no smoke suite — Delivery §6 backlog"
+          fi
+
+      - name: OKF bundle validator
+        if: always()
+        run: |
+          if [ -f scripts/okf_validate.py ] && [ -d knowledge ]; then
+            python scripts/okf_validate.py knowledge/
+          else
+            echo "no OKF bundle — skip"
+          fi
+
+      # Каноны вне репо (вариант D): объявление читает доктор, парсер YAML этой ветке не нужен.
+      - name: Canon payload selftest (§7.1)
+        if: always()
+        run: |
+          if [ -d docs/canon ]; then
+            echo "::error::docs/canon/ есть, а проект объявил вариант D — снимок канонов в git не кладётся"
+            exit 1
+          fi
+          where=$(python -B - <<'VARIANT'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts/lint")
+          try:
+              from doctor_versions import VersionChecks
+              VersionChecks._declared_external
+          except (ImportError, AttributeError) as exc:
+              print("::error::объявление варианта читает доктор — scripts/lint/doctor_versions.py"
+                    f" (cqg@2.97+), его нет или он старше: {exc}. Доложи комплект (§5.0).")
+              sys.exit(2)
+          class Repo(VersionChecks):
+              root = Path(".")
+          print(Repo()._declared_external())
+          VARIANT
+          ) || { echo "$where"; exit 1; }
+          if [ -z "$where" ]; then
+            echo "::error::снимка канонов в репо нет, а вариант B/D не объявлен (§7.1, §5 шаг 11)"
+            exit 1
+          fi
+          echo "каноны вне репо — вариант B/D по объявлению в $where; инвариант назван"

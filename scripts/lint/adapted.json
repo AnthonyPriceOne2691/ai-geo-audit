@@ -50,5 +50,13 @@
   "frontend/eslint.config.js": {
     "reason": "не адаптация шаблона канона: свой конфиг фронта из Ч1.4а; шаблон eslint канона — поставка В1б",
     "changed": "файл написан в Ч1.4а под фронт проекта, а не извлечён из payload; путь совпадает с конфигом канона eslint.config.js в каталоге фронта. Обновление контура его не перезаписывает: решение о шаблоне канона — в В1б"
+  },
+  ".github/workflows/quality.yml": {
+    "reason": "шаблон канона под раскладку backend/ и uv: права, закрепление действий, установка из замка, JS-половина до В1б",
+    "changed": "сверху `permissions: contents: read` (A100); действия по полному хешу с версией в комментарии: checkout v7.0.1, setup-python v7.1.0 (A100); раннер `ubuntu-24.04` вместо `ubuntu-latest`; `concurrency` — группа запроса по ref, у остальных по `github.sha`, `cancel-in-progress` только у запроса (A101); у checkout `persist-credentials: false`; установка — `pip install uv==0.11.26` и `uv sync --frozen` вместо venv и pip шаблона (A99, A123); setup-node и установка фронта сняты — npm в CI поставка В1б; шаг инструментов ждёт список dev-группы: detect-secrets, ruff, mypy, pip-audit, mutmut, vulture, lint-imports (A99, A103); pre-commit — `uv run --project backend --no-sync`; `LINT_*` сверху — как у хуков гейтов, которые зовутся напрямую (A99); у аудита `LINT_FE_DIR: .frontend-not-here` и предохранитель: «python-зависимости не проверены» — красный (A102, A103); покрытие изменённого и мутационный гейт — из `gates` в джобу `tests` среза 3; шаг подписи необратимого в `delivery`: без активной поставки — строка словами (A105); самопроверка канона — только ветка варианта D, без `pip install PyYAML`; длинные комментарии шаблона не перенесены — пояснения короче, правила держит тест контракта"
+  },
+  ".github/workflows/main-guard.yml": {
+    "reason": "права токена и раннер: запись — только у джобы alert",
+    "changed": "сверху `permissions: contents: read`, `issues: write` — у джобы `alert` (A100); раннер `ubuntu-24.04` вместо `ubuntu-latest`; условие, триггер и тело тревоги — дословно (A117)"
   }
 }

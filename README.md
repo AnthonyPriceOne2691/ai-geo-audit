@@ -35,6 +35,33 @@ React с Vite и Mantine, pytest, docker compose.
   `LINT_FE_DIR=.frontend-not-here bash scripts/lint/check_deps_audit.sh`.
 - Гейты видят только файлы в индексе: новый файл — `git add <файл>`, потом прогон.
 
+## CI на GitHub
+
+- `.github/workflows/quality.yml` — джобы `gates` (pre-commit и гейты) и `delivery` (фазовый гейт,
+  подпись необратимого); `main-guard.yml` — задача «RED on main» на красный прогон quality после
+  push в main. Правила обоих держит `backend/tests/test_ci_contract.py`.
+- Будущая джоба образа или выката идёт после проверок: `needs: [gates, delivery, tests]`.
+
+### Настройки репозитория
+
+Выполняет проверяющий по слову владельца, по команде на настройку; `{owner}/{repo}` `gh`
+подставляет сам. Проверка — те же пути запросом `GET`.
+- Защита main — после первого зелёного прогона ветки: до него GitHub не знает имён проверок.
+  ```bash
+  gh api -X PUT repos/{owner}/{repo}/branches/main/protection --input - <<'JSON'
+  {"required_status_checks": {"strict": true, "contexts": ["gates", "delivery", "tests"]},
+   "enforce_admins": true, "required_pull_request_reviews": null, "restrictions": null,
+   "allow_force_pushes": false, "allow_deletions": false}
+  JSON
+  ```
+- Токен прогона по умолчанию — только чтение, Actions не одобряют запросы:
+  `gh api -X PUT repos/{owner}/{repo}/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false`
+- Прогон из чужих копий репозитория — только после одобрения:
+  `gh api -X PUT repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval -f approval_policy=all_external_contributors`
+- Разрешённые действия — только GitHub:
+  `gh api -X PUT repos/{owner}/{repo}/actions/permissions -F enabled=true -f allowed_actions=selected`,
+  затем `gh api -X PUT repos/{owner}/{repo}/actions/permissions/selected-actions -F github_owned_allowed=true -F verified_allowed=false`
+
 ## Сервер API
 
 - Запуск — `cd backend && uv run python -m ai_geo_audit.api`: адрес и порт — `API_HOST` и
