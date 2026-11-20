@@ -143,6 +143,16 @@ def test_a63_process_users_are_read_under_the_top_header() -> None:
     assert oracle.top_uids(head + rows.replace("10001  102", "root   102")) == {"10001", "root"}
 
 
+def test_a63_process_users_in_the_compose_5_top_layout() -> None:
+    """A63: у Compose 5.x (замер 5.7.0) первые столбцы `top` — SERVICE и #, UID — третий."""
+    text = (
+        "SERVICE  #   UID    PID    PPID   C   STIME  TTY  TIME      CMD\n"
+        "api      1   10001  81294  81270  0   09:38  ?    00:00:00  /sbin/docker-init -- python\n"
+        "api      1   10001  81317  81294  35  09:38  ?    00:00:00  python -m ai_geo_audit.api\n"
+    )
+    assert oracle.top_uids(text) == {"10001"}
+
+
 class LeftBehind(oracle.Docker):
     """Подставной исполнитель: уборка прошла, а по меткам compose остались контейнер и том."""
 
