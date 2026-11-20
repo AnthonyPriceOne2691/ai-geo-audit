@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 
 import api_probes as probes
@@ -255,3 +256,37 @@ async def test_a48_pass_form_after_any_scheme_is_a_secret(
         False,
         True,
     )
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_a48_config_secret_is_masked_first_even_if_overlapped(
+    capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A48: секрет запроса пересекается с концом секрета настроек и длиннее его: секрет настроек
+    маскируется первым — ни куска его в выводе; секрет запроса клиент выбирает сам."""
+    log_setup.setup_logging(fmt=fmt)
+    log_setup.register_secret("cfg-secret-AAAA-BBBB")
+    with log_setup.request_secrets("BBBB-tail-words-longer"):
+        logging.getLogger("ai_geo_audit.test").info("cfg-secret-AAAA-BBBB-tail-words-longer")
+    out = capsys.readouterr().err
+    assert [part for part in ("cfg-secret", "AAAA") if part in out] == []
+
+
+class Carrier:
+    """Объект в `extra`: в выводе он станет строкой со своим секретом."""
+
+    def __str__(self) -> str:
+        return "carrier eyJplaceholder.carried-pass-words.not-a-signature"
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_a48_object_that_becomes_text_is_cleaned_too(
+    capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A48: поле `extra` — объект; в выводе он становится строкой, и секрет запроса в ней
+    вычищен, как в тексте кода."""
+    log_setup.setup_logging(fmt=fmt)
+    with log_setup.request_secrets("eyJplaceholder.carried-pass-words.not-a-signature"):
+        logging.getLogger("ai_geo_audit.test").info("объект", extra={"carried": Carrier()})
+    out = capsys.readouterr().err
+    assert ("carried-pass-words" in out, "carrier ***" in out) == (False, True)
