@@ -134,7 +134,7 @@ def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str,
         act()
         assert ctx.files.ops[-1][:2] == (op, str(path))
         return
-    with pytest.raises(Refused, match="вне своих корней|ссылка"):
+    with pytest.raises(Refused, match=r"вне своих корней|ссылка"):
         act()
     assert ctx.files.ops == []
     others = ("srv/x.dump", "srv/nb-alpha/docker-compose.yml")
@@ -337,7 +337,7 @@ def test_a184_bad_domain_refused_before_any_command(ctx) -> None:
 def test_a185_server_file_rights_owner_placeholders_and_empties(ctx) -> None:
     """A185 (ядро): права шире 600, владелец не root, заглушка и пустое — каждое названо именем
     и причиной, без значения; «пишет выкат» до первого выката — не отказ."""
-    write_env(ctx, server_values(JWT_SECRET="CHANGE_ME", redis=""), mode=0o644)
+    write_env(ctx, server_values(JWT_SECRET=tool.PLACEHOLDER, redis=""), mode=0o644)
     env = tool.read_env(ctx.files, ctx.paths.env_file)
     problems = tool.env_problems(env, owner=os.getuid() + 1, may_be_empty=frozenset({"WEB_IMAGE"}))
     assert problems == [
@@ -419,7 +419,8 @@ def test_journal_written_first_and_lost_terminal_does_not_stop_the_step(ctx) -> 
     with tool.session(ctx, "check") as rep:
         rep.line("шаг после обрыва")
     (log,) = ctx.paths.deploy_dir.glob("*-check.log")
-    stamps, texts = zip(*(line.split(" ", 1) for line in log.read_text("utf-8").splitlines()))
+    rows = [line.split(" ", 1) for line in log.read_text("utf-8").splitlines()]
+    stamps, texts = zip(*rows, strict=True)
     assert texts == ("check: начало", "шаг после обрыва", "итог: ок")
     assert all(re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", stamp) for stamp in stamps)
     assert log.stat().st_mode & 0o777 == 0o600

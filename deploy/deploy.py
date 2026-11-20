@@ -102,8 +102,7 @@ class Runner:
         if "HOME" in os.environ:
             child["HOME"] = os.environ["HOME"]
         try:
-            # Список аргументов без шелла; значения — окружением (A183).
-            proc = subprocess.Popen(
+            proc = subprocess.Popen(  # noqa: S603 — список без шелла, значения окружением (A183)
                 list(argv),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
@@ -545,7 +544,7 @@ def main(argv: Sequence[str] | None = None, ctx: Context | None = None) -> int:
             with contextlib.suppress(OSError, ValueError):
                 print(f"отказ: {exc}", file=sys.stderr)
         return 1
-    except Exception as exc:  # noqa: BLE001 — текст чужой ошибки может нести значение (A183)
+    except Exception as exc:  # текст чужой ошибки может нести значение (A183): только её вид
         with contextlib.suppress(OSError, ValueError):
             print(f"сбой скрипта: {type(exc).__name__}; ход — last", file=sys.stderr)
         return 1
