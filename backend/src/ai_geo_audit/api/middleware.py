@@ -32,7 +32,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ai_geo_audit.api import limits
 from ai_geo_audit.api.access import TOKEN_HEADER, VisitorCheck
 from ai_geo_audit.api.contract import Refusal, refusal_response
-from ai_geo_audit.logs.setup import request_context, request_secrets
+from ai_geo_audit.logs.setup import TRUSTED, request_context, request_secrets
 
 log = logging.getLogger("ai_geo_audit.api")
 access_log = logging.getLogger("ai_geo_audit.api.access")
@@ -41,6 +41,8 @@ REQUEST_ID_HEADER = "X-Request-ID"
 SENT_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 #: Пропуск по форме: три части через точку, первая — с `eyJ`. Значение выбирает клиент, поэтому
 #: секрет — только по форме: `X-Access-Token: /api/nope` вычистил бы путь своего запроса (A48).
+#: Поля строки доступа слой берёт из области запроса: секреты запроса их не трогают.
+ACCESS_FIELDS = ("method", "path", "status", "duration_ms", "client")
 PASS_FORM = re.compile(r"eyJ[\w-]*\.[\w-]+\.[\w-]+", re.ASCII)
 #: Объявленный размер тела — только цифрами ASCII и байтами: строка latin-1 «²» прошла бы
 #: `isdigit()` и уронила бы `int()`. Длиннее 19 цифр — не размер.
@@ -69,11 +71,12 @@ def secrets_for(scope: Scope) -> tuple[str, ...]:
 
 
 def _basic_secrets(value: str) -> list[str]:
-    """Схема `Basic` — без учёта регистра; пароль — всё после первого двоеточия."""
+    """Схема `Basic` — без учёта регистра; пароль — всё после первого двоеточия. После другой
+    схемы секрет — только пропуск по форме."""
     scheme, _, encoded = value.strip().partition(" ")
     encoded = encoded.strip()
     if scheme.lower() != "basic" or not encoded:
-        return []
+        return [encoded] if PASS_FORM.fullmatch(encoded) else []
     try:
         pair = base64.b64decode(encoded, validate=True).decode("utf-8")
     except ValueError:  # `binascii.Error` и `UnicodeDecodeError` — оба `ValueError`: мусор не 500
@@ -153,6 +156,7 @@ class EntryLayer:
                         "status": status,
                         "duration_ms": int((time.monotonic() - began) * 1000),
                         "client": client[0],
+                        TRUSTED: ACCESS_FIELDS,
                     },
                 )
 

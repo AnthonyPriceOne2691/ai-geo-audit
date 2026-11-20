@@ -1,10 +1,12 @@
 """Логирование: поля из `extra` и id запроса и аудита доживают до вывода, секреты — нет.
 
-Время — всегда UTC (`+0000`): у машины разработчика и сервера пояса разные. Секреты
-вычищаются из готовой записи: общий набор — секреты настроек, набор запроса — пропуск и пароль
-сайта своего запроса, в переменной контекста (A48). Поле `extra` с именем базового поля записи
-выходит с приставкой `extra_` и его не перебивает (A56). httpx и httpcore — на WARNING: на INFO
-они печатают адрес целиком, а в адресе бывает токен.
+Время — всегда UTC (`+0000`): у машины разработчика и сервера пояса разные. Секреты настроек
+вычищаются из готовой записи целиком: их клиент не выбирает. Секреты запроса — пропуск и пароль
+сайта, в переменной контекста — выбирает клиент заголовком, поэтому они вычищаются только из
+текста, который написал код: сообщения, трассировки и полей `extra`. Поля, которые слой взял из
+области запроса и из себя, и форма записи от них не зависят (A48). Поле `extra` с именем базового
+поля записи выходит с приставкой `extra_` и его не перебивает (A56). httpx и httpcore — на
+WARNING: на INFO они печатают адрес целиком, а в адресе бывает токен.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import json
 import logging
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -54,6 +56,11 @@ _NOISY_LOGGERS = ("httpx", "httpcore")
 _DROPPED = frozenset({"color_message"})
 #: Базовые поля вывода: одноимённое поле `extra` выходит как `extra_<имя>` (A56).
 _RESERVED = frozenset({"ts", "level", "logger", "exc"})
+#: Атрибут записи — поля, которые код взял из области запроса и из себя, а не от клиента (строка
+#: доступа). Секреты запроса по ним не идут: клиент заголовком не выберет, что в них потерять.
+TRUSTED = "_trusted"
+#: Поля, которые ставит фильтр журнала поверх присланного: их клиент тоже не выбирает.
+_OWN = frozenset({"request_id", "audit_id"})
 
 
 def register_secret(value: str) -> None:
@@ -75,14 +82,25 @@ def register_config_secrets(*domains: config.Settings) -> None:
                     register_secret(unquote(password))
 
 
-def redact(text: str) -> str:
-    """Заменить на маску известные секреты — общие и своего запроса, длинные первыми, — и
-    значения строк из ошибок Postgres."""
-    for secret in sorted({*_secrets, *_request_secrets.get()}, key=len, reverse=True):
+def _mask(text: str, secrets: Iterable[str]) -> str:
+    for secret in sorted(secrets, key=len, reverse=True):
         text = text.replace(secret, MASK)
+    return text
+
+
+def redact(text: str) -> str:
+    """Заменить на маску секреты настроек (длинные — первыми) и значения строк из ошибок
+    Postgres — по всему тексту: их клиент не выбирает."""
+    text = _mask(text, _secrets)
     for pattern in _PG_VALUES:
         text = pattern.sub(rf"\g<1>{MASK}\g<2>", text)
     return text
+
+
+def _written(text: str) -> str:
+    """Текст, который написал код: секреты настроек, затем секреты своего запроса. Настройки —
+    первыми: секрет запроса, пересекшийся с секретом настроек, не откроет его кусок."""
+    return _mask(redact(text), _request_secrets.get())
 
 
 @contextmanager
@@ -140,44 +158,56 @@ def _extra(record: logging.LogRecord) -> dict[str, object]:
     }
 
 
-def _scrub(value: object) -> object:
-    if isinstance(value, str):
-        return redact(value)
+def _scrub(value: object, written: bool) -> object:
+    """Значение поля: у текста кода — и секреты запроса; объект, который станет строкой в выводе,
+    чистится своей строкой."""
+    if value is None or isinstance(value, bool | int | float):
+        return value
     if isinstance(value, dict):
-        return {key: _scrub(item) for key, item in value.items()}
+        return {key: _scrub(item, written) for key, item in value.items()}
     if isinstance(value, list | tuple):
-        return [_scrub(item) for item in value]
-    return value
+        return [_scrub(item, written) for item in value]
+    text = value if isinstance(value, str) else str(value)
+    return _written(text) if written else redact(text)
+
+
+def _trusted(record: logging.LogRecord) -> frozenset[str]:
+    return _OWN | frozenset(getattr(record, TRUSTED, ()))
 
 
 class JsonFormatter(logging.Formatter):
     """Одна запись — одна строка JSON; поля из `extra` остаются полями."""
 
     def format(self, record: logging.LogRecord) -> str:
+        trusted = _trusted(record)
         payload: dict[str, object] = {
             "ts": _utc(record),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
-            **_extra(record),
+            "message": _written(record.getMessage()),
+            **{k: _scrub(v, k not in trusted) for k, v in _extra(record).items()},
         }
         if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info)
-        # `default=str`: падение логгера на несериализуемом поле — худший исход. Второй
-        # проход `redact` — по строке: секрет мог приехать в объекте, ставшем строкой здесь.
-        return redact(json.dumps(_scrub(payload), ensure_ascii=False, default=str))
+            payload["exc"] = _written(self.formatException(record.exc_info))
+        # Секреты запроса — до сериализации, в значениях: JSON остаётся JSON. `default=str`:
+        # падение логгера на несериализуемом поле — худший исход. Проход `redact` по строке —
+        # секреты настроек везде, как раньше.
+        return redact(json.dumps(payload, ensure_ascii=False, default=str))
 
 
 class TextFormatter(logging.Formatter):
     """Строка для человека; поля из `extra` — в хвосте."""
 
     def format(self, record: logging.LogRecord) -> str:
-        line = f"{_utc(record)} {record.levelname} {record.name} {record.getMessage()}"
+        trusted = _trusted(record)
+        line = f"{_utc(record)} {record.levelname} {record.name} {_written(record.getMessage())}"
         fields = {k: v for k, v in _extra(record).items() if v not in ("", None)}
         if fields:
-            line += " | " + " ".join(f"{k}={v}" for k, v in sorted(fields.items()))
+            line += " | " + " ".join(
+                f"{k}={v if k in trusted else _written(str(v))}" for k, v in sorted(fields.items())
+            )
         if record.exc_info:
-            line += "\n" + self.formatException(record.exc_info)
+            line += "\n" + _written(self.formatException(record.exc_info))
         return redact(line)
 
 
