@@ -207,6 +207,8 @@ def interrupted_run(tmp_path: Path, docker: SignalDuringUp) -> tuple[int, list[t
     copy.mkdir()
     (copy / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     name = guard.stack_name(copy)
+    docker.containers.append(f"{name}-export")  # как после выгрузки образа
+    docker.images.append(f"{name}-backend:oracle")  # как после сборки
     run = oracle.Run(docker, copy, name, "oracle-canary-0", {})
     up = [step for step in oracle.STEPS if step[2].__name__ == "step_up"]
     code = oracle.finish(run, up)
@@ -220,7 +222,8 @@ def test_a74_signal_during_up_gives_exactly_one_down_of_its_own_name(
 ) -> None:
     """A74, первая и вторая строки: сигнал во время `up --wait` — выход 130 (SIGINT) или 143
     (SIGTERM); после сигнала ровно одна команда уборки стека — `docker compose -p <имя прогона>
-    down -v --remove-orphans`; других имён стека в командах нет."""
+    down -v --remove-orphans`; свои контейнер выгрузки и образ удаляются по точному имени в том
+    же проходе, каждое удаление — не больше раза; других имён стека в командах нет."""
     docker = SignalDuringUp(sent)
     got, after = interrupted_run(tmp_path, docker)
     downs = [c for c in after if "down" in c]
@@ -229,6 +232,10 @@ def test_a74_signal_during_up_gives_exactly_one_down_of_its_own_name(
     down = downs[0]
     name = down[down.index("-p") + 1]
     assert {"-v", "--remove-orphans"} <= set(down)
+    removals = [c for c in after if "down" in c or "rm" in c]
+    assert len(removals) == len(set(removals)), removals
+    assert ("rm", "-f", "-v", f"{name}-export") in removals
+    assert ("image", "rm", "-f", f"{name}-backend:oracle") in removals
     names = {m for c in docker.commands for m in STACK_NAME.findall(" ".join(c))}
     assert names and all(n.startswith(name) for n in names), names
 
