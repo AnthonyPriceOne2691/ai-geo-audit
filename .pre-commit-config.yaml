@@ -156,6 +156,32 @@ repos:
           bash -c 'export LINT_COV_PKG="src/ai_geo_audit"; R="$(git rev-parse --show-toplevel)" || exit 1; B="${LINT_BE_DIR:-backend}"; V="${LINT_VENV:-.venv}"; M=""; for c in "$R/$B/$V/bin/mypy" "$R/$V/bin/mypy" "$R/$B/.venv/bin/mypy"; do [ -x "$c" ] && { M="$c"; break; }; done; [ -n "$M" ] || { printf "\033[31mmypy не найден — искал %s и %s. LINT_VENV принимается и относительно %s, и от repo-root (§6); правится LINT_VENV / LINT_BE_DIR или установкой mypy в venv проекта\033[0m\n" "$B/$V/bin/mypy" "$V/bin/mypy" "$B"; exit 1; }; cd "$R/$B" || exit 1; "$M" --config-file pyproject.toml "${LINT_COV_PKG:-features}"'
         pass_filenames: false
 
+      # Код выката и свои скрипты вне backend/ — под те же ruff и mypy strict, что сервис:
+      # `deploy/` работает от root на общем сервере (решение проверяющего 2026-11-20T09:26Z). У файла
+      # вне backend/ ruff своего конфига не найдёт и молча возьмёт умолчания — конфиг передаётся
+      # явно. Тела канона (scripts/lint/, scripts/delivery_*, merge_guard.sh) сюда не входят.
+      - id: ruff-deploy
+        name: ruff check — deploy/ и свои скрипты (конфиг backend)
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        files: ^(deploy/.*|scripts/(stack_oracle|image_scan))\.py$
+        entry: bash -c 'R="$(git rev-parse --show-toplevel)" || exit 1; X="$R/backend/.venv/bin/ruff"; [ -x "$X" ] || { printf "\033[31mruff не найден — %s; cd backend && uv sync --frozen\033[0m\n" "$X"; exit 1; }; exec "$X" check --config "$R/backend/pyproject.toml" --force-exclude --fix --exit-non-zero-on-fix "$@"' --
+      - id: ruff-format-deploy
+        name: ruff format — deploy/ и свои скрипты (конфиг backend)
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        files: ^(deploy/.*|scripts/(stack_oracle|image_scan))\.py$
+        entry: bash -c 'R="$(git rev-parse --show-toplevel)" || exit 1; X="$R/backend/.venv/bin/ruff"; [ -x "$X" ] || { printf "\033[31mruff не найден — %s; cd backend && uv sync --frozen\033[0m\n" "$X"; exit 1; }; exec "$X" format --config "$R/backend/pyproject.toml" --force-exclude "$@"' --
+      - id: mypy-deploy
+        name: mypy strict — deploy/ и свои скрипты (конфиг backend)
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        files: ^(deploy/.*|scripts/(stack_oracle|image_scan))\.py$
+        entry: bash -c 'R="$(git rev-parse --show-toplevel)" || exit 1; M="$R/backend/.venv/bin/mypy"; [ -x "$M" ] || { printf "\033[31mmypy не найден — %s; cd backend && uv sync --frozen\033[0m\n" "$M"; exit 1; }; F=(); for f in "$@"; do case "$f" in /*) F+=("$f");; *) F+=("$R/$f");; esac; done; cd "$R/backend" || exit 1; exec "$M" --config-file pyproject.toml "${F[@]}"' --
+
   # -------------------------------------------------------------------------
   # TypeScript / React: ESLint (per-file errors) + warning-ратчет + Prettier —
   # поставка В1б (адаптация, scripts/lint/adapted.json): npm в CI В1а нет, а

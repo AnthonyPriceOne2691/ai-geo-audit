@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import re
+import shlex
+import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -415,3 +417,81 @@ def test_a121_copy_young_package_without_exception_is_named() -> None:
     victim["wheels"][0]["upload-time"] = "2099-01-01T00:00:00Z"
     named = "\n".join(lock_problems(lock))
     assert f"{victim['name']} {victim['version']} загружен 2099-01-01T00:00:00Z" in named
+
+
+#: Код выката и свои скрипты вне backend/ — под ruff и mypy strict с конфигом backend (решение
+#: проверяющего 2026-11-20T09:26Z, строже подписанного). Тела канона — нет: они дословные.
+OWN_HOOKS = ("ruff-deploy", "ruff-format-deploy", "mypy-deploy")
+OWN_FILES = (
+    "deploy/deploy.py",
+    "deploy/tools/check.py",
+    "scripts/stack_oracle.py",
+    "scripts/image_scan.py",
+)
+CANON_FILES = (
+    "scripts/lint/check_ast_gate.py",
+    "scripts/delivery_check.py",
+    "scripts/merge_guard.sh",
+)
+
+
+def hook(cfg: dict[Any, Any], hook_id: str) -> dict[str, Any]:
+    found = [h for repo in cfg["repos"] for h in repo["hooks"] if h["id"] == hook_id]
+    return found[0] if found else {}
+
+
+def own_scripts_problems(cfg: dict[Any, Any]) -> list[str]:
+    """Хуки своих скриптов вне backend/: есть, ловят их, тела канона не трогают; конфиг backend."""
+    problems = []
+    for hook_id in OWN_HOOKS:
+        found = hook(cfg, hook_id)
+        pattern = re.compile(str(found.get("files", "^$")))
+        missed = [f for f in OWN_FILES if not pattern.search(f)]
+        canon = [f for f in CANON_FILES if pattern.search(f)]
+        config = (
+            "--config-file pyproject.toml"
+            if hook_id == "mypy-deploy"
+            else '--config "$R/backend/pyproject.toml"'
+        )
+        checks = [
+            (bool(found), f"{hook_id}: хука нет"),
+            (not missed, f"{hook_id}: не ловит {missed}"),
+            (not canon, f"{hook_id}: трогает тела канона {canon}"),
+            (config in str(found.get("entry", "")), f"{hook_id}: не конфиг backend"),
+        ]
+        problems += [message for ok, message in checks if not ok]
+    return problems
+
+
+def run_hook(hook_id: str, target: Path) -> subprocess.CompletedProcess[str]:
+    """Запись хука как есть — на файле вне дерева; корень копии даёт `git rev-parse` из ROOT."""
+    command = shlex.split(str(hook(load(HOOKS), hook_id)["entry"]))
+    return subprocess.run(
+        [*command, str(target)], check=False, cwd=ROOT, capture_output=True, text=True, timeout=120
+    )
+
+
+def test_deploy_and_own_scripts_are_under_ruff_and_mypy() -> None:
+    """Код выката (`deploy/**/*.py`) и свои скрипты вне backend/ — под ruff, ruff format и mypy
+    strict с конфигом backend; тела канона под эти хуки не попадают."""
+    assert own_scripts_problems(load(HOOKS)) == []
+
+
+def test_deploy_copy_ruff_violation_is_red_and_named(tmp_path: Path) -> None:
+    """Копия: файл в `deploy/` с командой через оболочку — красный, названо правило S605."""
+    probe = tmp_path / "deploy" / "probe.py"
+    probe.parent.mkdir()
+    probe.write_text(
+        'import os\n\n\ndef run(x: str) -> None:\n    os.system("echo " + x)\n', "utf-8"
+    )
+    done = run_hook("ruff-deploy", probe)
+    assert done.returncode != 0 and "S605" in done.stdout, done.stdout + done.stderr
+
+
+def test_deploy_copy_mypy_violation_is_red_and_named(tmp_path: Path) -> None:
+    """Копия: функция в `deploy/` без аннотаций — красный mypy strict, назван код no-untyped-def."""
+    probe = tmp_path / "deploy" / "probe.py"
+    probe.parent.mkdir()
+    probe.write_text("def same(x):\n    return x\n", "utf-8")
+    done = run_hook("mypy-deploy", probe)
+    assert done.returncode != 0 and "no-untyped-def" in done.stdout, done.stdout + done.stderr
