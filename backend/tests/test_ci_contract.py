@@ -317,9 +317,17 @@ def uv_version() -> str:
     return str(required).removeprefix("==")
 
 
+def declared_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A91, In scope: причины объявлений n/a, половины `имя:ts` тоже, печатает шаг джобы gates."""
+    gates = workflow.get("jobs", {}).get("gates", {})
+    shown = any("not-applicable.json" in str(s.get("run", "")) for s in gates.get("steps", []))
+    return [] if shown else ["объявления n/a: в джобе gates нет шага, печатающего причины"]
+
+
 def quality_check(text: str) -> list[str]:
     workflow = yaml.safe_load(text)
     return [
+        *declared_problems(workflow),
         *uses_problems(text, workflow),
         *token_problems(workflow, {}),
         *secret_problems(workflow),
@@ -523,6 +531,12 @@ QUALITY_COPIES = [
         r"\n    timeout-minutes: 20",
         "",
         "timeout-minutes: у джобы gates нет предохранителя",
+    ),
+    (
+        "A91-declarations-not-shown",
+        r"\n      - name: Объявления n/a с причинами\n(?:        .*\n)+",
+        "\n",
+        "объявления n/a",
     ),
     (
         "A123-uv-sync-without-frozen",

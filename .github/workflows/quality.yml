@@ -95,6 +95,15 @@ jobs:
         if: always()
         run: bash scripts/lint/check_gate_coverage.sh
 
+      # Объявления n/a — с причиной на каждом прогоне: мета-гейт печатает только целые скрипты и
+      # правила греп-гейта, половины `имя:ts` — нет (находка проверяющей 2026-11-20).
+      - name: Объявления n/a с причинами
+        if: always()
+        run: >-
+          python3 -I -c 'import json, pathlib;
+          d = json.loads(pathlib.Path("scripts/lint/not-applicable.json").read_text("utf-8"));
+          print(*(f"n/a {k}: {v}" for k, v in d.items() if k != "_"), sep="\n")'
+
       - name: Contour doctor (гейты не только вписаны, но и судят)
         if: always()
         run: python3 scripts/lint/contour_doctor.py
