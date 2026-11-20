@@ -49,10 +49,22 @@ def instructions(path: Path) -> list[tuple[int, str, str]]:
 
 
 def from_problems(path: Path) -> list[str]:
-    """A60: каждая строка `FROM` внешнего образа — `имя:тег линии@sha256:…` из списка."""
-    stages: set[str] = set()
+    """A60: внешний образ — в `FROM`, `COPY --from=` и `from=` у `RUN --mount` — только
+    `имя:тег линии@sha256:…` из списка, иначе источник — стадия, объявленная выше; `ADD` нет."""
+    stages: list[str] = []
     problems = []
     for number, word, args in instructions(path):
+        where = f"{path.name}:{number}:"
+        if word == "ADD":
+            problems.append(f"{where} ADD — файл мимо белого списка или из сети; только COPY")
+        sources = re.findall(r"--from=([^\s,]+)", args) if word == "COPY" else []
+        mounts = re.findall(r"--mount=(\S+)", args) if word == "RUN" else []
+        sources += [m[5:] for mount in mounts for m in mount.split(",") if m.startswith("from=")]
+        for source in sources:
+            known = source.lower() in stages or (source.isdigit() and int(source) < len(stages))
+            pinned = _PINNED.fullmatch(source)
+            if not known and not (pinned and LINES.get(pinned["name"]) == pinned["tag"]):
+                problems.append(f"{where} {word} из {source} — не стадия выше и не образ из списка")
         if word != "FROM":
             continue
         image, *rest = [arg for arg in args.split() if not arg.startswith("--")]
@@ -60,11 +72,10 @@ def from_problems(path: Path) -> list[str]:
         if image.lower() in stages:
             pass
         elif not pinned:
-            problems.append(f"{path.name}:{number}: FROM {image} — не «имя:тег линии@sha256:…»")
+            problems.append(f"{where} FROM {image} — не «имя:тег линии@sha256:…»")
         elif LINES.get(pinned["name"]) != pinned["tag"]:
-            problems.append(f"{path.name}:{number}: FROM {image} — образ не из списка")
-        if len(rest) == 2 and rest[0].upper() == "AS":
-            stages.add(rest[1].lower())
+            problems.append(f"{where} FROM {image} — образ не из списка")
+        stages.append(rest[1].lower() if len(rest) == 2 and rest[0].upper() == "AS" else "")
     return problems
 
 
