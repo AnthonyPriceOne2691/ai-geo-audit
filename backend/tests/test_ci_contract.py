@@ -38,17 +38,19 @@ PINNED = re.compile(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}")
 #: в разобранном YAML комментариев нет.
 VERSION = re.compile(r"\s#\s*v\d+\.\d+\.\d+\s*$")
 EXPORT = re.compile(r'export (LINT_[A-Z_]+)="([^"]*)"')
-REQUEST_FIELDS = re.compile(r"\$\{\{\s*github\.(head_ref|event\.pull_request\.)")
+REQUEST_FIELDS = re.compile(r"\$\{\{\s*github\.(head_ref|event\.pull_request\.)", re.IGNORECASE)
 #: A100: контекст `secrets` — через точку в любой строке или любым видом внутри `${{ }}`
 #: (`secrets['X']`, `toJSON(secrets)`): выражение раннер подставляет до оболочки.
 SECRETS = re.compile(r"secrets\.|\$\{\{(?:(?!\}\}).)*?\bsecrets\b", re.IGNORECASE | re.DOTALL)
 #: A103: мягкий режим строкой сценария — `STRICT=0`, `STRICT: 0`.
 SOFT = re.compile(r"STRICT\s*[:=]\s*['\"]?0")
 #: A99: установка в `run:` — pip, pip3, pipx (и через `python -m`, `uv pip`), uvx, npx, `uv tool`,
-#: `uv add`, `uv sync`, `uv run --with`, install-команда npm и apt.
+#: `uv add`, `uv sync`, `uv run --with`, `uv run` без `--no-sync` (неявная синхронизация
+#: окружения), install-команда npm и apt.
 INSTALL = re.compile(
     r"(?<![\w-])(?:pip[3x]?|uvx|npx|uv\s+(?:tool|add|sync))(?![\w-])"
     r"|\buv\s+run\b[^\n;&|]*\s--with\b"
+    r"|\buv\s+run\b(?![^\n;&|]*\s--no-sync\b)"
     r"|(?<![\w-])(?:npm|apt-get|apt)\b[^\n;&|]*?\s(?:install|i|ci|add)(?![\w-])"
 )
 
@@ -205,7 +207,12 @@ def secret_problems(workflow: dict[Any, Any]) -> list[str]:
     """A100: контекста `secrets` нет ни в одной строке разобранного YAML, и во всём тексте `run:`:
     там ` #` — текст сценария, а выражение раннер подставляет до оболочки. Комментарии самого YAML
     не в счёт. Токен прогона — `github.token`, а не `secrets.GITHUB_TOKEN`."""
-    return [
+    passed = [
+        f"секреты: джоба {name} передаёт secrets ({job['secrets']!r})"
+        for name, job in workflow.get("jobs", {}).items()
+        if isinstance(job, dict) and "secrets" in job
+    ]
+    return passed + [
         f"секреты: {place} читает secrets"
         for place, value in strings(workflow)
         if SECRETS.search(value)
@@ -485,6 +492,18 @@ QUALITY_COPIES = [
         "секреты: jobs/gates/steps/7/run",
     ),
     (
+        "A100-head-ref-upper-case",
+        r"run: bash scripts/lint/check_gate_coverage.sh",
+        "run: echo ${{ GITHUB.HEAD_REF }}",
+        "поле запроса",
+    ),
+    (
+        "A100-job-secrets-inherit",
+        r"\n  delivery:\n",
+        "\n  delivery:\n    secrets: inherit\n",
+        "передаёт",
+    ),
+    (
         "A100-persist-credentials-dropped",
         r"\n\s+persist-credentials: false[^\n]*",
         "",
@@ -577,6 +596,7 @@ INSTALLS = (
     "pipx install ruff",
     "uv add requests",
     "uv run --no-sync --with requests python -V",
+    "uv run pytest -q",
     "npm install left-pad",
     "npm i left-pad",
     "npm --prefix frontend ci",
