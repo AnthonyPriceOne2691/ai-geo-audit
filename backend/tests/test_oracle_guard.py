@@ -33,12 +33,24 @@ LABEL = "label=com.docker.compose.project="
 
 
 class Leftovers:
-    """Подставной исполнитель: остатки двух стеков — своего имени и стека разработки."""
+    """Подставной исполнитель: остатки двух стеков — своего имени и стека разработки. Как у
+    Docker, `container ls` без `-a` даёт только работающие контейнеры; остановленный разовый
+    `migrate` (после прогона он всегда Exited) виден только с `-a`."""
 
     def __init__(self) -> None:
         self.stacks = {
-            OWN: {"container": ["c-own-1"], "volume": ["v-own-db"], "network": ["n-own"]},
-            DEV: {"container": ["c-dev-1"], "volume": ["v-dev-db"], "network": ["n-dev"]},
+            OWN: {
+                "container": ["c-own-api"],
+                "stopped": ["c-own-migrate"],
+                "volume": ["v-own-db"],
+                "network": ["n-own"],
+            },
+            DEV: {
+                "container": ["c-dev-1"],
+                "stopped": ["c-dev-migrate"],
+                "volume": ["v-dev-db"],
+                "network": ["n-dev"],
+            },
         }
         self.commands: list[tuple[str, ...]] = []
 
@@ -49,7 +61,8 @@ class Leftovers:
             stacks = [self.stacks[m] for m in marks if m in self.stacks] if marks else []
             if not marks:
                 stacks = list(self.stacks.values())
-            return "".join(f"{i}\n" for s in stacks for i in s.get(args[0], []))
+            kinds = [args[0], *(["stopped"] if args[0] == "container" and "-a" in args else [])]
+            return "".join(f"{i}\n" for s in stacks for k in kinds for i in s.get(k, []))
         return ""
 
 
@@ -67,15 +80,17 @@ def test_a75_stack_name_is_the_prefix_and_ten_signs_of_its_own_path() -> None:
 
 
 def test_a74_start_cleanup_removes_only_its_own_name_and_counts() -> None:
-    """A74, четвёртая строка: остатки двух стеков — убрано только своё (контейнер, том, сеть),
-    число — три; к `ai-geo-audit-dev` и его объектам команд нет."""
+    """A74, четвёртая строка: остатки двух стеков — убрано только своё (работающий и
+    остановленный контейнеры, том, сеть), число — четыре; к `ai-geo-audit-dev` и его объектам
+    команд нет."""
     docker = Leftovers()
-    assert guard.start_cleanup(docker, OWN) == 3
+    assert guard.start_cleanup(docker, OWN) == 4
     flat = [" ".join(c) for c in docker.commands]
     assert not [c for c in flat if DEV in c or "-dev" in c], flat
     removed = [c for c in docker.commands if "ls" not in c]
     assert removed == [
-        ("rm", "-f", "-v", "c-own-1"),
+        ("rm", "-f", "-v", "c-own-api"),
+        ("rm", "-f", "-v", "c-own-migrate"),
         ("volume", "rm", "-f", "v-own-db"),
         ("network", "rm", "n-own"),
     ]
@@ -122,7 +137,9 @@ def test_a75_locks_of_two_copies_do_not_block_each_other(tmp_path: Path) -> None
         pass
 
 
-def interrupted_by(first: signal.Signals, second: signal.Signals | None = None) -> tuple:
+def interrupted_by(
+    first: signal.Signals, second: signal.Signals | None = None
+) -> tuple[int | None, str | None, list[str], list[str], bool]:
     """Ход обвязки: тело получает `first`, уборка — `second`; что вызвано и с каким кодом."""
     calls: list[str] = []
 
@@ -168,8 +185,31 @@ def test_a74_second_signal_during_cleanup_gives_no_second_cleanup() -> None:
 def test_a74_body_without_a_signal_returns_its_outcome_and_cleans_up() -> None:
     """A74: без сигнала — итог тела, уборка одна, кода сигнала нет."""
     calls: list[str] = []
-    code, outcome, left = guard.guarded(lambda: "итог", lambda: calls.append("уборка") or ["x"])
+
+    def cleanup() -> list[str]:
+        calls.append("уборка")
+        return ["x"]
+
+    code, outcome, left = guard.guarded(lambda: "итог", cleanup)
     assert (code, outcome, left, calls) == (None, "итог", ["x"], ["уборка"])
+
+
+def test_a74_signal_during_cleanup_after_a_quiet_body_does_not_cut_the_cleanup() -> None:
+    """A74: тело вернулось без сигнала, SIGTERM пришёл посреди уборки — так бывает, когда джобу
+    отменяют ровно на уборке в конце прогона: уборка одна и доходит до конца, итог тела на месте,
+    кода сигнала нет; обработчики после обвязки — прежние."""
+    calls: list[str] = []
+
+    def cleanup() -> list[str]:
+        calls.append("уборка")
+        os.kill(os.getpid(), signal.SIGTERM)
+        calls.append("уборка до конца")
+        return []
+
+    before = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    assert guard.guarded(lambda: "итог", cleanup) == (None, "итог", [])
+    assert calls == ["уборка", "уборка до конца"]
+    assert {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)} == before
 
 
 sys.path.insert(0, str(dbtools.ROOT / "scripts"))
@@ -192,7 +232,9 @@ class SignalDuringUp(oracle.Docker):  # type: ignore[name-defined,misc]
         self.first, self.second = first, second
         self.commands: list[tuple[str, ...]] = []
 
-    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+    def result(
+        self, *args: str, limit: str = "run", **kw: object
+    ) -> subprocess.CompletedProcess[bytes]:
         self.commands.append(args)
         if "up" in args and "--wait" in args:
             os.kill(os.getpid(), self.first)
@@ -263,6 +305,74 @@ def test_a74_sigint_then_sigterm_during_cleanup_gives_no_second_down(tmp_path: P
     got, after, name = interrupted_run(tmp_path, docker)
     assert got == 130
     one_cleanup_pass(docker, after, name)
+
+
+class StoppedAfterDown(oracle.Docker):  # type: ignore[name-defined,misc]
+    """Подставной исполнитель уборки: после `down` остался остановленный контейнер своего имени;
+    как у Docker, `container ls` видит его только с `-a`."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self.mark = LABEL + name
+
+    def result(
+        self, *args: str, limit: str = "run", **kw: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        found = args[:2] == ("container", "ls") and self.mark in args and "-a" in args
+        return subprocess.CompletedProcess(["docker", *args], 0, b"c-own-migrate\n" * found, b"")
+
+
+def test_a74_cleanup_names_a_stopped_container_of_its_own_name_left_after_down(
+    tmp_path: Path,
+) -> None:
+    """A74: после уборки остался остановленный контейнер своего имени — проба остатка смотрит с
+    `-a`, контейнер назван, итог прогона красный «после уборки осталось»."""
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    (copy / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    name = guard.stack_name(copy)
+    left = oracle.Run(StoppedAfterDown(name), copy, name, "oracle-canary-0", {}).cleanup()
+    assert left == ["container c-own-migrate"]
+    code, line = oracle.verdict(0, left)
+    assert code == 1
+    assert "после уборки осталось container c-own-migrate" in line
+
+
+class RunLeftovers(oracle.Docker):  # type: ignore[name-defined,misc]
+    """Подставной исполнитель прогона: Docker отвечает версией, остатки стеков — как у
+    `Leftovers`; все команды — в его списке."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.left = Leftovers()
+
+    def result(
+        self, *args: str, limit: str = "run", **kw: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        out = "29.9.3\n" if args[:1] == ("version",) else self.left(*args)
+        return subprocess.CompletedProcess(["docker", *args], 0, out.encode(), b"")
+
+
+def test_a74_run_starts_with_cleanup_of_its_own_name_before_the_copy(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A74, четвёртая строка, и A75, четвёртая, на уровне прогона: остатки своего имени и
+    `ai-geo-audit-dev` — прогон убирает своё до копии и шагов и печатает, сколько убрал; к стеку
+    разработки команд нет. Копия здесь падает сразу — после уборки команд к Docker нет."""
+    docker = RunLeftovers()
+
+    def no_copy(target: Path) -> None:
+        docker.left.commands.append(("копия",))
+        raise OSError(f"копия {target.name} в тесте не нужна")
+
+    monkeypatch.setattr(oracle, "copy_head", no_copy)
+    assert oracle.run_oracle(OWN, docker) == 2
+    assert "уборка на старте: своего имени убрано 4" in capsys.readouterr().out
+    commands = docker.left.commands
+    at = commands.index(("копия",))
+    assert len([c for c in commands[:at] if "rm" in c]) == 4, commands
+    assert commands[at + 1 :] == []
+    assert not [c for c in commands if DEV in " ".join(c) or "-dev" in " ".join(c)], commands
 
 
 def test_a75_second_oracle_of_the_same_copy_is_refused_before_docker(tmp_path: Path) -> None:
