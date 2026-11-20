@@ -12,7 +12,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import re
@@ -28,6 +27,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
 
+from oracle_guard import LockBusyError, copy_lock, guarded, stack_name, start_cleanup
 from stack_oracle_compose import APP_UID, STACK_STEPS, StepError
 from stack_oracle_compose import cleanup as stack_cleanup
 
@@ -76,11 +76,6 @@ print(json.dumps({
     "lists": sorted(set().union(*map(sc.required, ("api", "worker", "migrate")))),
 }))
 """
-
-
-def stack_name(path: Path) -> str:
-    """Имя стека оракула по пути рабочей копии (A61, A75)."""
-    return "ai-geo-audit-oracle-" + hashlib.sha256(str(path).encode()).hexdigest()[:10]
 
 
 def now() -> str:
@@ -436,15 +431,52 @@ def copy_head(target: Path) -> None:
         archive.extractall(target, filter="data")
 
 
+def run_steps(run: Run, steps: list[tuple[str, str, Callable[[Run], str], bool]]) -> int:
+    """Шаги по порядку; нужный шаг красный — дальше не идём. Число красных."""
+    red = 0
+    for examples, title, step, needed in steps:
+        try:
+            print(f"{now()} {examples} {title} — ок: {step(run)}")
+        except (StepError, KeyError, TypeError, ValueError) as failure:
+            red += 1
+            print(f"{now()} {examples} {title} — КРАСНОЕ: {failure}")
+            if needed:
+                break
+    return red
+
+
+def finish(run: Run, steps: list[tuple[str, str, Callable[[Run], str], bool]] = STEPS) -> int:
+    """Шаги под обвязкой (A74): сигнал — уборка одна и код 130 или 143; иначе — итог шагов и
+    остатка после уборки."""
+    stopped, red, left = guarded(lambda: run_steps(run, steps), run.cleanup)
+    print(f"{now()} уборка: " + (f"осталось {left}" if left else "своего не осталось"))
+    if stopped is not None:
+        print(f"{now()} прервано сигналом — код {stopped}")
+        return stopped
+    code, line = verdict(red or 0, left)
+    print(f"{now()} {line}")
+    return code
+
+
 def main() -> int:
-    name, docker = stack_name(ROOT), Docker()
+    name = stack_name(ROOT)
+    try:
+        with copy_lock(name):
+            return run_oracle(name, Docker())
+    except LockBusyError as busy:
+        print(f"{now()} {busy}")
+        return 2
+
+
+def run_oracle(name: str, docker: Docker) -> int:
+    """Прогон под замком копии (A75): Docker, уборка своего имени на старте (A74), копия, шаги."""
     try:
         server = docker("version", "--format", "{{.Server.Version}}", limit="docker").strip()
     except (StepError, OSError):
         print(f"{now()} {UP_HINT}")
         return 2
     print(f"{now()} оракул: стек {name}, Docker {server}")
-    red = 0
+    print(f"{now()} уборка на старте: своего имени убрано {start_cleanup(docker, name)}")
     with tempfile.TemporaryDirectory(prefix=f"{name}-") as tmp:
         copy = Path(tmp) / "copy"
         try:
@@ -458,22 +490,7 @@ def main() -> int:
         key.write_text(secrets.token_urlsafe(32), encoding="utf-8")
         key.chmod(0o644)  # читает uid 10001 в контейнере; права машины переходят как есть
         values = {n: f"oracle-build-{n.lower()}-{secrets.token_hex(6)}" for n in BUILD_ARG_NAMES}
-        run = Run(docker, copy, name, label, values)
-        try:
-            for examples, title, step, needed in STEPS:
-                try:
-                    print(f"{now()} {examples} {title} — ок: {step(run)}")
-                except (StepError, KeyError, TypeError, ValueError) as failure:
-                    red += 1
-                    print(f"{now()} {examples} {title} — КРАСНОЕ: {failure}")
-                    if needed:
-                        break
-        finally:
-            left = run.cleanup()
-            print(f"{now()} уборка: " + (f"осталось {left}" if left else "своего не осталось"))
-    code, line = verdict(red, left)
-    print(f"{now()} {line}")
-    return code
+        return finish(Run(docker, copy, name, label, values))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import importlib.util
 import os
 import re
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
@@ -169,3 +170,91 @@ def test_a74_body_without_a_signal_returns_its_outcome_and_cleans_up() -> None:
     calls: list[str] = []
     code, outcome, left = guard.guarded(lambda: "итог", lambda: calls.append("уборка") or ["x"])
     assert (code, outcome, left, calls) == (None, "итог", ["x"], ["уборка"])
+
+
+sys.path.insert(0, str(dbtools.ROOT / "scripts"))
+_oracle_spec = importlib.util.spec_from_file_location(
+    "stack_oracle_for_guard", dbtools.ROOT / "scripts" / "stack_oracle.py"
+)
+assert _oracle_spec is not None
+assert _oracle_spec.loader is not None
+oracle = importlib.util.module_from_spec(_oracle_spec)
+sys.modules["stack_oracle_for_guard"] = oracle
+_oracle_spec.loader.exec_module(oracle)
+STACK_NAME = re.compile(r"ai-geo-audit-[\w-]+")
+
+
+class SignalDuringUp(oracle.Docker):  # type: ignore[name-defined,misc]
+    """Подставной исполнитель оракула: сигнал на `up --wait`, второй — на `down`, если задан."""
+
+    def __init__(self, first: signal.Signals, second: signal.Signals | None = None) -> None:
+        super().__init__()
+        self.first, self.second = first, second
+        self.commands: list[tuple[str, ...]] = []
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        self.commands.append(args)
+        if "up" in args and "--wait" in args:
+            os.kill(os.getpid(), self.first)
+        if "down" in args and self.second is not None:
+            os.kill(os.getpid(), self.second)
+        return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
+
+
+def interrupted_run(tmp_path: Path, docker: SignalDuringUp) -> tuple[int, list[tuple[str, ...]]]:
+    """Шаг подъёма стека под обвязкой оракула: код выхода и команды после `up --wait`."""
+    copy = tmp_path / "copy"
+    copy.mkdir()
+    (copy / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    name = guard.stack_name(copy)
+    run = oracle.Run(docker, copy, name, "oracle-canary-0", {})
+    up = [step for step in oracle.STEPS if step[2].__name__ == "step_up"]
+    code = oracle.finish(run, up)
+    after = docker.commands[[("up" in c) for c in docker.commands].index(True) + 1 :]
+    return code, after
+
+
+@pytest.mark.parametrize(("sent", "code"), [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
+def test_a74_signal_during_up_gives_exactly_one_down_of_its_own_name(
+    tmp_path: Path, sent: signal.Signals, code: int
+) -> None:
+    """A74, первая и вторая строки: сигнал во время `up --wait` — выход 130 (SIGINT) или 143
+    (SIGTERM); после сигнала ровно одна команда уборки стека — `docker compose -p <имя прогона>
+    down -v --remove-orphans`; других имён стека в командах нет."""
+    docker = SignalDuringUp(sent)
+    got, after = interrupted_run(tmp_path, docker)
+    downs = [c for c in after if "down" in c]
+    assert got == code
+    assert len(downs) == 1, after
+    down = downs[0]
+    name = down[down.index("-p") + 1]
+    assert {"-v", "--remove-orphans"} <= set(down)
+    names = {m for c in docker.commands for m in STACK_NAME.findall(" ".join(c))}
+    assert names and all(n.startswith(name) for n in names), names
+
+
+def test_a74_sigint_then_sigterm_during_cleanup_gives_no_second_down(tmp_path: Path) -> None:
+    """A74, вторая строка: SIGINT во время `up --wait`, SIGTERM посреди уборки, как при отмене
+    джобы на GitHub, — команда уборки одна, код первого сигнала — 130."""
+    got, after = interrupted_run(tmp_path, SignalDuringUp(signal.SIGINT, signal.SIGTERM))
+    assert got == 130
+    assert len([c for c in after if "down" in c]) == 1, after
+
+
+def test_a75_second_oracle_of_the_same_copy_is_refused_before_docker(tmp_path: Path) -> None:
+    """A75, третья строка, на уровне оракула: замок копии держит первый прогон — второй
+    `stack_oracle.py` отказывает сразу, код ≠ 0, «оракул этой копии уже идёт», до Docker."""
+    script = dbtools.ROOT / "scripts" / "stack_oracle.py"
+    env = {**os.environ, "TMPDIR": str(tmp_path), "PATH": str(tmp_path / "no-docker")}
+    with guard.copy_lock(guard.stack_name(dbtools.ROOT), tmp_path):
+        done = subprocess.run(
+            [sys.executable, str(script)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert "оракул этой копии уже идёт" in done.stdout
+    assert "Docker не отвечает" not in done.stdout
