@@ -408,6 +408,41 @@ def test_a126_every_dockerfile_in_deploy_is_in_the_scan_list(
 
 
 @pytest.mark.parametrize(
+    ("path", "flagged"),
+    [
+        ("Dockerfile", True),
+        ("a/b/Dockerfile", True),
+        ("web/Dockerfile.web", True),
+        ("web/api.Dockerfile", True),
+        ("web/api.Dockerfile.dockerignore", False),
+        ("web/Dockerfile.dockerignore", False),
+        ("web/notes.md", False),
+    ],
+    ids=[
+        "глубина 1",
+        "глубина 3",
+        "Dockerfile.*",
+        "*.Dockerfile",
+        "*.dockerignore",
+        "Dockerfile.dockerignore",
+        "не Dockerfile",
+    ],
+)
+def test_a126_guard_finds_dockerfiles_at_any_depth_and_by_every_name(
+    tmp_path: Path, path: str, flagged: bool
+) -> None:
+    """A126, третья строка: файл сборки в `deploy/` на любой глубине (первой, третьей) и под
+    любым именем, которое страж обещает, — `Dockerfile`, `Dockerfile.*`, `*.Dockerfile` — вне
+    списка скана красный с именем; `*.dockerignore` и прочие файлы — не файлы сборки."""
+    shutil.copytree(ROOT / "deploy", tmp_path / "deploy")
+    target = tmp_path / "deploy" / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("FROM scratch\n", encoding="utf-8")
+    expected = [f"deploy/{path} — Dockerfile вне списка скана"] if flagged else []
+    assert scan.guard_problems(tmp_path) == expected
+
+
+@pytest.mark.parametrize(
     ("env", "code", "text"),
     [
         (ENV, 0, "пакетов окружения 3 — все в описи"),
@@ -538,3 +573,16 @@ def test_a129_every_scan_has_scanners_vuln(tmp_path: Path) -> None:
         if "--scanners" not in call or call[call.index("--scanners") + 1] != "vuln"
     ]
     assert not wrong, f"--scanners vuln нет у вызовов {wrong}"
+
+
+def test_a126_only_the_download_touches_the_db_scans_skip_the_update(tmp_path: Path) -> None:
+    """A126, журнал: база одна на прогон — её качает только вызов `--download-db-only`, без
+    `--skip-db-update`; у канарейки, скана образа и описи — `--skip-db-update`: версия базы в
+    журнале — та, по которой шли сканы."""
+    calls = trivy_calls(tmp_path)
+    downloads = [call for call in calls if "--download-db-only" in call]
+    assert len(downloads) == 1
+    assert "--skip-db-update" not in downloads[0]
+    scans = [call for call in calls if "--download-db-only" not in call]
+    assert len(scans) == 3
+    assert all("--skip-db-update" in call for call in scans), scans
