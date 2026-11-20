@@ -64,6 +64,39 @@ pytest exit=0
 - Счёт — 690 строк и 7 файлов при пределах поставки 1200 и 25.
 - После прогона — только коммит документов сверки: этот отчёт, фаза, задачи. Код тот же.
 
+### На коммите сдачи `bbba9f2`
+
+Один прогон после коммита сдачи `bbba9f2`, с 2026-11-20T08:35:53Z по 08:36:24Z. База диффа —
+`origin/main` клона, `d2ac03f` (Ч1.3). Клон свежий, его тестовая база снята перед клоном;
+команды в нём — подоболочкой (L20); после прогона клон и база удалены. Вывод дословный, длинные
+строки обрезаны знаком «…». Следующий коммит меняет только документы сдачи: этот блок и ссылку
+на уроки L45–L48 в задачах — о ней четвёртое предупреждение ниже. Код тот же.
+
+```
+$ git clone -b ch1-03-health <репозиторий> <клон> && cd <клон>
+$ git log --format='%h %p %s' -3 && git rev-parse --short origin/main && git merge-base HEAD origin/main && git rev-parse HEAD:backend
+bbba9f2 1973a22 chore(delivery): handoff Ч1.3а — фаза, метрики, наблюдение, уроки L45–L48, перенос в архив
+1973a22 59ecb26 docs(delivery): Ч1.3а — подпись владельца под утверждениями
+59ecb26 e508b02 docs(delivery): Ч1.3а — вердикт проверяющего: к сдаче
+d2ac03f
+d2ac03f4a68a1016169ca9379951c31fa4ea3061
+fa2ea440363299988e4045fe15dbfcd998462701
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно d2ac03f4a68a..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-20-ch1-03a-health-journals (phase=handoff)
+debt: снимков долга на HEAD не прочитано — таять нечему
+breakers: files=7 net_loc=690 (+711/-21), excluded=11 (…), limits={…}
+наблюдение §13.1: поставок в архиве 10, окон со сроком 10, истекших без observed.md 0
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Создай STATUS по шаблону A.2
+WARNING: delivery/archive/2026-11-20-ch1-03a-health-journals: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given` (hypothesis); `fc.property` (fast-check). …
+WARNING: delivery/archive/2026-11-20-ch1-03a-health-journals: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+WARNING: delivery/archive/2026-11-20-ch1-03a-health-journals: archive/INDEX.md: уроки по затронутым путям не упомянуты: L45, L47, L48 (§2.2a) — прочти строки и сошлись на id в plan.md/tasks.md либо напиши, почему не применимо
+delivery_check: 0 error(s), 4 warning(s)
+exit=0
+$ cd backend && uv sync --frozen -q && uv run pytest -q -p no:cacheprovider -W error | tail -1
+337 passed in 27.27s
+```
+
 ## Дайджест утверждений
 
 `assert_digest.sh` из полезной нагрузки канона положен в клон, база — `origin/main`, на
