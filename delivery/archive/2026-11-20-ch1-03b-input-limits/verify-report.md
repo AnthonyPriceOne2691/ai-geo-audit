@@ -54,6 +54,51 @@ $ cd backend && uv sync --frozen -q && uv run pytest -q -p no:cacheprovider -W e
 - Тестовая база клона `audit_test_955a0add85` снята после прогона, клон удалён. Прежние прогоны
   — на `bc736c7` (412 passed) и `5a02430` (438 passed), до слияния.
 
+### На коммите сдачи `f3710a5`
+
+Один прогон после коммита сдачи `f3710a5`, с 2026-11-20T12:19:03Z по 12:19:44Z, нагрузка 4,12.
+Клон свежий (`--no-local`), база диффа — `origin/main` клона, `1518276`. Код тот же, что на
+`85b7cc5`: коммит сдачи меняет только документы поставки. Вывод дословный, длинные строки обрезаны
+знаком «…», установка пакетов uv опущена:
+
+```
+$ git clone -q --no-local -b ch1-03b-input-limits <репозиторий> <клон> && cd <клон>
+$ git checkout -q f3710a58c8bd75e3e8cea416be375eeaea9079cd
+$ git log --format="%h %p %s" -2 && git rev-parse --short origin/main \
+    && git merge-base HEAD origin/main
+f3710a5 089fbbe chore(delivery): handoff Ч1.3б — фаза, метрики, наблюдение, уроки L54–L58, перенос …
+089fbbe b4bad36 docs(delivery): Ч1.3б — подпись владельца под утверждениями
+1518276
+1518276a1b0130b2fab77113ddfbed9acfb6683a
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно 1518276a1b01..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-20-ch1-03b… (phase=handoff)
+debt: снимков долга на HEAD не прочитано — таять нечему
+breakers: files=19 net_loc=2211 (+2309/-98), excluded=10 (…), limits={'max_files_touched': 50, …}
+наблюдение §13.1: поставок в архиве 12, окон со сроком 12, истекших без observed.md 0
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Соз…
+WARNING: delivery/archive/2026-11-20-ch1-03b-input-limits: class M: ни одного реляционного оракула …
+WARNING: delivery/archive/2026-11-20-ch1-03b-input-limits: ci-oracles: weak — local gates are bypas…
+delivery_check: 0 error(s), 3 warning(s)
+exit=0
+$ cd backend && uv sync --frozen && uv run --frozen pytest -q -p no:cacheprovider -W error
+Using CPython 3.12.13
+Creating virtual environment at: .venv
+…
+Prepared 1 package in 9ms
+Installed 31 packages in 27ms
+…
+...............................                                          [100%]
+535 passed in 36.35s
+pytest exit=0
+```
+
+- Счёт — 2211 строк и 19 файлов при пределах 2500 и 50; судится архив поставки, фаза handoff.
+  WARNING «idle» — после переноса активной поставки нет; «реляционный оракул» — долг В1;
+  «ci-oracles: weak» — CI нет до В1, вместо ссылки — этот прогон.
+- Тестовая база клона `audit_test_2602f90e93` снята после прогона, клон удалён; клон пробы
+  коммита сдачи — тоже, базы у него не было.
+
 ## Дайджест утверждений
 
 `assert_digest.sh` из полезной нагрузки канона положен в рабочую копию на время прогона и убран,
