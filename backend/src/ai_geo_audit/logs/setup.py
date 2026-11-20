@@ -5,20 +5,27 @@
 сайта, в переменной контекста — выбирает клиент заголовком, поэтому они вычищаются только из
 текста, который написал код: сообщения, трассировки и полей `extra`. Поля, которые слой взял из
 области запроса и из себя, и форма записи от них не зависят (A48). Поле `extra` с именем базового
-поля записи выходит с приставкой `extra_` и его не перебивает (A56). httpx и httpcore — на
-WARNING: на INFO они печатают адрес целиком, а в адресе бывает токен.
+поля записи выходит с приставкой `extra_` и его не перебивает (A56). Каждое поле чистится до сборки
+строки — JSON остаётся JSON. Запись, которая не собралась, выходит записью-заменой без сырого
+текста; предупреждения и необработанные исключения процесса — записями через вычистку, крючки
+ставит точка входа процесса (`guard_process`). httpx и httpcore — на WARNING: на INFO они печатают
+адрес целиком, а в адресе бывает токен.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
 import sys
+import threading
 from collections.abc import Iterable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
+from types import TracebackType
+from typing import TextIO, override
 from urllib.parse import unquote, urlsplit
 
 from pydantic import SecretStr
@@ -61,6 +68,9 @@ _RESERVED = frozenset({"ts", "level", "logger", "exc"})
 TRUSTED = "_trusted"
 #: Поля, которые ставит фильтр журнала поверх присланного: их клиент тоже не выбирает.
 _OWN = frozenset({"request_id", "audit_id"})
+#: Сообщение записи-замены: исходная запись не собралась, её текста и аргументов в выводе нет.
+UNBUILT = "запись журнала не собралась"
+_process_log = logging.getLogger("ai_geo_audit.process")
 
 
 def register_secret(value: str) -> None:
@@ -158,63 +168,118 @@ def _extra(record: logging.LogRecord) -> dict[str, object]:
     }
 
 
+def _clean(text: str, written: bool) -> str:
+    return _written(text) if written else redact(text)
+
+
 def _scrub(value: object, written: bool) -> object:
-    """Значение поля: у текста кода — и секреты запроса; объект, который станет строкой в выводе,
-    чистится своей строкой."""
+    """Значение поля: у текста кода — и секреты запроса; ключ словаря чистится как значение и
+    становится строкой; объект, который станет строкой в выводе, чистится своей строкой."""
     if value is None or isinstance(value, bool | int | float):
         return value
     if isinstance(value, dict):
-        return {key: _scrub(item, written) for key, item in value.items()}
+        return {_clean(str(key), written): _scrub(item, written) for key, item in value.items()}
     if isinstance(value, list | tuple):
         return [_scrub(item, written) for item in value]
-    text = value if isinstance(value, str) else str(value)
-    return _written(text) if written else redact(text)
+    return _clean(value if isinstance(value, str) else str(value), written)
 
 
 def _trusted(record: logging.LogRecord) -> frozenset[str]:
     return _OWN | frozenset(getattr(record, TRUSTED, ()))
 
 
+def _unbuilt(record: logging.LogRecord, error: BaseException | None) -> dict[str, str]:
+    """Поля записи-замены: логгер, уровень и место вызова исходной записи и тип ошибки сборки —
+    без сообщения и аргументов: в них бывают секреты."""
+    return {
+        "ts": _utc(record),
+        "level": record.levelname,
+        "logger": redact(record.name),
+        "message": UNBUILT,
+        "error": type(error).__name__ if error else "",
+        "source": f"{record.filename}:{record.lineno}",
+        "request_id": str(getattr(record, "request_id", "")),
+        "audit_id": str(getattr(record, "audit_id", "")),
+    }
+
+
 class JsonFormatter(logging.Formatter):
     """Одна запись — одна строка JSON; поля из `extra` остаются полями."""
 
     def format(self, record: logging.LogRecord) -> str:
+        try:
+            return self._format(record)
+        except Exception as error:
+            # silent-ok: несобравшаяся запись — записью-заменой без сырого текста; запись в журнал
+            # из форматтера ушла бы по кругу
+            return self.unbuilt(record, error)
+
+    def unbuilt(self, record: logging.LogRecord, error: BaseException | None) -> str:
+        return json.dumps(_unbuilt(record, error), ensure_ascii=False)
+
+    def _format(self, record: logging.LogRecord) -> str:
         trusted = _trusted(record)
         payload: dict[str, object] = {
             "ts": _utc(record),
             "level": record.levelname,
-            "logger": record.name,
+            "logger": redact(record.name),
             "message": _written(record.getMessage()),
             **{k: _scrub(v, k not in trusted) for k, v in _extra(record).items()},
         }
         if record.exc_info:
             payload["exc"] = _written(self.formatException(record.exc_info))
-        # Секреты запроса — до сериализации, в значениях: JSON остаётся JSON. `default=str`:
-        # падение логгера на несериализуемом поле — худший исход. Проход `redact` по строке —
-        # секреты настроек везде, как раньше.
-        return redact(json.dumps(payload, ensure_ascii=False, default=str))
+        return json.dumps(payload, ensure_ascii=False)
 
 
 class TextFormatter(logging.Formatter):
     """Строка для человека; поля из `extra` — в хвосте."""
 
     def format(self, record: logging.LogRecord) -> str:
+        try:
+            return self._format(record)
+        except Exception as error:
+            # silent-ok: несобравшаяся запись — записью-заменой без сырого текста; запись в журнал
+            # из форматтера ушла бы по кругу
+            return self.unbuilt(record, error)
+
+    def unbuilt(self, record: logging.LogRecord, error: BaseException | None) -> str:
+        fields = _unbuilt(record, error)
+        head = " ".join(fields.pop(name) for name in ("ts", "level", "logger", "message"))
+        return head + " | " + " ".join(f"{k}={v}" for k, v in sorted(fields.items()) if v)
+
+    def _format(self, record: logging.LogRecord) -> str:
         trusted = _trusted(record)
-        line = f"{_utc(record)} {record.levelname} {record.name} {_written(record.getMessage())}"
+        name, message = redact(record.name), _written(record.getMessage())
+        line = f"{_utc(record)} {record.levelname} {name} {message}"
         fields = {k: v for k, v in _extra(record).items() if v not in ("", None)}
         if fields:
             line += " | " + " ".join(
-                f"{k}={v if k in trusted else _written(str(v))}" for k, v in sorted(fields.items())
+                f"{k}={_clean(str(v), k not in trusted)}" for k, v in sorted(fields.items())
             )
         if record.exc_info:
             line += "\n" + _written(self.formatException(record.exc_info))
-        return redact(line)
+        return line
+
+
+class _Handler(logging.StreamHandler[TextIO]):
+    """Обработчик журнала: сбой записи в поток не печатает сырое сообщение и аргументы —
+    стандартный `handleError` пишет их мимо форматтера."""
+
+    @override
+    def handleError(self, record: logging.LogRecord) -> None:
+        formatter = self.formatter
+        if isinstance(formatter, JsonFormatter | TextFormatter):
+            line = formatter.unbuilt(record, sys.exc_info()[1])
+        else:
+            line = UNBUILT
+        with contextlib.suppress(Exception):
+            sys.stderr.write(line + "\n")
 
 
 def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     """Собрать корневой логгер; повторный вызов заменяет обработчик, а не добавляет второй."""
     register_config_secrets(config.storage, config.access, config.keys)
-    handler = logging.StreamHandler(sys.stderr)
+    handler = _Handler(sys.stderr)
     chosen = (fmt or config.logs.format).lower()
     handler.setFormatter(JsonFormatter() if chosen == "json" else TextFormatter())
     handler.addFilter(ContextFilter())
@@ -225,3 +290,32 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     root.setLevel((level or config.logs.level).upper())
     for name in _NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+
+
+def guard_process() -> None:
+    """Точка входа процесса: предупреждения Python и необработанные исключения — записями нашего
+    формата через вычистку (A48, A55). Не в `setup_logging`: под pytest `captureWarnings` встал бы
+    поверх его подмены `showwarning` на время теста, а крючки исключений — дело процесса."""
+    logging.captureWarnings(True)
+    sys.excepthook = _unhandled
+    threading.excepthook = _unhandled_in_thread
+
+
+def _unhandled(
+    kind: type[BaseException], error: BaseException, trace: TracebackType | None
+) -> None:
+    """Необработанное исключение главного потока — запись ERROR; код выхода не ноль даёт сам
+    интерпретатор. Прерывание с клавиатуры — как обычно."""
+    if issubclass(kind, KeyboardInterrupt):
+        sys.__excepthook__(kind, error, trace)
+        return
+    _process_log.error("необработанное исключение", exc_info=(kind, error, trace))
+
+
+def _unhandled_in_thread(args: threading.ExceptHookArgs) -> None:
+    """Необработанное исключение потока — запись ERROR; `SystemExit` потока молчит, как обычно."""
+    if args.exc_value is None or issubclass(args.exc_type, SystemExit):
+        return
+    name = args.thread.name if args.thread else ""
+    trace = (args.exc_type, args.exc_value, args.exc_traceback)
+    _process_log.error("необработанное исключение в потоке %s", name, exc_info=trace)

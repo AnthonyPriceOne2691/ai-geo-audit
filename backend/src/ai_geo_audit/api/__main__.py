@@ -14,18 +14,20 @@ try:
 
     from ai_geo_audit.api.app import server_settings
     from ai_geo_audit.config.startup_checks import ConfigError, check_startup
-    from ai_geo_audit.logs.setup import setup_logging
+    from ai_geo_audit.logs.setup import guard_process, setup_logging
 except ValidationError as invalid:
     raise SystemExit(invalid_settings("api", invalid)) from None
 
 
 def main() -> None:
-    """Проверка старта, журналы, сервер."""
+    """Проверка старта, журналы и крючки процесса — предупреждения и необработанные исключения
+    записями журнала через вычистку, — сервер."""
     try:
         check_startup("api")
     except ConfigError as refusal:
         raise SystemExit(str(refusal)) from None
     setup_logging()
+    guard_process()
     uvicorn.run(**server_settings())  # type: ignore[arg-type]
 
 
