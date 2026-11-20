@@ -51,12 +51,21 @@ Derived from spec acceptance. Run during verify. Прогоны на GitHub — 
 - [x] A115 — pre-push 1,03 с, пять хуков (2026-11-20 на `1a83743` с рецептом §8.5 ③; до него — 1,22 с,
       два хука). Доктор: «бюджет pre-push — на push 5 хук(ов), набора тестов нет». Копия: полный набор в
       pre-push — доктор WEAK «бюджет pre-push: набор тестов на push… его место CI»
-- [ ] A116 — защита main, чтение через API: проверки ровно `gates`, `delivery`, `tests`;
-      `strict`, `enforce_admins`; force-push и удаление запрещены; одобрений нет. После слова
-      владельца о настройках репозитория (просьба ведущей)
-- [ ] A118 — сейчас `ci-oracles: tooling` со строкой остатка (вторая строка A118 держится);
-      `deployed` и `merge-gate: server` — после зелёного прогона и защиты main; копия
-      «`deployed` при красном прогоне» — `merge_guard.sh` красный на ci-status, на вершине сдачи
+- [x] A116 — защита main, чтение через API: проверки ровно `gates`, `delivery`, `tests`;
+      `strict`, `enforce_admins`; force-push и удаление запрещены; одобрений нет. Включила ведущая
+      2026-11-20T14:02:23Z по слову владельца 2026-11-20T13:15Z; чтение в 14:02:40Z,
+      `GET branches/main/protection`: checks `["gates","delivery","tests"]`, `strict: true`,
+      `enforce_admins: true`, `allow_force_pushes: false`, `allow_deletions: false`,
+      `required_pull_request_reviews` — нет. Четыре настройки того же слова (14:02:32Z–14:02:35Z):
+      действия — только GitHub (`allowed_actions: "selected"`, `github_owned_allowed: true`) и по
+      полному хешу (`sha_pinning_required: true`); токен по умолчанию — `read`, одобрять запросы
+      не может; запросы чужих копий — после одобрения (`all_external_contributors`). Запрос №1
+      после настроек — `mergeStateStatus` `CLEAN` на `d8bb6db`
+- [ ] A118 — `ci-oracles: deployed` и `merge-gate: server` — коммитом сдачи, по факту зелёного
+      прогона 44742544117 на `d8bb6db` (попытка 2, шаг мутаций 946 с) и защиты main (A116);
+      `waivers: ci` снято тем же коммитом. Копия «`deployed` при красном прогоне» —
+      `merge_guard.sh` красный на ci-status: на вершине сдачи у ведущей (`merge_guard.sh` гоняет
+      только она)
 - [x] A120 — копии (проба проверяющей): строка в 8 строк с началом «You are» — красный
       «inline-prompt», назван файл и число нарушений (текст строки — слово владельца
       2026-11-20T10:59Z); без маркера
