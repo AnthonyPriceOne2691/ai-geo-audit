@@ -1,5 +1,6 @@
-"""Вход API, срез 1 (A32–A35): настройки входа, сборка приложения, настройки uvicorn, его
-журналы и пакеты без лишнего; отказ входа процесса при негодной настройке — словами."""
+"""Вход API (A32–A35, A37, A57): настройки входа, сборка приложения, настройки uvicorn, его
+журналы и пакеты без лишнего; отказ входа процесса при негодной настройке — словами; остановка
+закрывает движок процесса."""
 
 from __future__ import annotations
 
@@ -10,9 +11,13 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import tomllib
+from collections.abc import Callable
 from types import ModuleType
 
+import api_probes as probes
+import asyncpg
 import dbtools
 import pytest
 import uvicorn
@@ -292,3 +297,71 @@ def test_a57_uvicorn_records_go_through_our_handler_and_redaction(
         "+0000",
         "метка ***",
     )
+
+
+API_APP = "ai-geo-audit:api"
+
+
+async def api_connections(done: Callable[[list[str]], bool] = lambda states: True) -> list[str]:
+    """Состояния соединений `ai-geo-audit:api` в тестовой базе копии — опросом до 2 с, пока не
+    выполнится условие: представление общее на весь сервер, фильтр — по имени базы копии."""
+    deadline = time.monotonic() + 2
+    while True:
+        server = await asyncpg.connect(dbtools._raw(dbtools.server_url()))
+        try:
+            rows = await server.fetch(
+                "SELECT state FROM pg_stat_activity WHERE datname = $1 AND application_name = $2",
+                dbtools.own_name(),
+                API_APP,
+            )
+        finally:
+            await server.close()
+        states = sorted(str(row["state"]) for row in rows)
+        if done(states) or time.monotonic() > deadline:
+            return states
+        await asyncio.sleep(0.1)
+
+
+async def test_a37_session_returns_its_connection_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A37: движок процесса смотрит в тестовую базу копии; `GET` закрытой пробы чтения с тестовым
+    пропуском — проба читает базу сессией движка процесса, ответ 200: в `pg_stat_activity` ровно
+    одно соединение `ai-geo-audit:api`, `state` — `idle`: сессия вернула соединение в пул без
+    открытой транзакции. `idle in transaction` — тест красный."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    async with probes.client(probes.build()) as http:
+        response = await http.get(probes.DB_READ, headers={"X-Access-Token": probes.PASS})
+    states = await api_connections(lambda found: found == ["idle"])
+    assert (response.status_code, states) == (200, ["idle"])
+
+
+async def test_a37_shutdown_closes_the_process_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A37: область `lifespan` прямо в приложение: `startup`, `GET` закрытой пробы чтения с
+    тестовым пропуском, `shutdown` (проба 1): оба `complete`; до `shutdown` одно соединение
+    `ai-geo-audit:api`, не позже 2 с после — ни одного. Без `dispose_engine()` в lifespan
+    соединение пула остаётся `idle` и через 2 с — тест красный."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    app = probes.build()
+    incoming: asyncio.Queue[dict[str, str]] = asyncio.Queue()
+    sent: list[str] = []
+    started = asyncio.Event()
+
+    async def receive() -> dict[str, str]:
+        return await incoming.get()
+
+    async def send(message: dict[str, str]) -> None:
+        sent.append(message["type"])
+        if message["type"] == "lifespan.startup.complete":
+            started.set()
+
+    scope = {"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}
+    running = asyncio.create_task(app(scope, receive, send))
+    await incoming.put({"type": "lifespan.startup"})
+    await asyncio.wait_for(started.wait(), 5)
+    async with probes.client(app) as http:
+        read = await http.get(probes.DB_READ, headers={"X-Access-Token": probes.PASS})
+    before = await api_connections(lambda found: found == ["idle"])
+    await incoming.put({"type": "lifespan.shutdown"})
+    await asyncio.wait_for(running, 5)
+    after = await api_connections(lambda found: found == [])
+    assert sent == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
+    assert (read.status_code, before, after) == (200, ["idle"], [])

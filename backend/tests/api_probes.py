@@ -1,11 +1,12 @@
-"""Маршруты-пробы и сборка приложения для тестов API (A36, A38–A48, A53, A54).
+"""Маршруты-пробы и сборка приложения для тестов API (A36–A48, A53, A54).
 
 Закрытая проба отвечает именем вошедшего, проба с телом — по схеме с запретом лишних полей,
 падающая проба падает с меткой, проба журнала пишет запись INFO. Проба заголовков пишет в журнал
 `Authorization`, пропуск и пароль сайта, как небрежный код; вторая падающая проба падает с
-пропуском в тексте (A48). Проба ожидания держит вошедших до события теста; открытая проба с телом
-стоит в списке открытых, как будущий вход по паролю (A53, A54). Подставные проверки пропуска:
-одна признаёт тестовый пропуск, другая падает. Схема тела — на уровне модуля: FastAPI ищет
+пропуском в тексте (A48). Проба чтения читает базу сессией движка процесса (A37). Проба
+ожидания держит вошедших до события теста; открытая проба с телом стоит в списке открытых, как
+будущий вход по паролю (A53, A54). Подставные проверки пропуска: одна признаёт тестовый пропуск,
+другая падает. Схема тела — на уровне модуля: FastAPI ищет
 аннотации по имени, схему внутри функции он не найдёт (проба 7 среза 0, L43). Пропуск и пароль
 сайта — из слов-заглушек.
 """
@@ -24,12 +25,14 @@ import httpx
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Security
 from pydantic import SecretStr
+from sqlalchemy import text
 from starlette.types import ASGIApp
 
 from ai_geo_audit import config
 from ai_geo_audit.api import access
 from ai_geo_audit.api.app import create_app
 from ai_geo_audit.api.contract import RequestModel
+from ai_geo_audit.storage import session_scope
 
 PASS = "eyJplaceholder.test-pass-for-gate.not-a-signature"
 BASIC = "Basic " + base64.b64encode(b"user:proxy-pass-words").decode()
@@ -41,6 +44,7 @@ BARE_503 = "/api/probe/bare-503"
 JOURNAL = "/api/probe/journal"
 HEADERS = "/api/probe/headers"
 BOOM_PASS = "/api/probe/boom-pass"
+DB_READ = "/api/probe/db-read"
 WAIT = "/api/probe/wait"
 OPEN_BODY = "/api/probe/open-body"
 OPEN_ECHO = "/api/probe/open-echo"
@@ -108,6 +112,14 @@ async def headers(request: Request) -> dict[str, str]:
         extra={"token": request.headers.get("x-access-token"), "password": pair.partition(":")[2]},
     )
     return {}
+
+
+@probes.get("/db-read")
+async def db_read() -> dict[str, int]:
+    """Читает базу сессией движка процесса: соединение из пула (A37)."""
+    async with session_scope() as session:
+        value = (await session.execute(text("SELECT 1"))).scalar_one()
+    return {"value": int(value)}
 
 
 @probes.get("/boom-pass")
