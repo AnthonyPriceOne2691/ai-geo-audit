@@ -69,6 +69,24 @@
         "kind": "unavailable",
         "retry": true
       }
+    },
+    {
+      "id": "too-large",
+      "when": "вошедший, тело больше 1 МБ: POST пробы с телом, объявлено 1 048 577 байт",
+      "status": 413,
+      "headers": {"content-type": "application/json"},
+      "body": {
+        "detail": "Запрос слишком большой — можно не больше 1 МБ",
+        "kind": "too-large",
+        "retry": false
+      }
+    },
+    {
+      "id": "busy",
+      "when": "запросов в работе столько, сколько позволяет предел; ещё один — GET /api/health без пропуска",
+      "status": 503,
+      "headers": {"content-type": "application/json", "retry-after": "60"},
+      "body": {"detail": "Сервис занят — повторите через минуту", "kind": "busy", "retry": true}
     }
   ]
 }

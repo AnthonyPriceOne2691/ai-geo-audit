@@ -41,7 +41,7 @@ async def health() -> JSONResponse:
     limit = HEALTH_DB_LIMIT_SECONDS
     try:
         await _select_one(limit)
-    except Exception as failure:  # noqa: BLE001 -- любой сбой базы — 503 и запись, без текста
+    except Exception as failure:
         log.warning(
             "здоровье: база не ответила",
             extra={"error": type(failure).__name__, "limit_seconds": limit},
@@ -66,7 +66,7 @@ async def _select_one(limit: float) -> None:
             await connection.close()
     except Exception as failure:
         if cut.fired:
-            raise TimeoutError("база не ответила в срок") from failure
+            raise TimeoutError(f"база не ответила за {limit} с") from failure
         raise
     finally:
         handle.cancel()

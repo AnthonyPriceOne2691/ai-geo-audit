@@ -19,6 +19,7 @@ from ai_geo_audit.api import app as app_module
 from ai_geo_audit.logs import setup as log_setup
 
 ACCESS = "ai_geo_audit.api.access"
+# pragma: allowlist nextline secret
 SECRET = "s3cr3t-in-url-123456"
 OWN_NUMBER = re.compile(r"[0-9a-f]{32}")
 TEXT_RECORD = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+0000 [A-Z]+ ")
@@ -147,7 +148,9 @@ async def test_a47_one_access_line_per_request_without_the_query(
     records = [json.loads(line) for line in lines]
     expected = [
         (ACCESS, "GET", path, status, answer.headers["x-request-id"], "127.0.0.1")
-        for path, status, answer in zip(("/api/health", "/api/nope"), (200, 403), answers)
+        for path, status, answer in zip(
+            ("/api/health", "/api/nope"), (200, 403), answers, strict=True
+        )
     ]
     fields = ("logger", "method", "path", "status", "request_id", "client")
     assert [tuple(r[k] for k in fields) for r in records] == expected

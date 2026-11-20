@@ -159,7 +159,7 @@ def test_a30_names_and_loose_forms_in_the_socket_are_refused(
 def test_a30_udp_datagram_is_refused() -> None:
     """A30: UDP-датаграмма `sendto` на 198.51.100.7:53 — отказ с той же причиной."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-        with pytest.raises(OSError, match="тест ходит только на петлю: 198.51.100.7:53"):
+        with pytest.raises(OSError, match=r"тест ходит только на петлю: 198\.51\.100\.7:53"):
             sock.sendto(b"x", ("198.51.100.7", 53))
 
 
