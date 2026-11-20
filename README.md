@@ -41,6 +41,10 @@ React с Vite и Mantine, pytest, docker compose.
   подпись необратимого); `main-guard.yml` — задача «RED on main» на красный прогон quality после
   push в main. Правила обоих держит `backend/tests/test_ci_contract.py`.
 - Будущая джоба образа или выката идёт после проверок: `needs: [gates, delivery, tests]`.
+- Гейт мержа — `scripts/merge_guard.sh`: слитое с main дерево (pre-commit, ратчет снимков, гейт
+  поставки) и последним — статус CI ветки. Из рабочей копии поставки — только проверка:
+  `uv run --project backend --no-sync env DRY_RUN=1 bash scripts/merge_guard.sh <ветка>` (pre-commit
+  гейт ищет в PATH). Сливает проверяющий из основного клона.
 
 ### Настройки репозитория
 
