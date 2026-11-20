@@ -1,3 +1,3 @@
 {
-  "backend/src/ai_geo_audit/probe_a109.py::clamp": "ветка-проба A109: функцию зовёт только тест без утверждений"
+  "backend/src/ai_geo_audit/probe_a109.py::scale": "ветка-проба A109: функцию зовёт только тест без утверждений"
 }
