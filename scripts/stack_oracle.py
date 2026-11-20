@@ -63,6 +63,16 @@ APP_UID = "10001"
 CACHE = re.compile(r"(^|/)__pycache__(/|$)|\.py[co]$")
 #: Пределы команд, секунды: зависший шаг называется своим пределом, а не висит.
 LIMITS = {"docker": 30, "build": 1200, "run": 120, "export": 300, "up": 300}
+#: Запрос здоровья из разового контейнера в сети стека тем же образом: слышит ли api сеть.
+NET_PROBE = """
+import sys, urllib.request
+try:
+    status = urllib.request.urlopen("http://api:{port}/api/health", timeout=5).status
+except OSError as error:
+    status = f"{{type(error).__name__}}: {{error}}"
+print(status)
+sys.exit(0 if status == 200 else 1)
+"""
 UP_HINT = "Docker не отвечает: поднимите Docker Desktop (open -a Docker) или службу docker"
 #: Что оракул спрашивает у собранного образа: версия Python, инструменты, файлы, списки.
 INSPECT = """
@@ -565,15 +575,25 @@ def step_up(run: Run) -> str:
 
 
 def step_health(run: Run) -> str:
-    """A69: api healthy не позже 50 с от старта (20 с + 3 × 10 с); проба внутри — код 0."""
+    """A69: api healthy не позже 50 с от старта (20 с + 3 × 10 с); проба внутри — код 0; запрос
+    здоровья из разового контейнера в сети стека — 200: api слышит сеть, а не только петлю."""
     api = run.inspect("api")
     started = parse_time(api["State"]["StartedAt"])
     oks = [parse_time(e["End"]) for e in api["State"]["Health"]["Log"] if e["ExitCode"] == 0]
     seconds = (min(t for t in oks if t) - started).total_seconds()
     probe = run.compose_result("exec", "-T", "api", "python", "-m", "ai_geo_audit.api.probe")
-    if seconds > 50 or probe.returncode:
-        raise StepFailed(f"healthy через {seconds:.1f} с; проба — код {probe.returncode}")
-    return f"healthy через {seconds:.1f} с от старта api; проба в контейнере — код 0"
+    port = dict(e.split("=", 1) for e in api["Config"]["Env"]).get("API_PORT", "8107")
+    once = ["run", "--rm", "-T", "--no-deps", "--entrypoint", "python", "migrate", "-c"]
+    net = run.compose_result(*once, NET_PROBE.format(port=port))
+    if seconds > 50 or probe.returncode or net.returncode:
+        raise StepFailed(
+            f"healthy через {seconds:.1f} с; проба внутри — код {probe.returncode}; из сети "
+            f"стека — {net.stdout.decode('utf-8', 'replace').strip()[-120:]}"
+        )
+    return (
+        f"healthy через {seconds:.1f} с от старта api; проба в контейнере — код 0; из сети стека "
+        f"http://api:{port}/api/health — 200"
+    )
 
 
 def step_repeat(run: Run) -> str:

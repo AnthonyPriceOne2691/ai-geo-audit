@@ -58,6 +58,8 @@ services:
     environment:
       APP_ENV: prod
       LOG_FORMAT: json
+      # Слушает все адреса контейнера: api слышит сеть стека; наружу портов нет (правило ports).
+      API_HOST: 0.0.0.0
       DATABASE_URL: ${API_DATABASE_URL:?задайте адрес базы api — .env.example}
       # Очередь без пароля до «Учёток хранилищ»; там адрес — переменная сервера API_REDIS_URL.
       REDIS_URL: redis://redis:6379/0
