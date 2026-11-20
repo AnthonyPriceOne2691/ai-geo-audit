@@ -205,7 +205,7 @@ class Docker:
         """Команда Docker под пределом; `stdin` — байты на вход, `env` — окружение команды."""
         seconds, stdin = LIMITS[limit], kw.pop("stdin", None)
         try:
-            return subprocess.run(
+            return subprocess.run(  # noqa: S603 -- docker и аргументы оракула, без оболочки
                 ["docker", *args],
                 input=stdin,
                 capture_output=True,
@@ -429,7 +429,9 @@ def verdict(red: int, left: list[str]) -> tuple[int, str]:
 def copy_head(target: Path) -> None:
     """Чистая копия: `git archive HEAD` — только закоммиченное, без личных каталогов."""
     command = ["git", "-C", str(ROOT), "archive", "--format=tar", "HEAD"]
-    done = subprocess.run(command, capture_output=True, timeout=LIMITS["docker"], check=True)
+    done = subprocess.run(  # noqa: S603 -- постоянная команда git archive, без оболочки
+        command, capture_output=True, timeout=LIMITS["docker"], check=True
+    )
     with tarfile.open(fileobj=io.BytesIO(done.stdout)) as archive:
         archive.extractall(target, filter="data")
 
