@@ -201,19 +201,45 @@ class SignalDuringUp(oracle.Docker):  # type: ignore[name-defined,misc]
         return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
 
 
-def interrupted_run(tmp_path: Path, docker: SignalDuringUp) -> tuple[int, list[tuple[str, ...]]]:
-    """Шаг подъёма стека под обвязкой оракула: код выхода и команды после `up --wait`."""
+#: Свои объекты прогона к `up --wait` — что записали шаги до подъёма: сборка (контейнер
+#: `-inspect`, образ `-backend:oracle`), проба контекста (образ `-context:oracle`), две выгрузки
+#: под одним именем `-export`, правила A73 (`-rules`).
+OWN_CONTAINERS = ("inspect", "export", "export", "rules")
+OWN_IMAGES = ("backend:oracle", "context:oracle")
+
+
+def interrupted_run(
+    tmp_path: Path, docker: SignalDuringUp
+) -> tuple[int, list[tuple[str, ...]], str]:
+    """Шаг подъёма стека под обвязкой оракула: код выхода, команды после `up --wait`, имя."""
     copy = tmp_path / "copy"
     copy.mkdir()
     (copy / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     name = guard.stack_name(copy)
-    docker.containers.append(f"{name}-export")  # как после выгрузки образа
-    docker.images.append(f"{name}-backend:oracle")  # как после сборки
+    docker.containers.extend(f"{name}-{kind}" for kind in OWN_CONTAINERS)
+    docker.images.extend(f"{name}-{kind}" for kind in OWN_IMAGES)
     run = oracle.Run(docker, copy, name, "oracle-canary-0", {})
     up = [step for step in oracle.STEPS if step[2].__name__ == "step_up"]
     code = oracle.finish(run, up)
     after = docker.commands[[("up" in c) for c in docker.commands].index(True) + 1 :]
-    return code, after
+    return code, after, name
+
+
+def one_cleanup_pass(docker: SignalDuringUp, after: list[tuple[str, ...]], name: str) -> None:
+    """A74: один проход уборки — одна `docker compose -p <имя прогона> down -v --remove-orphans`
+    и удаление своих контейнеров и образов по точному имени, каждого — один раз; других
+    удалений нет, других имён стека в командах нет."""
+    downs = [c for c in after if "down" in c]
+    assert len(downs) == 1, after
+    down = downs[0]
+    assert down[down.index("-p") + 1] == name, down
+    assert {"-v", "--remove-orphans"} <= set(down)
+    removals = [c for c in after if "down" in c or "rm" in c]
+    own = [("rm", "-f", "-v", f"{name}-{kind}") for kind in dict.fromkeys(OWN_CONTAINERS)]
+    own += [("image", "rm", "-f", f"{name}-{kind}") for kind in OWN_IMAGES]
+    assert sorted(removals) == sorted([down, *own]), removals
+    names = {m for c in docker.commands for m in STACK_NAME.findall(" ".join(c))}
+    assert names and all(n.startswith(name) for n in names), names
 
 
 @pytest.mark.parametrize(("sent", "code"), [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
@@ -221,31 +247,22 @@ def test_a74_signal_during_up_gives_exactly_one_down_of_its_own_name(
     tmp_path: Path, sent: signal.Signals, code: int
 ) -> None:
     """A74, первая и вторая строки: сигнал во время `up --wait` — выход 130 (SIGINT) или 143
-    (SIGTERM); после сигнала ровно одна команда уборки стека — `docker compose -p <имя прогона>
-    down -v --remove-orphans`; свои контейнер выгрузки и образ удаляются по точному имени в том
-    же проходе, каждое удаление — не больше раза; других имён стека в командах нет."""
+    (SIGTERM); после сигнала один проход уборки: одна `down -v --remove-orphans` своего имени и
+    удаление своих трёх контейнеров и двух образов по точному имени — шесть удалений, каждое
+    один раз, других нет."""
     docker = SignalDuringUp(sent)
-    got, after = interrupted_run(tmp_path, docker)
-    downs = [c for c in after if "down" in c]
+    got, after, name = interrupted_run(tmp_path, docker)
     assert got == code
-    assert len(downs) == 1, after
-    down = downs[0]
-    name = down[down.index("-p") + 1]
-    assert {"-v", "--remove-orphans"} <= set(down)
-    removals = [c for c in after if "down" in c or "rm" in c]
-    assert len(removals) == len(set(removals)), removals
-    assert ("rm", "-f", "-v", f"{name}-export") in removals
-    assert ("image", "rm", "-f", f"{name}-backend:oracle") in removals
-    names = {m for c in docker.commands for m in STACK_NAME.findall(" ".join(c))}
-    assert names and all(n.startswith(name) for n in names), names
+    one_cleanup_pass(docker, after, name)
 
 
 def test_a74_sigint_then_sigterm_during_cleanup_gives_no_second_down(tmp_path: Path) -> None:
     """A74, вторая строка: SIGINT во время `up --wait`, SIGTERM посреди уборки, как при отмене
-    джобы на GitHub, — команда уборки одна, код первого сигнала — 130."""
-    got, after = interrupted_run(tmp_path, SignalDuringUp(signal.SIGINT, signal.SIGTERM))
+    джобы на GitHub, — проход уборки один и тот же по составу, код первого сигнала — 130."""
+    docker = SignalDuringUp(signal.SIGINT, signal.SIGTERM)
+    got, after, name = interrupted_run(tmp_path, docker)
     assert got == 130
-    assert len([c for c in after if "down" in c]) == 1, after
+    one_cleanup_pass(docker, after, name)
 
 
 def test_a75_second_oracle_of_the_same_copy_is_refused_before_docker(tmp_path: Path) -> None:
