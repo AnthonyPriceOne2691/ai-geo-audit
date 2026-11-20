@@ -45,7 +45,7 @@
        соблюдаются руками. -->
 - **behavior-oracles:** tests-present — pytest без Docker: правила compose, проба здоровья, разбор `Dockerfile`, чистые части каркаса оракула; оракул стека `scripts/stack_oracle.py` на машине с Docker
   <!-- Долг на волну В1: реляционный оракул `@given`. До В1 — ручные порчи без кэша байткода. -->
-- **artifact_oracle:** scripts/stack_oracle.py — образ из чистой копии `git archive HEAD`: контекст, файлы, пользователь, секреты сборки (A60–A64); стек — срез 4
+- **artifact_oracle:** scripts/stack_oracle.py — образ из чистой копии `git archive HEAD` и стек под своим именем: контекст, файлы, пользователь, секреты сборки, правила на файле, migrate, здоровье, сбой migrate (A60–A67, A69, A73)
 - **ci-oracles:** weak
   <!-- CI — волна В1; джоба `stack` — «Оракул стека в CI» третьей сессии. Вместо ссылки на
        прогон — гейт и оракул в чистом клоне в verify-report. -->
