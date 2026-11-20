@@ -83,7 +83,7 @@ async def relay() -> AsyncIterator[Relay]:
             while data := await reader.read(65536):
                 if watch and found.freeze_on and found.freeze_on in data:
                     found.frozen = True
-                while found.frozen:
+                while found.frozen:  # noqa: ASYNC110 -- проба держит ответ, пока поднят флаг
                     await asyncio.sleep(0.02)
                 writer.write(data)
                 await writer.drain()

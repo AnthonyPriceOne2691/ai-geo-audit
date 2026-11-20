@@ -147,7 +147,9 @@ async def test_a47_one_access_line_per_request_without_the_query(
     records = [json.loads(line) for line in lines]
     expected = [
         (ACCESS, "GET", path, status, answer.headers["x-request-id"], "127.0.0.1")
-        for path, status, answer in zip(("/api/health", "/api/nope"), (200, 403), answers)
+        for path, status, answer in zip(
+            ("/api/health", "/api/nope"), (200, 403), answers, strict=True
+        )
     ]
     fields = ("logger", "method", "path", "status", "request_id", "client")
     assert [tuple(r[k] for k in fields) for r in records] == expected

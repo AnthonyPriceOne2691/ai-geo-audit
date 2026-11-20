@@ -33,7 +33,9 @@ SENT_REQUEST_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 def request_id_for(scope: Scope) -> str:
     """Присланный номер — у единственного заголовка и по образцу целиком; иначе свой (A46)."""
-    sent = [value.decode("latin-1") for name, value in scope["headers"] if name == b"x-request-id"]
+    sent: list[str] = [
+        value.decode("latin-1") for name, value in scope["headers"] if name == b"x-request-id"
+    ]
     if len(sent) == 1 and SENT_REQUEST_ID.fullmatch(sent[0]):
         return sent[0]
     return uuid.uuid4().hex
