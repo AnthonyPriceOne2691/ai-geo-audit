@@ -12,12 +12,13 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** tasks
+- **phase:** implement
   <!-- Ветка `ch1-06a-deploy-core` от main `a8e4597` (опубликована Ч1.3а). Документы — тексты,
        подписанные владельцем 2026-11-20T08:32Z, как есть: spec.md — спека 6а (`e5666b41cc0f`),
        plan.md — план 6а (`35fba0af6ad4`), общие ch1-06-spec.md (`58cc2e07b5fb`) и
-       ch1-06-plan.md (`08e0c9a2b5e6`); таблица примеров 6а — 21 строка (`13c8d8a07edd`). Срез 1
-       — после коммита подписи проверяющего; срезы 2–7 — после слияния main с «Учётками» и 5б. -->
+       ch1-06-plan.md (`08e0c9a2b5e6`); таблица примеров 6а — 21 строка (`13c8d8a07edd`).
+       Подписи — `40e5b40`, срез 0 — `70b9ff1`; срез 1 идёт сейчас, срезы 2–7 — после слияния
+       main с «Учётками» и 5б (tasks.md). -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-20T08:32Z)
