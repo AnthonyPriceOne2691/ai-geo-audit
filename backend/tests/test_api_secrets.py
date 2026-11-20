@@ -10,6 +10,7 @@ import io
 import json
 import logging
 import re
+import sys
 
 import api_probes as probes
 import dbtools
@@ -489,3 +490,13 @@ def test_a48_config_secret_in_logger_name_is_cleaned(
     logging.getLogger(f"ai_geo_audit.{CONFIG_WORDS}").info("имя")
     out = err_lines(capsys)
     assert (CONFIG_WORDS in out[0], "ai_geo_audit.***" in out[0]) == (False, True)
+
+
+def test_a48_failed_replacement_write_does_not_break_the_logging_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A48: запись не собралась, а `stderr`, куда идёт запись-замена, отказывает — вызов журнала
+    возвращается без исключения: сбой журнала не роняет код, который пишет запись."""
+    log_setup.setup_logging(fmt="json")
+    monkeypatch.setattr(sys, "stderr", Broken())
+    missing_argument(logging.getLogger("ai_geo_audit.test"))
