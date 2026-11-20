@@ -14,7 +14,10 @@ COLLECTED: list[int] = [0]
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
+    """Начало счёта сессии: mutmut гоняет несколько сессий в одном процессе."""
     COLLECTED[0] = len(session.items)
+    OUTCOME["passed"].clear()
+    OUTCOME["skipped"].clear()
 
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:

@@ -237,6 +237,9 @@ asyncio_default_fixture_loop_scope = "function"
 # `-W error…` в командной строке сильнее её. Ключ знает плагин от 0.24, со старым — капкан.
 addopts = "-q --strict-markers --strict-config -p run_sentinels"   # стражи — §2.7c
 xfail_strict = true        # xfail, который вдруг прошёл, = сигнал, а не тишина
+# Адаптация (scripts/lint/adapted.json): узел с кириллицей в параметре печатается как есть. В
+# экранированном виде (`[\u043f…]`) его не выбрать обратно — код 4, и гейт мутаций не судит.
+disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true
 
 # --- mypy (чистый strict; НЕ копируй сюда легаси [[overrides]] чужого проекта) -
 [tool.mypy]

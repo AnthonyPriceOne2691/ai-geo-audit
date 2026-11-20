@@ -49,3 +49,32 @@ def test_a106_run_without_skips_is_green_with_the_summary(tmp_path: Path) -> Non
     done = run_probe(tmp_path, PROBE.replace('pytest.skip("проба A106")', "assert True"))
     assert done.returncode == 0, done.stdout
     assert "собрано 2, прошло 2, пропущено 0" in done.stdout
+
+
+TWO_SESSIONS = """
+import pytest
+
+args = ["-p", "run_summary", "-p", "no:cacheprovider", "-q"]
+first = int(pytest.main([*args, "test_probe.py"]))
+second = int(pytest.main([*args, "test_probe.py::test_passes"]))
+print(f"коды сессий: {first} {second}")
+"""
+
+
+def test_a106_second_session_in_one_process_counts_afresh(tmp_path: Path) -> None:
+    """A106: две сессии pytest в одном процессе (так гоняет mutmut) — счёт у второй свой:
+    пропуск первой её не красит, итог второй — только её тесты."""
+    (tmp_path / "test_probe.py").write_text(PROBE, encoding="utf-8")
+    (tmp_path / "two_sessions.py").write_text(TWO_SESSIONS, encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(TESTS)}
+    done = subprocess.run(
+        [sys.executable, "two_sessions.py"],
+        check=False,  # коды обеих сессий сверяет сам тест
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "коды сессий: 1 0" in done.stdout, done.stdout
+    assert "собрано 1, прошло 1, пропущено 0" in done.stdout

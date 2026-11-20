@@ -337,3 +337,10 @@ stale_after: 2026-12-18
   `metadata.vulnerabilities` из `npm audit --json` вместе с ключом `total` — счёт удвоен. Проба
   2026-11-20T08:25Z по lock фронта: 7 moderate, `total` 7 → гейт дал бы `js_total=14`. У нас
   JS-половина до В1б объявлена неприменимой, правки нет.
+- **Для канона:** гейт мутаций (mutmut 3.8.1) не судит ничего, если у теста в области есть
+  параметр с не-ASCII: pytest по умолчанию печатает такой узел экранированным (`[\u043f…]`), mutmut
+  подаёт его обратно на прогон без мутаций, pytest его не находит — код 4,
+  `BadTestExecutionCommandsException`. Проба 2026-11-20T09:20Z: экранированный узел — «no match»,
+  код 4; с `disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true` узел
+  печатается как есть и выбирается обратно, код 0. Фрагмент pytest канона этой настройки не
+  несёт; у нас — адаптация `backend/pyproject.toml`.

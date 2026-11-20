@@ -18,7 +18,7 @@ ROOT = envguard.ROOT
 QUALITY = ROOT / ".github" / "workflows" / "quality.yml"
 #: Дайджест службы базы — решение 2026-11-20 в decisions.md (сверка «рук», правило 14 суток).
 POSTGRES = (
-    "postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
+    "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 )
 IGNORED = (".coverage.*", "coverage.json", "coverage.json.head", "mutants/")
 
@@ -40,7 +40,10 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
     checks = [
         (service.get("image") == POSTGRES, f"служба базы: образ {service.get('image')!r}"),
         (service.get("ports") == ["127.0.0.1:5462:5432"], "служба базы: порт не на петле 5462"),
-        ("pg_isready" in str(service.get("options", "")), "служба базы: нет проверки здоровья"),
+        (
+            "pg_isready -h 127.0.0.1" in str(service.get("options", "")),
+            "служба базы: готовность не по TCP",
+        ),
         (bool(step(job, "Diff base")), "нет шага Diff base"),
         ("pytest --cov --cov-report=json:coverage.json" in run, "покрытие: не src и migrations"),
         ("git rev-parse HEAD > coverage.json.head" in run, "покрытие: отчёт не привязан"),
@@ -103,7 +106,7 @@ COPIES = [
     ("A108-diff-area", r"LINT_PY_SRC: backend\n", "LINT_PY_SRC: backend/src\n", "LINT_PY_SRC"),
     (
         "A100-service-by-tag",
-        r"postgres:16\.15-alpine@sha256:[0-9a-f]{64}",
+        r"postgres:16-alpine@sha256:[0-9a-f]{64}",
         "postgres:16-alpine",
         "образ",
     ),

@@ -242,3 +242,18 @@ def test_a111_no_registered_value_survives_redact(case: tuple[list[str], str]) -
         logs._secrets.clear()
         logs._secrets.update(saved)
     assert [value for value in values if value in out] == []
+
+
+def test_a111_nested_value_is_masked_whole_longest_first() -> None:
+    """A111, пример: пароль внутри адреса — адрес маскируется целиком, длинное значение первым.
+    При обратном порядке в выводе остался бы кожух адреса вокруг маски пароля."""
+    saved = set(logs._secrets)
+    logs._secrets.clear()
+    try:
+        logs.register_secret(DB_PASSWORD)
+        logs.register_secret(DSN)
+        out = logs.redact(f"url={DSN} pw={DB_PASSWORD}")
+    finally:
+        logs._secrets.clear()
+        logs._secrets.update(saved)
+    assert out == f"url={logs.MASK} pw={logs.MASK}"
