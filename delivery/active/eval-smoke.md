@@ -13,10 +13,10 @@ Derived from spec acceptance. Run during verify.
       репозитория), по новым и изменённым файлам поставки: 0 совпадений; вывод — в
       `verify-report.md`
 
-- [ ] A60–A67, A69, A73 — живой прогон оракула: `python3 scripts/stack_oracle.py` из рабочей копии
-      (Docker с compose v2 и BuildKit): 13 шагов «ок», «итог: шагов 13, красных 0», уборка —
-      «своего не осталось», код 0; после — своего нет в `docker ps -a`, `docker volume ls`,
-      `docker network ls` и образах. Прогон исполнителя на `0561612` 2026-11-20T09:51:58Z–
-      09:53:22Z, 84 с, нагрузка 4,26: api healthy через 5,9 с от старта, из сети стека — 200;
-      unhealthy через 29,7 с после остановки db, healthy через 5,1 с после её возврата; A67 —
-      `up --wait` код 1, migrate код 1, api `created`
+- [ ] A60, A61, A62, A63, A64, A65, A66, A67, A69, A73 — живой прогон оракула:
+      `python3 scripts/stack_oracle.py` из рабочей копии (Docker с compose v2 и BuildKit): 13 шагов
+      «ок», «итог: шагов 13, красных 0», уборка — «своего не осталось», код 0; после — своего нет в
+      `docker ps -a`, `docker volume ls`, `docker network ls` и образах. Прогон в чистом клоне на
+      `7d599b3` 2026-11-20T10:11:39Z–10:12:47Z, 68 с, нагрузка 4,96: api healthy через 5,4 с от
+      старта, из сети стека — 200; unhealthy через 25,7 с после остановки db, healthy через 4,6 с
+      после её возврата; A67 — `up --wait` код 1, migrate код 1, api `created`
