@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import logging
 import re
@@ -304,3 +305,187 @@ async def test_a48_value_not_in_pass_form_does_not_mask_code_text(
     records = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]
     echo = [r["message"] for r in records if r["logger"] == "ai_geo_audit.api.probe"]
     assert echo == ["пришло: /api/nope-not-a-pass"]
+
+
+#: Пропуск, пароль сайта и секрет настроек для записей, которые не собрались или прячут секрет не в
+#: значении поля (приёмка проверяющего 2026-11-20). Слова-заглушки.
+TOKEN = "eyJplaceholder.leak-pass-words.not-a-signature"
+SITE = "site-pass-words-1"
+CONFIG_WORDS = "config-words-for-unbuilt-123"
+UNBUILT_TEXT = "запись журнала не собралась"
+
+
+class Unprintable:
+    """Поле, которое не превращается в текст."""
+
+    def __str__(self) -> str:
+        raise ValueError("не печатается")
+
+
+def missing_argument(log: logging.Logger) -> None:
+    log.info("вход %s %s", TOKEN)  # noqa: PLE1206 -- нехватка аргумента — предмет проверки
+
+
+UNBUILT = {
+    "missing-argument": (missing_argument, "TypeError"),
+    "wrong-type": (lambda log: log.info("число %d", SITE), "TypeError"),
+    "config-in-bad-format": (lambda log: log.info("настройка %d", CONFIG_WORDS), "TypeError"),
+    "unprintable-field": (lambda log: log.info("поле", extra={"bad": Unprintable()}), "ValueError"),
+}
+
+
+def err_lines(capsys: pytest.CaptureFixture[str]) -> list[str]:
+    return [line for line in capsys.readouterr().err.splitlines() if line]
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+@pytest.mark.parametrize("case", list(UNBUILT))
+def test_a48_unbuilt_record_is_one_record_of_ours_without_raw_text(
+    capsys: pytest.CaptureFixture[str], fmt: str, case: str
+) -> None:
+    """A48, строже подписанного (приёмка проверяющего 2026-11-20): запись, которая не собралась, —
+    ошибка формата сообщения или поле, которое не превращается в текст, — одна запись нашего
+    формата: логгер, место вызова и тип ошибки сборки; ни сырого сообщения и аргументов, ни
+    «Logging error» и «Traceback»; секретов запроса и настроек нет."""
+    log_setup.setup_logging(level="INFO", fmt=fmt)
+    log_setup.register_secret(CONFIG_WORDS)
+    write, error = UNBUILT[case]
+    with log_setup.request_context("rid-1"), log_setup.request_secrets(TOKEN, SITE):
+        write(logging.getLogger("ai_geo_audit.test"))
+    out = err_lines(capsys)
+    assert len(out) == 1, out
+    raw = (TOKEN, SITE, CONFIG_WORDS, "Logging error", "Traceback", "Arguments", "%s", "%d")
+    assert [part for part in raw if part in out[0]] == []
+    if fmt == "json":
+        record = json.loads(out[0])
+        shown = (record["logger"], record["message"], record["error"], record["request_id"])
+        assert shown == ("ai_geo_audit.test", UNBUILT_TEXT, error, "rid-1")
+        assert str(record["source"]).startswith("test_api_secrets.py:")
+        return
+    assert TEXT_RECORD.match(out[0]) and f" ai_geo_audit.test {UNBUILT_TEXT} | " in out[0]
+    tail = out[0].split(" | ", 1)[1].split(" ")
+    assert [f"error={error}", "request_id=rid-1"] == [
+        t for t in tail if t.startswith(("error=", "re"))
+    ]
+
+
+class Broken(io.StringIO):
+    """Поток журнала, который отказывает при записи."""
+
+    def write(self, text: str) -> int:
+        raise OSError("поток отказал")
+
+
+def test_a48_failed_write_does_not_print_raw_arguments(capsys: pytest.CaptureFixture[str]) -> None:
+    """A48: поток журнала отказал при записи — обработчик не печатает сырое сообщение и аргументы
+    (`Handler.handleError` пишет их мимо форматтера): в stderr одна строка нашего формата, без
+    секрета и без «Logging error»."""
+    log_setup.setup_logging(fmt="json")
+    handler = logging.getLogger().handlers[0]
+    assert isinstance(handler, logging.StreamHandler)
+    handler.setStream(Broken())
+    with log_setup.request_secrets(TOKEN):
+        logging.getLogger("ai_geo_audit.test").info("запись %s", TOKEN)
+    out = err_lines(capsys)
+    assert len(out) == 1, out
+    record = json.loads(out[0])
+    assert (record["message"], record["error"], TOKEN in out[0]) == (UNBUILT_TEXT, "OSError", False)
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_a48_dict_keys_are_cleaned_and_odd_keys_do_not_break_the_record(
+    capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A48: секрет запроса ключом вложенного словаря чистится как значение; ключ не-строка
+    (кортеж) запись не роняет — одна запись нашего формата."""
+    log_setup.setup_logging(fmt=fmt)
+    with log_setup.request_secrets(TOKEN):
+        logging.getLogger("ai_geo_audit.test").info(
+            "ключи", extra={"seen": {TOKEN: 1}, "pair": {(1, 2): "v"}}
+        )
+    out = err_lines(capsys)
+    assert (len(out), TOKEN in out[0], "***" in out[0]) == (1, False, True), out
+    if fmt == "json":
+        assert json.loads(out[0])["message"] == "ключи"
+
+
+NESTED = {
+    "in_dict": {"k": TOKEN},
+    "in_list": [TOKEN],
+    "in_tuple": (TOKEN,),
+    "dict_in_list": [{"k": TOKEN}],
+}
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+@pytest.mark.parametrize("field", list(NESTED))
+def test_a48_request_secret_in_nested_values_is_cleaned(
+    capsys: pytest.CaptureFixture[str], fmt: str, field: str
+) -> None:
+    """A48: секрет запроса в значении словаря, в списке, в кортеже и в словаре внутри списка — на
+    его месте `***`."""
+    log_setup.setup_logging(fmt=fmt)
+    with log_setup.request_secrets(TOKEN):
+        logging.getLogger("ai_geo_audit.test").info("вложено", extra={field: NESTED[field]})
+    out = err_lines(capsys)
+    assert (len(out), TOKEN in out[0], "***" in out[0]) == (1, False, True), out
+
+
+def test_a48_config_secret_with_a_json_escaped_sign_in_a_list(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A48: секрет настроек со знаком, который JSON экранирует (`"`), в списке — его нет ни как
+    есть, ни в экранированном виде."""
+    log_setup.setup_logging(fmt="json")
+    log_setup.register_secret('pa"ss-word-123')
+    logging.getLogger("ai_geo_audit.test").info("список", extra={"items": ['pa"ss-word-123']})
+    out = err_lines(capsys)
+    assert ['pa"ss-word-123' in out[0], 'pa\\"ss-word-123' in out[0], "***" in out[0]] == [
+        False,
+        False,
+        True,
+    ]
+
+
+def test_a48_pg_values_with_a_newline_in_a_list_are_cleaned(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A48: строка DETAIL Postgres с переводом строки внутри значения — в списке поля: значения
+    строки нет, вид ошибки остался."""
+    log_setup.setup_logging(fmt="json")
+    detail = "Failing row contains (7, line\nsecret-two)."
+    logging.getLogger("ai_geo_audit.test").info("список", extra={"details": [detail]})
+    out = err_lines(capsys)
+    assert ("secret-two" in out[0], "Failing row contains" in out[0]) == (False, True)
+
+
+def test_a48_short_value_does_not_become_a_request_secret(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A48: значение короче 6 знаков секретом запроса не становится: маска съела бы слова."""
+    log_setup.setup_logging(fmt="json")
+    with log_setup.request_secrets("short"):
+        logging.getLogger("ai_geo_audit.test").info("short words")
+    assert json.loads(err_lines(capsys)[-1])["message"] == "short words"
+
+
+def test_a48_empty_set_replaces_the_inherited_one(capsys: pytest.CaptureFixture[str]) -> None:
+    """A48: набор запроса ставится и пустым — набор, унаследованный задачей от прошлого запроса,
+    не доживает до записей этого (проба 8)."""
+    log_setup.setup_logging(fmt="json")
+    with log_setup.request_secrets(TOKEN), log_setup.request_secrets():
+        logging.getLogger("ai_geo_audit.test").info("наследство %s", TOKEN)
+    assert json.loads(err_lines(capsys)[-1])["message"] == f"наследство {TOKEN}"
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_a48_config_secret_in_logger_name_is_cleaned(
+    capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A48: секрет настроек в имени логгера — на его месте `***`: базовые поля записи чистятся до
+    сборки строки, как и остальные."""
+    log_setup.setup_logging(fmt=fmt)
+    log_setup.register_secret(CONFIG_WORDS)
+    logging.getLogger(f"ai_geo_audit.{CONFIG_WORDS}").info("имя")
+    out = err_lines(capsys)
+    assert (CONFIG_WORDS in out[0], "ai_geo_audit.***" in out[0]) == (False, True)

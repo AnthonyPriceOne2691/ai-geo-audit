@@ -201,3 +201,69 @@ async def test_a55_live_server_answers_logs_and_stops_on_sigterm(tmp_path: Path)
     assert len(access) == polls + 5
     assert [r["path"] for r in access if "?" in str(r["path"])] == []
     assert await connections_left() == []
+
+
+#: Секрет настроек процесса — через `JWT_SECRET`: `setup_logging` отмечает его секретом. Слова.
+GUARD_WORDS = "process-guard-words-for-tests-123"
+#: Вход процесса и то, что в нём случается после настройки журналов.
+GUARDED = {
+    "warning": (
+        "from ai_geo_audit.logs.setup import guard_process, setup_logging\n"
+        "setup_logging()\nguard_process()\nimport os, warnings\n"
+        "warnings.warn('предупреждение ' + os.environ['JWT_SECRET'])\n"
+    ),
+    "thread": (
+        "from ai_geo_audit.logs.setup import guard_process, setup_logging\n"
+        "setup_logging()\nguard_process()\nimport os, threading\n"
+        "def boom():\n    raise RuntimeError('поток ' + os.environ['JWT_SECRET'])\n"
+        "worker = threading.Thread(target=boom)\nworker.start()\nworker.join()\n"
+    ),
+    "entry": (
+        "import os, uvicorn\n"
+        "def boom(**_settings):\n    raise RuntimeError('упал ' + os.environ['JWT_SECRET'])\n"
+        "uvicorn.run = boom\nfrom ai_geo_audit.api.__main__ import main\nmain()\n"
+    ),
+}
+#: Логгер, уровень записи и код выхода процесса.
+GUARDED_EXPECTED = {
+    "warning": ("py.warnings", "WARNING", 0),
+    "thread": ("ai_geo_audit.process", "ERROR", 0),
+    "entry": ("ai_geo_audit.process", "ERROR", 1),
+}
+
+
+async def test_a55_process_warning_and_crashes_are_records_of_ours() -> None:
+    """A55, строже подписанного (приёмка проверяющего 2026-11-20): после входа процесса
+    предупреждение Python, необработанное исключение в потоке `threading` и в главном потоке
+    `python -m ai_geo_audit.api` выходят записью нашего JSON через вычистку: каждая строка вывода
+    — JSON, секрета настроек нет; необработанное в главном потоке — код выхода не ноль."""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONUTF8": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONPATH": str(SRC),
+        "ENV_FILE": os.devnull,
+        "LOG_FORMAT": "json",
+        "JWT_SECRET": GUARD_WORDS,
+    } | {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
+    found: dict[str, tuple[int, int | None, bool, bool]] = {}
+    for case, script in GUARDED.items():
+        run = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            script,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        out, err = await asyncio.wait_for(run.communicate(), 30)
+        text = (out + err).decode()
+        lines = [line for line in text.splitlines() if line]
+        assert [line for line in lines if not line.startswith("{")] == [], (case, text[-1500:])
+        records = [json.loads(line) for line in lines]
+        logger, level, _code = GUARDED_EXPECTED[case]
+        mine = [r for r in records if (r["logger"], r["level"]) == (logger, level)]
+        found[case] = (len(mine), run.returncode, GUARD_WORDS in text, "***" in text)
+    assert found == {
+        case: (1, code, False, True) for case, (_, _, code) in GUARDED_EXPECTED.items()
+    }
