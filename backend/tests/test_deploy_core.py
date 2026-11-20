@@ -98,15 +98,19 @@ ROOT_CASES = [
     ("mkdir", "etc/ai-geo-audit", True),
     ("mkdir", "etc/ai-geo-audit-old", False),
     ("append", "srv/nb-alpha/x.log", False),
+    ("mkdir", "srv/ai-geo-audit/link", False),
+    ("append", "srv/ai-geo-audit/file-link", False),
 ]
 
 
 @pytest.mark.parametrize(("op", "rel", "own"), ROOT_CASES)
 def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str, own: bool) -> None:
     """A186: запись, переименование, удаление и каталоги — только под своими корнями; путь наружу
-    через `..` (ротация копий уровнем выше своего корня) и через ссылку — отказ, чужое цело."""
+    через `..` (ротация копий уровнем выше своего корня) и через ссылку — в середине пути и в
+    последнем звене — отказ; чужое цело, права чужого каталога прежние."""
     for name in ("srv/nb-alpha", "etc/nginx/sites-enabled", "srv/ai-geo-audit-backups"):
         (tmp_path / name).mkdir(parents=True)
+    (tmp_path / "srv/nb-alpha").chmod(0o755)
     for name in (
         "srv/x.dump",
         "srv/ai-geo-audit-backups/old.dump",
@@ -115,6 +119,7 @@ def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str,
         (tmp_path / name).write_text("чужое", encoding="utf-8")
     (ctx.paths.service / ".deploy").mkdir()
     (ctx.paths.service / "link").symlink_to(tmp_path / "srv/nb-alpha")
+    (ctx.paths.service / "file-link").symlink_to(tmp_path / "srv/x.dump")
     path = tmp_path / rel
     if own and op == "write":
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,11 +134,43 @@ def test_a186_files_only_under_own_roots(ctx, tmp_path: Path, op: str, rel: str,
         act()
         assert ctx.files.ops[-1][:2] == (op, str(path))
         return
-    with pytest.raises(Refused, match="вне своих корней"):
+    with pytest.raises(Refused, match="вне своих корней|ссылка"):
         act()
     assert ctx.files.ops == []
     others = ("srv/x.dump", "srv/nb-alpha/docker-compose.yml")
     assert [(tmp_path / name).read_text(encoding="utf-8") for name in others] == ["чужое"] * 2
+    assert (tmp_path / "srv/nb-alpha").stat().st_mode & 0o777 == 0o755
+
+
+def test_a186_a183_links_are_not_followed(ctx, tmp_path: Path, capsys) -> None:
+    """A186, A183: `.deploy` — ссылка на чужой каталог: `mkdir` и запуск команды — отказ, права
+    чужого каталога прежние; `last` — отказ, строки чужого журнала в выводе нет. Свой корень —
+    ссылка: запись и `mkdir` — отказ. Цель `mkdir` — не каталог: отказ."""
+    foreign = tmp_path / "srv/nb-alpha"
+    foreign.mkdir()
+    foreign.chmod(0o755)
+    (foreign / "neighbor.log").write_text("строка чужого журнала\n", encoding="utf-8")
+    ctx.paths.deploy_dir.symlink_to(foreign)
+    with pytest.raises(Refused, match=r"\.deploy — ссылка"):
+        ctx.files.mkdir(ctx.paths.deploy_dir)
+    with pytest.raises(Refused, match="ссылка"), tool.session(ctx, "check"):
+        pass
+    assert foreign.stat().st_mode & 0o777 == 0o755
+    assert tool.main(["last"], ctx) == 1
+    shown = ctx.out.getvalue() + "".join(capsys.readouterr())
+    assert "чужого журнала" not in shown and "neighbor.log" not in shown and "ссылка" in shown
+    ctx.paths.backups.symlink_to(foreign)
+    for act in (
+        lambda: ctx.files.write(ctx.paths.backups / "x.dump", b"x"),
+        lambda: ctx.files.mkdir(ctx.paths.backups),
+    ):
+        with pytest.raises(Refused, match="ссылка"):
+            act()
+    assert sorted(p.name for p in foreign.iterdir()) == ["neighbor.log"]
+    ctx.paths.etc.parent.mkdir()
+    ctx.paths.etc.write_text("не каталог", encoding="utf-8")
+    with pytest.raises(Refused, match="не каталог"):
+        ctx.files.mkdir(ctx.paths.etc)
 
 
 def test_a186_temp_file_is_600_from_creation_and_crash_keeps_old_file(ctx, monkeypatch) -> None:
@@ -165,8 +202,9 @@ def test_a186_temp_file_is_600_from_creation_and_crash_keeps_old_file(ctx, monke
     assert sorted(p.name for p in target.parent.iterdir()) == [".env"]
 
 
-#: A186: вызовы, что меняют диск, — только в классе `Files`; элемент на каждый (L37).
-WRITERS = [
+#: A186: вызовы, что пишут, читают или обходят файлы, — только в классе `Files`; элемент на
+#: каждый (L37).
+DISK_CALLS = [
     "os.replace(a, b)",
     "os.rename(a, b)",
     "os.unlink(a)",
@@ -197,34 +235,39 @@ WRITERS = [
     "a.rmdir()",
     "a.symlink_to(b)",
     "a.chmod(0)",
+    "os.fchmod(a, 0)",
+    "os.open(a, os.O_RDONLY)",
+    "os.listdir(a)",
+    "os.scandir(a)",
+    "open(a)",
+    "a.read_text()",
+    "a.read_bytes()",
+    "a.glob('*.log')",
+    "a.iterdir()",
 ]
 
-MODULE_WRITERS = {call.split("(")[0] for call in WRITERS if call.startswith(("os.", "shutil."))}
+MODULE_CALLS = {call.split("(")[0] for call in DISK_CALLS if call.startswith(("os.", "shutil."))}
 
-PATH_WRITERS = {call.split("(")[0][2:] for call in WRITERS if call.startswith("a.")}
+PATH_CALLS = {call.split("(")[0][2:] for call in DISK_CALLS if call.startswith("a.")}
 
 
-def changes_disk(call: ast.Call) -> bool:
-    """A186: функция `os`/`shutil` из списка (`os.open` — с флагами записи), `open` с режимом
-    записи, метод пути из списка — не через функцию файлов `….files.`."""
-    name, text = ast.unparse(call.func), ast.unparse(call)
-    if name in MODULE_WRITERS:
-        return name != "os.open" or any(flag in text for flag in ("O_WRONLY", "O_RDWR", "O_CREAT"))
-    if name == "open":
-        modes = [ast.unparse(arg) for arg in call.args[1:2]]
-        modes += [ast.unparse(k.value) for k in call.keywords if k.arg == "mode"]
-        return any(set(mode) & set("wax+") for mode in modes)
+def touches_disk(call: ast.Call) -> bool:
+    """A186: функция `os`/`shutil` из списка, `open`, метод пути из списка — не через функцию
+    файлов `….files.`."""
+    name = ast.unparse(call.func)
+    if name in MODULE_CALLS or name == "open":
+        return True
     method = call.func.attr if isinstance(call.func, ast.Attribute) else ""
-    return method in PATH_WRITERS and not name.endswith(f"files.{method}")
+    return method in PATH_CALLS and not name.endswith(f"files.{method}")
 
 
-def writers_outside_files(source: str) -> list[str]:
-    """A186: вызовы, что меняют диск, вне класса `Files`."""
+def disk_calls_outside_files(source: str) -> list[str]:
+    """A186: вызовы, что пишут, читают или обходят файлы, вне класса `Files`."""
     found: list[str] = []
 
     def visit(node: ast.AST, inside: bool) -> None:
         inside = node.name == "Files" if isinstance(node, ast.ClassDef) else inside
-        if isinstance(node, ast.Call) and not inside and changes_disk(node):
+        if isinstance(node, ast.Call) and not inside and touches_disk(node):
             found.append(ast.unparse(node))
         for child in ast.iter_child_nodes(node):
             visit(child, inside)
@@ -233,21 +276,20 @@ def writers_outside_files(source: str) -> list[str]:
     return found
 
 
-@pytest.mark.parametrize("call", WRITERS)
-def test_a186_disk_writer_outside_the_file_function_is_found(call: str) -> None:
-    """A186: проба детектора — вызов, меняющий диск, вне `Files` найден, внутри — нет."""
-    assert writers_outside_files(f"def f(a, b):\n    {call}\n") == [call]
-    assert writers_outside_files(f"class Files:\n    def f(a, b):\n        {call}\n") == []
+@pytest.mark.parametrize("call", DISK_CALLS)
+def test_a186_disk_call_outside_the_file_function_is_found(call: str) -> None:
+    """A186: проба детектора — вызов, что пишет, читает или обходит файлы, вне `Files` найден,
+    внутри — нет."""
+    assert disk_calls_outside_files(f"def f(a, b):\n    {call}\n") == [call]
+    assert disk_calls_outside_files(f"class Files:\n    def f(a, b):\n        {call}\n") == []
 
 
-def test_a186_script_writes_to_disk_only_through_the_file_function() -> None:
-    """A186: в скрипте нет вызова, меняющего диск, вне функции файлов; чтение и `ctx.files` —
-    не находки."""
-    assert writers_outside_files(SCRIPT.read_text(encoding="utf-8")) == []
-    lawful = (
-        "def f(a, ctx):\n    open(a).read()\n    os.open(a, os.O_RDONLY)\n    ctx.files.mkdir(a)\n"
-    )
-    assert writers_outside_files(lawful) == []
+def test_a186_script_touches_files_only_through_the_file_function() -> None:
+    """A186: в скрипте нет вызова, что пишет, читает или обходит файлы, вне функции файлов;
+    вызовы через `ctx.files` и проверки вида `is_dir` — не находки."""
+    assert disk_calls_outside_files(SCRIPT.read_text(encoding="utf-8")) == []
+    lawful = "def f(a, ctx):\n    ctx.files.read(a)\n    ctx.files.mkdir(a)\n    a.is_dir()\n"
+    assert disk_calls_outside_files(lawful) == []
 
 
 @pytest.mark.parametrize(
@@ -288,7 +330,7 @@ def test_a185_server_file_rights_owner_placeholders_and_empties(ctx) -> None:
     """A185 (ядро): права шире 600, владелец не root, заглушка и пустое — каждое названо именем
     и причиной, без значения; «пишет выкат» до первого выката — не отказ."""
     write_env(ctx, server_values(JWT_SECRET="CHANGE_ME", redis=""), mode=0o644)
-    env = tool.read_env(ctx.paths.env_file)
+    env = tool.read_env(ctx.files, ctx.paths.env_file)
     problems = tool.env_problems(env, owner=os.getuid() + 1, may_be_empty=frozenset({"WEB_IMAGE"}))
     assert problems == [
         "права файла окружения шире 600 — chmod 600",
@@ -311,17 +353,21 @@ def test_a185_server_file_rights_owner_placeholders_and_empties(ctx) -> None:
 )
 def test_a185_server_file_read_without_execution(ctx, text: str, expected: str) -> None:
     """A185 (ядро): файл сервера — строки «ИМЯ=значение», без исполнения; негодная строка —
-    номером, без текста; нет файла и ссылка вместо файла — отказ словами."""
+    номером, без текста; нет файла, ссылка вместо файла и не обычный файл — отказ словами."""
     ctx.paths.env_file.write_text(text, encoding="utf-8")
     with pytest.raises(Refused, match=expected) as refused:
-        tool.read_env(ctx.paths.env_file)
+        tool.read_env(ctx.files, ctx.paths.env_file)
     assert "secret-without-name" not in str(refused.value)
     ctx.paths.env_file.unlink()
     with pytest.raises(Refused, match="файла окружения нет — сначала env-init"):
-        tool.read_env(ctx.paths.env_file)
+        tool.read_env(ctx.files, ctx.paths.env_file)
     ctx.paths.env_file.symlink_to(ctx.paths.service / "other")
+    with pytest.raises(Refused, match="ссылка"):
+        tool.read_env(ctx.files, ctx.paths.env_file)
+    ctx.paths.env_file.unlink()
+    ctx.paths.env_file.mkdir()
     with pytest.raises(Refused, match="не обычный файл"):
-        tool.read_env(ctx.paths.env_file)
+        tool.read_env(ctx.files, ctx.paths.env_file)
 
 
 def test_lock_second_run_refused_at_once_stale_mark_named(ctx) -> None:
@@ -338,12 +384,12 @@ def test_lock_second_run_refused_at_once_stale_mark_named(ctx) -> None:
             tool.session(ctx, "check"),
         ):
             pass
-        assert tool.lock_state(lock).startswith(f"идёт выкат: процесс {pid} с ")
+        assert ctx.files.lock_state(lock).startswith(f"идёт выкат: процесс {pid} с ")
     finally:
         ctx.files.unlock(fd)
-    assert tool.lock_state(lock) == "выката нет"
+    assert ctx.files.lock_state(lock) == "выката нет"
     lock.write_text("99999999 2026-11-20T00:00:00Z\n", encoding="utf-8")
-    assert tool.lock_state(lock).startswith("устаревшая метка: процесс 99999999")
+    assert ctx.files.lock_state(lock).startswith("устаревшая метка: процесс 99999999")
     with tool.session(ctx, "check"):
         pass
     ctx.out = io.StringIO()
