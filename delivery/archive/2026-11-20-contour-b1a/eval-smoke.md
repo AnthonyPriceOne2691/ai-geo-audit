@@ -74,13 +74,17 @@ Derived from spec acceptance. Run during verify. Прогоны на GitHub — 
       моложе даты»; версия uv `==0.11.26` в `[tool.uv]` и в CI, копии на обе стороны
 - [ ] A96 — ветка-проба со строкой ключевого слова: шаг в `gates` красный — ссылка на прогон
 - [ ] A97 — ветка-проба с файлом имени канона в индексе: `pre-commit` в `gates` красный — ссылка
-- [ ] A98 — запрос на слияние ветки поставки: `gates`, `delivery`, `tests` зелёные — ссылка;
+- [x] A98 — запрос на слияние ветки поставки: `gates`, `delivery`, `tests` зелёные — ссылка;
       ветка-проба с ложным утверждением — `tests` красная, при защите `mergeStateStatus` —
       `BLOCKED`. Ветка-проба `probe-a98` (запрос № 2, база `contour-b1a`), прогон 44725898695:
       `tests` красная — «FAILED tests/test_zz_probe_a98.py::test_a98_probe_false_assertion_names_the_test
       - assert 1 == 2» (журнал — вторая проверяющая, 2026-11-20T11:24Z). Запрос поставки №1,
       прогон 44725764860 на `669d40c`: success — `delivery`, `tests`, `gates` (тимлид,
-      2026-11-20T11:40Z). Ждёт: `BLOCKED` — после защиты main
+      2026-11-20T11:40Z). При защите main: `probe-a98b` (`8446bff`, поверх `d8bb6db`), черновой
+      запрос №7 на main, прогон 44750561902 — `tests` failure, шаг «Тесты с покрытием»,
+      «test_a98_probe_false_assertion_names_the_test … assert sum([1]) == 2», `gates` и `delivery`
+      — success; `mergeStateStatus` — `BLOCKED` (ведущая, 2026-11-20T14:12:22Z); запрос закрыт без
+      слияния, ветка удалена
 - [ ] A102 — ветка-проба с `requests==2.31.0` в dev: «py_total: N (было 0)» — ссылка
 - [x] A106 — ветка-проба без службы Postgres: «Postgres для тестов не отвечает». `probe-a106`
       (запрос № 3), прогон 44725920278: «ERROR: Postgres для тестов не отвечает
