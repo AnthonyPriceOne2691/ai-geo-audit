@@ -5,6 +5,8 @@
 стирает пароль сайта, поэтому 401 сервис не отвечает), 404 — `not-found`, 405 —
 `method-not-allowed` с `Allow`, прочий 4xx — `invalid` со своим кодом и пустым `errors`, 5xx —
 `internal`; текста исключения в ответе нет. В 422 наружу — только `loc` и `type` каждой ошибки.
+Отказы пределов входа — `too-large` (413) и `busy` (503, `Retry-After`): числа в их текстах
+держат константы `api.limits` (A58).
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from pydantic import BaseModel, ConfigDict
 from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 
+from ai_geo_audit.api import limits
+
 REFUSAL_HEADER = "X-Access-Refusal"
 
 
@@ -28,6 +32,8 @@ class Kind:
     detail: str
     #: Отказ доступа: вид уходит и в заголовке — экран читает признак, а не текст.
     access: bool = False
+    #: `Retry-After` — пауза `busy` из `api.limits`; у `unavailable` его нет: экран различает их.
+    retry_after: bool = False
 
 
 KINDS: dict[str, Kind] = {
@@ -37,6 +43,8 @@ KINDS: dict[str, Kind] = {
     "invalid": Kind(422, False, "Запрос заполнен неверно — проверьте данные"),
     "internal": Kind(500, False, "Сбой на нашей стороне. Номер запроса: {request_id}"),
     "unavailable": Kind(503, True, "Сервис временно недоступен — повторите позже"),
+    "too-large": Kind(413, False, "Запрос слишком большой — можно не больше 1 МБ"),
+    "busy": Kind(503, True, "Сервис занят — повторите через минуту", retry_after=True),
 }
 
 
@@ -74,6 +82,8 @@ def refusal_response(
     head = dict(headers or {})
     if spec.access:
         head[REFUSAL_HEADER] = kind
+    if spec.retry_after:
+        head["Retry-After"] = str(limits.BUSY_RETRY_AFTER_SECONDS)
     return JSONResponse(body, status_code=status or spec.status, headers=head)
 
 

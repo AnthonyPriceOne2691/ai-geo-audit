@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 import pytest
@@ -262,3 +263,49 @@ def test_a111_nested_value_is_masked_whole_longest_first() -> None:
         logs._secrets.clear()
         logs._secrets.update(saved)
     assert out == f"url={logs.MASK} pw={logs.MASK}"
+
+
+#: Поля `extra` с именами базовых полей записи и присланный номер запроса (A56).
+FORGED = {
+    "ts": "1999-01-01",
+    "level": "DEBUG",
+    "logger": "fake",
+    "exc": "fake-trace",
+    "request_id": "forged-id",
+}
+RECORD_TIME = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+0000"
+
+
+def test_a56_extra_does_not_forge_base_fields_in_json(capsys: pytest.CaptureFixture[str]) -> None:
+    """A56: `extra` с `ts`, `level`, `logger`, `exc` — в JSON время записи, `INFO` и имя
+    настоящего логгера, ключа `exc` нет; присланное — в полях с приставкой `extra_`; номер
+    запроса — из контекста: фильтр журнала ставит его поверх присланного (Ч1.1)."""
+    logs.setup_logging(level="INFO", fmt="json")
+    with logs.request_context("real-id-1"):
+        logging.getLogger("ai_geo_audit.test").info("проба", extra=FORGED)
+    record = json.loads(lines(capsys)[-1])
+    assert re.fullmatch(RECORD_TIME, str(record["ts"]))
+    assert (record["level"], record["logger"], "exc" in record) == (
+        "INFO",
+        "ai_geo_audit.test",
+        False,
+    )
+    sent = {
+        f"extra_{name}": record.get(f"extra_{name}") for name in ("ts", "level", "logger", "exc")
+    }
+    assert sent == {f"extra_{name}": FORGED[name] for name in ("ts", "level", "logger", "exc")}
+    assert record["request_id"] == "real-id-1"
+
+
+def test_a56_extra_does_not_forge_base_fields_in_text(capsys: pytest.CaptureFixture[str]) -> None:
+    """A56: в формате `text` начало строки — настоящие время, уровень и логгер; в хвосте —
+    присланное с приставкой: `extra_level=DEBUG` и прочие."""
+    logs.setup_logging(level="INFO", fmt="text")
+    with logs.request_context("real-id-1"):
+        logging.getLogger("ai_geo_audit.test").info("проба", extra=FORGED)
+    line = lines(capsys)[-1]
+    assert re.match(rf"{RECORD_TIME} INFO ai_geo_audit\.test проба \| ", line), line
+    tail = line.split(" | ", 1)[1].split(" ")
+    expected = ["extra_exc=fake-trace", "extra_level=DEBUG", "extra_logger=fake"]
+    assert [field for field in [*expected, "extra_ts=1999-01-01"] if field not in tail] == []
+    assert "request_id=real-id-1" in tail
