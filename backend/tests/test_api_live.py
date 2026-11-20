@@ -225,6 +225,11 @@ GUARDED = {
         "        raise RuntimeError('в деструкторе ' + os.environ['JWT_SECRET'])\n"
         "leaky = Leaky()\ndel leaky\n"
     ),
+    "startup": (
+        "import os\nimport ai_geo_audit.api.__main__ as entry\n"
+        "def broken(process):\n    raise RuntimeError('проверка ' + os.environ['JWT_SECRET'])\n"
+        "entry.check_startup = broken\nentry.main()\n"
+    ),
     "entry": (
         "import os, uvicorn\n"
         "def boom(**_settings):\n    raise RuntimeError('упал ' + os.environ['JWT_SECRET'])\n"
@@ -236,6 +241,7 @@ GUARDED_EXPECTED = {
     "warning": ("py.warnings", "WARNING", 0),
     "thread": ("ai_geo_audit.process", "ERROR", 0),
     "unraisable": ("ai_geo_audit.process", "ERROR", 0),
+    "startup": ("ai_geo_audit.process", "ERROR", 1),
     "entry": ("ai_geo_audit.process", "ERROR", 1),
 }
 
@@ -244,8 +250,9 @@ async def test_a55_process_warning_and_crashes_are_records_of_ours() -> None:
     """A55, строже подписанного (приёмка проверяющего 2026-11-20): после входа процесса
     предупреждение Python, необработанное исключение в потоке `threading`, исключение, которое
     интерпретатор «игнорирует» (деструктор), и необработанное в главном потоке
-    `python -m ai_geo_audit.api` выходят записью нашего JSON через вычистку: каждая строка вывода
-    — JSON, секрета настроек нет; необработанное в главном потоке — код выхода не ноль."""
+    `python -m ai_geo_audit.api` — и неожиданное у проверки старта — выходят записью нашего JSON
+    через вычистку: каждая строка вывода — JSON, секрета настроек нет; необработанное в главном
+    потоке — код выхода не ноль."""
     env = {
         "PATH": os.environ.get("PATH", ""),
         "PYTHONUTF8": "1",

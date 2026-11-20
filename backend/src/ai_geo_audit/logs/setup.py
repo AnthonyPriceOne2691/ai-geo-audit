@@ -277,12 +277,14 @@ def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
 
 
 def guard_process() -> None:
-    """Точка входа процесса: предупреждения Python и необработанные исключения — записями нашего
-    формата через вычистку (A48, A55). Не в `setup_logging`: под pytest `captureWarnings` встал бы
-    поверх его подмены `showwarning` на время теста, а крючки исключений — дело процесса."""
+    """Точка входа процесса: предупреждения Python, необработанные исключения и исключения, которые
+    интерпретатор «игнорирует» (деструктор, сборщик, обратный вызов), — записями нашего формата
+    через вычистку (A48, A55). Не в `setup_logging`: под pytest `captureWarnings` встал бы поверх
+    его подмены `showwarning` на время теста, а крючки исключений — дело процесса."""
     logging.captureWarnings(True)
     sys.excepthook = _unhandled
     threading.excepthook = _unhandled_in_thread
+    sys.unraisablehook = _unraisable
 
 
 def _unhandled(
@@ -303,3 +305,11 @@ def _unhandled_in_thread(args: threading.ExceptHookArgs) -> None:
     name = args.thread.name if args.thread else ""
     trace = (args.exc_type, args.exc_value, args.exc_traceback)
     _process_log.error("необработанное исключение в потоке %s", name, exc_info=trace)
+
+
+def _unraisable(unraisable: sys.UnraisableHookArgs) -> None:
+    """Исключение, которое интерпретатор «игнорирует», — запись ERROR вместо «Exception ignored» и
+    трассировки открытым текстом."""
+    error = unraisable.exc_value
+    trace = (unraisable.exc_type, error, unraisable.exc_traceback) if error is not None else None
+    _process_log.error("исключение вне вызова в %r", unraisable.object, exc_info=trace)
