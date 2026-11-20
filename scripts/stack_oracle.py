@@ -69,8 +69,9 @@ import sys, urllib.request
 try:
     status = urllib.request.urlopen("http://api:{port}/api/health", timeout=5).status
 except OSError as error:
-    sys.exit(f"{{type(error).__name__}}: {{error}}")
-sys.exit(0 if status == 200 else f"ответ {{status}}")
+    status = f"{{type(error).__name__}}: {{error}}"
+print(status)
+sys.exit(0 if status == 200 else 1)
 """
 UP_HINT = "Docker не отвечает: поднимите Docker Desktop (open -a Docker) или службу docker"
 #: Что оракул спрашивает у собранного образа: версия Python, инструменты, файлы, списки.
@@ -587,7 +588,7 @@ def step_health(run: Run) -> str:
     if seconds > 50 or probe.returncode or net.returncode:
         raise StepFailed(
             f"healthy через {seconds:.1f} с; проба внутри — код {probe.returncode}; из сети "
-            f"стека — код {net.returncode}: {output(net).strip()[-120:]}"
+            f"стека — {net.stdout.decode('utf-8', 'replace').strip()[-120:]}"
         )
     return (
         f"healthy через {seconds:.1f} с от старта api; проба в контейнере — код 0; из сети стека "
