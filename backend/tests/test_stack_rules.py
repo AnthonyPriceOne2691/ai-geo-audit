@@ -13,7 +13,9 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from pydantic import Field, SecretStr
 
+from ai_geo_audit import config
 from ai_geo_audit.config import startup_checks
 from ai_geo_audit.ops import stack_rules as sr
 
@@ -144,6 +146,8 @@ BIND_APP = [{"type": "bind", "source": "/srv/src", "target": "/app"}]
 DB_LITERAL = "postgresql+asyncpg://a:literal-pass-12@db:5432/a"
 ENV_FILE = [{"path": "/srv/copy/.env", "required": True}]
 KEY_MOUNT = [{"source": "master_key", "target": "/run/secrets/k"}]
+APP_CONFIG = [{"source": "app_env", "target": "/app/.env"}]
+KEY_IN_APP = [{"source": "master_key", "target": "/app/key"}]
 
 # Проба, код, сервис, переменная: ожидается ровно это нарушение.
 STRUCTURE = [
@@ -154,6 +158,7 @@ STRUCTURE = [
     (put(svc("migrate"), "ports", PORT), "ports", "migrate", None),
     (put(svc("api"), "ports", PORT), "ports", "api", None),
     (put(services, "web", WEB_OPEN), "ports", "web", None),
+    (put(svc("redis"), "network_mode", "host"), "ports", "redis", None),
     (drop(svc("redis"), "healthcheck"), "healthcheck", "redis", None),
     (put(svc("api"), "healthcheck", {"disable": True}), "healthcheck", "api", None),
     (put(svc("migrate"), "restart", "on-failure"), "restart", "migrate", None),
@@ -182,6 +187,8 @@ STRUCTURE = [
         for value in ("*", "10.20.0.0/24", "10.20.0.5, 10.20.0.6", "${OTHER:?адрес}")
     ],
     (put(svc("migrate"), "volumes", BIND_APP), "workdir-volume", "migrate", None),
+    (put(svc("migrate"), "configs", APP_CONFIG), "workdir-volume", "migrate", None),
+    (put(svc("api"), "secrets", KEY_IN_APP), "workdir-volume", "api", None),
     (
         put(svc("api"), "volumes", ["/srv/copy/backend:/app/backend:ro"]),
         "workdir-volume",
@@ -193,6 +200,7 @@ SECRETS = [
     (drop(env("api"), "JWT_SECRET"), "required-vars", "api", "JWT_SECRET"),
     (drop(env("migrate"), "DATABASE_URL"), "required-vars", "migrate", "DATABASE_URL"),
     (put(env("api"), "DATABASE_URL", DB_LITERAL), "secret-form", "api", "DATABASE_URL"),
+    (put(env("api"), "JWT_SECRET", "http://a"), "secret-form", "api", "JWT_SECRET"),
     (
         put(env("api"), "DATABASE_URL", "${API_DATABASE_URL:-}"),
         "secret-form",
@@ -288,6 +296,18 @@ def test_a72_config_fields_outside_the_lists_are_not_violations() -> None:
     extra = {"LOG_FORMAT": "json", "API_PORT": 8107, "DB_POOL_SIZE": 5, "DB_MAX_OVERFLOW": 5}
     config["services"]["api"]["environment"].update(extra)
     assert found(config) == set()
+
+
+def test_a72_secret_field_inside_a_union_is_still_a_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A72: поле `SecretStr | None` — тоже секрет: правила секретов его не теряют."""
+
+    class Extra(config.Settings):
+        token: SecretStr | None = Field(None, validation_alias="AUDIT_TOKEN")
+
+    monkeypatch.setattr(config, "DOMAINS", (*config.DOMAINS, Extra))
+    stack = valid()
+    stack["services"]["api"]["environment"]["AUDIT_TOKEN"] = "${AUDIT_TOKEN:?токен}"
+    assert found(stack) == {("foreign-secret", "api", "AUDIT_TOKEN")}
 
 
 def test_a72_rules_read_the_process_list_from_startup_checks(
