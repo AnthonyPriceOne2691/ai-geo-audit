@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import subprocess
@@ -422,18 +423,20 @@ def test_a121_copy_young_package_without_exception_is_named() -> None:
 
 
 #: Код выката и свои скрипты вне backend/ — под ruff и mypy strict с конфигом backend (решение
-#: проверяющего 2026-11-20T09:26Z, строже подписанного). Тела канона — нет: они дословные.
+#: проверяющего 2026-11-20T09:26Z, строже подписанного). Тела канона — нет: они дословные, их
+#: перечень — замок payload. Свой файл узнаётся сам: каждый `.py` в `scripts/` и `deploy/` вне
+#: замка, и имена, которых в дереве ещё нет, — новый скрипт не ждёт правки шаблона (ведущая,
+#: 2026-11-20).
 OWN_HOOKS = ("ruff-deploy", "ruff-format-deploy", "mypy-deploy")
-OWN_FILES = (
+CANON_LOCK = ROOT / "scripts" / "lint" / "payload.lock.json"
+FUTURE_FILES = (
     "deploy/deploy.py",
     "deploy/tools/check.py",
     "scripts/stack_oracle.py",
+    "scripts/stack_oracle_compose.py",
     "scripts/image_scan.py",
-)
-CANON_FILES = (
-    "scripts/lint/check_ast_gate.py",
-    "scripts/delivery_check.py",
-    "scripts/merge_guard.sh",
+    "scripts/oracle_guard.py",
+    "scripts/tools/new_script.py",
 )
 
 
@@ -442,14 +445,39 @@ def hook(cfg: dict[Any, Any], hook_id: str) -> dict[str, Any]:
     return found[0] if found else {}
 
 
-def own_scripts_problems(cfg: dict[Any, Any]) -> list[str]:
-    """Хуки своих скриптов вне backend/: есть, ловят их, тела канона не трогают; конфиг backend."""
+def canon_bodies() -> set[str]:
+    """Тела канона по замку payload — пути, которых хуки своих скриптов не трогают."""
+    return set(json.loads(CANON_LOCK.read_text(encoding="utf-8"))["scripts"])
+
+
+def own_files() -> list[str]:
+    """Свои `.py` в `scripts/` и `deploy/`: файлы копии и имена, которых ещё нет, — вне замка."""
+    done = subprocess.run(
+        ["git", "ls-files", "scripts/*.py", "deploy/*.py"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return sorted((set(done.stdout.split()) | set(FUTURE_FILES)) - canon_bodies())
+
+
+def caught_by(found: dict[str, Any], path: str) -> bool:
+    """Путь попадает в хук, как у pre-commit: подходит под `files` и не подходит под `exclude`."""
+    include, exclude = str(found.get("files", "^$")), str(found.get("exclude", "^$"))
+    return bool(re.search(include, path)) and not re.search(exclude, path)
+
+
+def own_scripts_problems(cfg: dict[Any, Any], own: list[str] | None = None) -> list[str]:
+    """Хуки своих скриптов вне backend/: есть, ловят каждый свой `.py`, тела канона не трогают;
+    конфиг backend."""
+    own = own_files() if own is None else own
     problems = []
     for hook_id in OWN_HOOKS:
         found = hook(cfg, hook_id)
-        pattern = re.compile(str(found.get("files", "^$")))
-        missed = [f for f in OWN_FILES if not pattern.search(f)]
-        canon = [f for f in CANON_FILES if pattern.search(f)]
+        missed = [f for f in own if not caught_by(found, f)]
+        canon = sorted(f for f in canon_bodies() if caught_by(found, f))
         config = (
             "--config-file pyproject.toml"
             if hook_id == "mypy-deploy"
@@ -457,7 +485,7 @@ def own_scripts_problems(cfg: dict[Any, Any]) -> list[str]:
         )
         checks = [
             (bool(found), f"{hook_id}: хука нет"),
-            (not missed, f"{hook_id}: не ловит {missed}"),
+            (not missed, f"{hook_id}: свой файл вне хука {missed}"),
             (not canon, f"{hook_id}: трогает тела канона {canon}"),
             (config in str(found.get("entry", "")), f"{hook_id}: не конфиг backend"),
         ]
@@ -476,7 +504,39 @@ def run_hook(hook_id: str, target: Path) -> subprocess.CompletedProcess[str]:
 def test_deploy_and_own_scripts_are_under_ruff_and_mypy() -> None:
     """Код выката (`deploy/**/*.py`) и свои скрипты вне backend/ — под ruff, ruff format и mypy
     strict с конфигом backend; тела канона под эти хуки не попадают."""
+    assert {"scripts/delivery_check.py", "scripts/lint/check_ast_gate.py"} <= canon_bodies()
     assert own_scripts_problems(load(HOOKS)) == []
+
+
+OWN_COPIES = [
+    (
+        "files-by-names",
+        "files",
+        r"^(deploy/.*|scripts/(stack_oracle|image_scan))\.py$",
+        "scripts/stack_oracle_compose.py",
+    ),
+    ("exclude-too-wide", "exclude", r"^scripts/.*\.py$", "scripts/oracle_guard.py"),
+    ("exclude-without-delivery", "exclude", r"^scripts/lint/.*\.py$", "scripts/delivery_check.py"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "key", "value", "named"), OWN_COPIES, ids=[c[0] for c in OWN_COPIES]
+)
+def test_own_scripts_copies_are_red_and_named(case: str, key: str, value: str, named: str) -> None:
+    """Копии: шаблон по перечню имён не видит новый кусок оракула; исключение шире канона глотает
+    свой скрипт; исключение без `delivery_*` трогает тело канона — красный, названо имя файла."""
+    cfg = load(HOOKS)
+    for hook_id in OWN_HOOKS:
+        hook(cfg, hook_id)[key] = value
+    assert named in "\n".join(own_scripts_problems(cfg)), case
+
+
+def test_own_script_named_like_canon_is_red_and_named() -> None:
+    """Свой скрипт с именем как у тел канона (`scripts/delivery_*.py`), но вне замка — красный:
+    исключение хуков не прячет свой код."""
+    named = "\n".join(own_scripts_problems(load(HOOKS), own=["scripts/delivery_extra.py"]))
+    assert "свой файл вне хука ['scripts/delivery_extra.py']" in named
 
 
 def test_deploy_copy_ruff_violation_is_red_and_named(tmp_path: Path) -> None:
