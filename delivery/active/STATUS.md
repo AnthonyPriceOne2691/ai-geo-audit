@@ -1,6 +1,6 @@
 # Active delivery status
 
-- **slug:** ch1-06a-deploy-core
+- **slug:** ch1-06a1-deploy-core
 - **stack:** delivery@2.21, cqg@absent, okf@absent
 - **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 5d82ab1)
 - **class:** L
@@ -13,12 +13,14 @@
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
 - **phase:** implement
-  <!-- Ветка `ch1-06a-deploy-core` от main `a8e4597` (опубликована Ч1.3а). Документы — тексты,
-       подписанные владельцем 2026-11-20T08:32Z, как есть: spec.md — спека 6а (`e5666b41cc0f`),
-       plan.md — план 6а (`35fba0af6ad4`), общие ch1-06-spec.md (`58cc2e07b5fb`) и
-       ch1-06-plan.md (`08e0c9a2b5e6`); таблица примеров 6а — 21 строка (`13c8d8a07edd`).
-       Подписи — `40e5b40`, срез 0 — `70b9ff1`; срез 1 идёт сейчас, срезы 2–7 — после слияния
-       main с «Учётками» и 5б (tasks.md). -->
+  <!-- Разрез 6а на 6а-1 (срезы 0–1) и 6а-2 (срезы 2–7) — слово владельца 2026-11-20T09:31Z,
+       `split.md`; подпись под примерами и планом 2026-11-20T08:32Z — для обеих.
+       Ветка `ch1-06a-deploy-core` и копия `.claude/worktrees/ch1-06a` — те же, от main
+       `a8e4597` (опубликована Ч1.3а). Документы — тексты, подписанные владельцем, как есть:
+       spec.md — спека 6а (`e5666b41cc0f`), plan.md — план 6а (`35fba0af6ad4`), общие
+       ch1-06-spec.md (`58cc2e07b5fb`) и ch1-06-plan.md (`08e0c9a2b5e6`); таблица примеров 6а —
+       21 строка (`13c8d8a07edd`). Подписи — `40e5b40`, срез 0 — `70b9ff1`, срез 1 — `755ccc9`,
+       правка по ссылкам — `e209e41`. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-20T08:32Z)
