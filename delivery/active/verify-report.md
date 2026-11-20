@@ -6,7 +6,7 @@
 под утверждениями — за проверяющим.
 
 **CI run:** n/a reason=CI не развёрнут, волна В1; вместо ссылки — прогон в чистом клоне ниже
-**Commit:** `7d599b3` — вершина кода; см. «Прогон в чистом клоне»
+**Commit:** `5c9356a` — вершина кода; см. «Прогон в чистом клоне»
 
 ## Прогон в чистом клоне
 
@@ -61,6 +61,30 @@ exit=0
   «ci-oracles: weak» — CI нет до В1, вместо ссылки — этот прогон.
 - После прогона своего стека нет: `docker ps -a`, `docker volume ls`, `docker network ls` и
   образы с именем стека клона — по 0. Тестовая база клона снята, клон удалён.
+
+### На вершине кода `5c9356a`
+
+После находки проверяющего о разборе `Dockerfile` (`305fffa` → `5c9356a`; менялся только
+`backend/tests/test_dockerfiles.py`, оракул не тронут — его прогон выше годен). Клон свежий, база
+диффа — `origin/main` клона, `a8e4597`; 2026-11-20T10:30:32Z–10:31:30Z, нагрузка 6,08:
+
+```
+$ git log --format="%h %p %s" -1 && git merge-base HEAD origin/main
+5c9356a 305fffa test(backend): Ч1.5а — A60: источник COPY --from и RUN --mount — стадия выше или образ из списка; ADD нет
+a8e4597b8e431a08d844d5c580aec00aec40e4eb
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+breakers: files=16 net_loc=2342 (+2343/-1), excluded=9 (delivery/|knowledge/|scripts/lint/|scripts/merge_guard.sh|scripts/delivery_|scripts/okf_|.claude/|docs/…
+наблюдение §13.1: поставок в архиве 10, окон со сроком 10, истекших без observed.md 0
+WARNING: class M: ни одного реляционного оракула с генератором входов (§6.5) — в тестах не найдено: `@given` (hypothesis); `fc.property` (fast-check). Отношени…
+WARNING: ci-oracles: weak — local gates are bypassable (§10.4); Verifier must attach a clean-clone run to verify-report.md
+delivery_check: 0 error(s), 2 warning(s)
+exit=0
+$ cd backend && uv sync --frozen -q && uv run pytest -q -p no:cacheprovider -W error | tail -1
+433 passed in 52.10s
+pytest exit=0
+```
+
+- Счёт — 2342 строки и 16 файлов. Тестовая база клона снята, клон удалён.
 
 ## Пробный прогон гейтов В1а
 
@@ -124,6 +148,15 @@ every gate script is wired into pre-commit/CI … Passed
   оракул образа во временном клоне (срез 3) — 8 из 8, чистые части — 7 из 7; стек (срез 4) —
   6 из 6. Списки — `tasks.md`.
 
+## Дайджест утверждений
+
+`assert_digest.sh` из полезной нагрузки канона, на время прогона — в копии, база `main`, после —
+убран, в коммит не попал; at=2026-11-20T10:29:59Z, вершина `5c9356a`. Новых и изменённых
+утверждений — 74, все ведут к примерам спеки: A60 — 14, A61 — 11, A62 — 3, A63 — 3, A65 — 6,
+A70 — 14, A71 — 5, A72 — 12, A73 — 6.
+
+asserts_without_example: 0
+
 ## A23
 
 - Сканер сессии-исполнителя (`rfrb_scan.py`, только чтение) по 25 новым и изменённым файлам
@@ -136,6 +169,9 @@ every gate script is wired into pre-commit/CI … Passed
 
 ## Чего защита не ловит
 
+- Разбор команд внутри `RUN` (`curl … | sh`, `apt-get install`) тест `Dockerfile` не судит: он
+  держит источники образов (`FROM`, `COPY --from`, `RUN --mount`) и запрет `ADD`; перечень
+  разрешённых команд `RUN` — в спеке 5б, решение проверяющего.
 - Статической проверки адреса прослушивания api до 5б нет: правило `api-listen` придёт с web
   (решение проверяющего). Петлю на настоящем файле ловит шаг A69 оракула на каждом прогоне —
   запрос `http://api:<порт>/api/health` из разового контейнера в сети стека; правку compose в
