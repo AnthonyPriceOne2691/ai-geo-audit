@@ -54,6 +54,7 @@ SHAPES: dict[str, tuple[type, ...]] = {
     "ports": (list,),
     "volumes": (list,),
     "secrets": (list,),
+    "configs": (list,),
     "env_file": (list,),
     "depends_on": (dict, list),
     "healthcheck": (dict,),
@@ -158,7 +159,9 @@ def _loopback(address: object) -> bool:
 def _ports(stack: Stack) -> Iterator[Finding]:
     for name, service in stack.services.items():
         entries = service.get("ports") or []
-        if entries and name not in PUBLISHERS:
+        if service.get("network_mode") == "host":
+            yield name, None, "сеть хоста: сервис слушает интерфейсы машины без ports"
+        elif entries and name not in PUBLISHERS:
             yield name, None, "порт наружу: публикует только web"
         elif not all(_loopback(_port_host(entry)) for entry in entries):
             yield name, None, "порт web не на петле"
@@ -256,6 +259,18 @@ def _volume_target(entry: object) -> str:
     return parts[1] if len(parts) > 1 else parts[0]
 
 
+def _mount_targets(service: dict[str, Any]) -> list[str]:
+    """Куда в контейнере ложатся тома, configs и secrets; у двух последних путь бывает
+    относительным или пустым — тогда по умолчанию compose."""
+    targets = [_volume_target(entry) for entry in service.get("volumes") or []]
+    for key, base in (("configs", "/"), ("secrets", "/run/secrets/")):
+        for entry in service.get(key) or []:
+            item = entry if isinstance(entry, dict) else {"source": entry}
+            target = str(item.get("target") or item.get("source") or "")
+            targets.append(target if target.startswith("/") else base + target)
+    return targets
+
+
 def _under(path: str, root: str) -> bool:
     return path == root or path.startswith(root.rstrip("/") + "/")
 
@@ -263,9 +278,9 @@ def _under(path: str, root: str) -> bool:
 def _workdir_volume(stack: Stack) -> Iterator[Finding]:
     for name, service in stack.services.items():
         roots = {IMAGE_WORKDIR, str(service.get("working_dir") or IMAGE_WORKDIR)}
-        targets = [_volume_target(entry) for entry in service.get("volumes") or []]
+        targets = _mount_targets(service)
         if name in _PROCESSES and any(_under(t, root) for t in targets for root in roots):
-            yield name, None, "том в рабочем каталоге образа"
+            yield name, None, "том, config или secret в рабочем каталоге образа"
 
 
 def _required_vars(stack: Stack) -> Iterator[Finding]:
@@ -275,19 +290,24 @@ def _required_vars(stack: Stack) -> Iterator[Finding]:
                 yield name, var, "нет переменной из списка проверки старта"
 
 
+def _holds_secret(annotation: object) -> bool:
+    """`SecretStr` сам или внутри объединения (`SecretStr | None`, `Optional[SecretStr]`)."""
+    return annotation is SecretStr or any(map(_holds_secret, get_args(annotation)))
+
+
 def _secret_names() -> frozenset[str]:
-    """Секреты конфига — поля `SecretStr`; имя переменной стоит у поля."""
+    """Секреты конфига — поля с `SecretStr`; имя переменной стоит у поля."""
     return frozenset(
         str(field.validation_alias)
         for domain in config.DOMAINS
         for field in domain.model_fields.values()
-        if field.annotation is SecretStr
+        if _holds_secret(field.annotation)
     )
 
 
 def _plain_url(value: object) -> bool:
     """Адрес без пароля, запроса и ссылок `${…}` секрета не несёт: так до «Учёток хранилищ»
-    задан адрес очереди у api."""
+    задан адрес очереди у api. Освобождает только переменные адресов — с именем на `_URL`."""
     text = str(value)
     try:
         parts = urlsplit(text)
@@ -303,7 +323,8 @@ def _secret_form(stack: Stack) -> Iterator[Finding]:
     for name, values in stack.env.items():
         for var in sorted(secrets & values.keys()):
             value = values[var]
-            if value in (None, "") or _STRICT_REF.fullmatch(str(value)) or _plain_url(value):
+            plain = var.endswith("_URL") and _plain_url(value)
+            if value in (None, "") or _STRICT_REF.fullmatch(str(value)) or plain:
                 continue  # пустое у своего процесса — правило required-vars
             yield name, var, "секрет — не ${VAR:?причина}"
 
