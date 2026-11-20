@@ -213,3 +213,66 @@ def test_a76_step_without_a_number_or_an_example_without_a_step_is_red(
     else:
         steps.append(("A68", "лишний шаг", steps[0][2], False))
     assert problem in steps_problems(steps)
+
+
+class Clean(oracle.Docker):
+    """Подставной исполнитель: Docker отвечает пусто — уборка прошла, своего не осталось."""
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
+
+
+def steps_log(
+    *plan: tuple[str, bool, bool],
+) -> tuple[list[tuple[str, str, object, bool]], list[str]]:
+    """Шаги из плана (имя, красный ли, нужный ли) и журнал: какие шаги дошли до исполнения."""
+    ran: list[str] = []
+
+    def step(name: str, red: bool) -> object:
+        def body(run: object) -> str:
+            ran.append(name)
+            if red:
+                raise oracle.StepError(f"порча шага {name}")
+            return "сделано"
+
+        return body
+
+    return [
+        (f"A{n}", name, step(name, red), needed) for n, (name, red, needed) in enumerate(plan)
+    ], ran
+
+
+def test_a76_red_step_is_counted_named_and_an_unneeded_one_goes_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A76: красный шаг — в счёте и в журнале «КРАСНОЕ» с причиной; ненужный красный шаг следующие
+    не останавливает."""
+    steps, ran = steps_log(("первый", True, False), ("второй", False, False))
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    assert oracle.run_steps(run, steps) == 1
+    assert ran == ["первый", "второй"]
+    out = capsys.readouterr().out
+    assert "A0 первый — КРАСНОЕ: порча шага первый" in out
+    assert "A1 второй — ок: сделано" in out
+
+
+def test_a76_red_needed_step_stops_the_rest(tmp_path: Path) -> None:
+    """A76: нужный шаг красный — следующие не идут: судить их не на чем."""
+    steps, ran = steps_log(("нужный", True, True), ("следующий", False, False))
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    assert oracle.run_steps(run, steps) == 1
+    assert ran == ["нужный"]
+
+
+@pytest.mark.parametrize(("red", "code"), [(True, 1), (False, 0)])
+def test_a76_finish_result_is_the_steps_result(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], red: bool, code: int
+) -> None:
+    """A76: итог джобы — итог оракула: красный шаг — код 1 и «КРАСНОЕ» в журнале, без красных —
+    код 0; уборка своего не оставила."""
+    steps, _ = steps_log(("шаг", red, False))
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    assert oracle.finish(run, steps) == code
+    out = capsys.readouterr().out
+    assert f"красных {int(red)}" in out
+    assert ("КРАСНОЕ" in out) is red
