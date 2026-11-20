@@ -8,6 +8,7 @@
   "check_eslint_warnings.sh": "поставка В1б: ратчет предупреждений eslint — гейт фронта; npm в CI В1а нет, хуки eslint и prettier сняты до В1б",
   "check_jscpd_gate.sh": "пакет npm, поставка В1б: jscpd — пакет npm, без него не судит и половина Python; npm в CI В1а нет, дублирование Python до В1б не судит никто",
   "check_grep_gate.sh:service-no-web": "слоя сервисов нет: правило выбирает файлы по имени (каталог services/, service.py), в ai_geo_audit таких нет — просмотрено 0",
+  "check_grep_gate.sh:no-grab-bag-module": "модулей-свалок нет: правило выбирает файлы по имени (utils.py, misc.py, common.py, helpers.py), в backend таких нет — просмотрено 0; хук стоит и краснит первый такой файл",
   "okf_sync_gate.py": "ось ③ (OKF) не развёрнута — okf@absent, волна В2",
   "okf_validate.py": "ось ③ (OKF) не развёрнута — okf@absent, волна В2"
 }

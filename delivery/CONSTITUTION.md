@@ -168,8 +168,8 @@ ask: WebFetch
 
 ## Pointers to sibling layers (fill if deployed)
 
-- Code shape oracles: `CODE_QUALITY_GATES.md` — [x] not deployed / [ ] deployed — волна В1: каркас первой части лежит в main
+- Code shape oracles: `CODE_QUALITY_GATES.md` — [ ] not deployed / [x] deployed — волна В1а: `cqg@3.14`, половина Python; TS-половина — В1б
 - Domain canon: `OKF_KNOWLEDGE_BUNDLE.md` / `knowledge/` — [x] not deployed / [ ] deployed — волна В2: справочник проверок, лимиты и формулы закреплены кодом и тестами
 - Agent hooks (§10): [x] not deployed / [ ] deployed
-- CI oracles (§10.4, workflow per CQG §8): [x] not deployed / [ ] deployed — волна В1
+- CI oracles (§10.4, workflow per CQG §8): [ ] not deployed / [x] deployed — волна В1а: `quality.yml` и `main-guard.yml`; защита main — A116 по слову владельца
 - Skills catalog: `skills/README.md` — [x] absent / [ ] present

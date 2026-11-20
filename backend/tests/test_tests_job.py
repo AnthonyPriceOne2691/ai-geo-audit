@@ -38,6 +38,11 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
     diff = step(job, "Diff coverage").get("env", {})
     mutation = step(job, "Mutation testing")
     checks = [
+        (job.get("timeout-minutes") == 25, f"таймаут {job.get('timeout-minutes')!r}, в спеке 25"),
+        (
+            "uv lock --check" in str(step(job, "Замок свежий").get("run", "")),
+            "замок: свежесть не сверяется (`uv sync --frozen` её не видит)",
+        ),
         (service.get("image") == POSTGRES, f"служба базы: образ {service.get('image')!r}"),
         (service.get("ports") == ["127.0.0.1:5462:5432"], "служба базы: порт не на петле 5462"),
         (
@@ -72,8 +77,9 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
 
 
 def test_a106_a107_a108_a109_tests_job_keeps_the_contract() -> None:
-    """A106–A109: служба базы по дайджесту, набор с покрытием и привязкой, покрытие изменённого
-    по отчёту джобы, мутации только на запросе в бюджете."""
+    """A99, A106–A109: таймаут по спеке, свежесть замка, служба базы по дайджесту, набор с
+    покрытием и привязкой, покрытие изменённого по отчёту джобы, мутации только на запросе в
+    бюджете."""
     assert job_contract_problems(yaml.safe_load(QUALITY.read_text(encoding="utf-8"))) == []
 
 
@@ -104,6 +110,8 @@ COPIES = [
         "только на запросе",
     ),
     ("A108-diff-area", r"LINT_PY_SRC: backend\n", "LINT_PY_SRC: backend/src\n", "LINT_PY_SRC"),
+    ("A99-timeout-30", r"timeout-minutes: 25\n", "timeout-minutes: 30\n", "в спеке 25"),
+    ("lock-not-checked", r"run: uv lock --check\n", "run: uv lock\n", "замок"),
     (
         "A100-service-by-tag",
         r"postgres:16-alpine@sha256:[0-9a-f]{64}",

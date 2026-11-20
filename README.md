@@ -37,9 +37,11 @@ React с Vite и Mantine, pytest, docker compose.
 
 ## CI на GitHub
 
-- `.github/workflows/quality.yml` — джобы `gates` (pre-commit и гейты) и `delivery` (фазовый гейт,
-  подпись необратимого); `main-guard.yml` — задача «RED on main» на красный прогон quality после
-  push в main. Правила обоих держит `backend/tests/test_ci_contract.py`.
+- `.github/workflows/quality.yml` — джобы `gates` (pre-commit и гейты), `delivery` (фазовый гейт,
+  подпись необратимого) и `tests` (служба Postgres по дайджесту, сверка замка, набор с покрытием,
+  покрытие изменённого, мутации — только на запросе); `main-guard.yml` — задача «RED on main» на
+  красный прогон quality после push в main. Правила держат `backend/tests/test_ci_contract.py` и
+  `backend/tests/test_tests_job.py`.
 - Будущая джоба образа или выката идёт после проверок: `needs: [gates, delivery, tests]`.
 - Гейт мержа — `scripts/merge_guard.sh`: слитое с main дерево (pre-commit, ратчет снимков, гейт
   поставки) и последним — статус CI ветки. Из рабочей копии поставки — только проверка:
