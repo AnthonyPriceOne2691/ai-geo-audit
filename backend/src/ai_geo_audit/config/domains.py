@@ -53,7 +53,6 @@ class AccessSettings(Settings):
 
     jwt_secret: SecretStr = Field(SecretStr(""), validation_alias="JWT_SECRET")
     jwt_ttl_hours: int = Field(12, ge=1, le=168, validation_alias="JWT_TTL_HOURS")
-    jwt_algorithm: Literal["HS256"] = Field("HS256", validation_alias="JWT_ALGORITHM")
 
 
 class KeySettings(Settings):
