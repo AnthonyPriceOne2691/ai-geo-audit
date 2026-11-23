@@ -14,7 +14,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
   <!-- Код — `0175ff1`, слияние main `77b143b` — `77baaa2`; отчёт сверки — исполнитель, вердикт
        — вторая проверяющая с полной процедурой (ведущая, 2026-11-23T09:16Z). -->
 - **builder:** agent:front-session
@@ -78,6 +78,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния и первый запрос поставки 5б: джоба `stack` — «итог: шагов 13, красных 0» и «уборка: своего не осталось», 80–100 с; `image-scan` — «итог скана: образов 1, красных 0» и «итог описи: образов 1, красных 0», около 40 с; правки 5б в compose и `Dockerfile` судит `stack`
+- **observe_until:** 2026-11-30 — первый запрос 5б и неделя прогонов CI на main
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
