@@ -28,7 +28,6 @@ RUN groupadd --gid 10001 app \
 COPY --from=install /opt/venv /opt/venv
 WORKDIR /app
 COPY backend/alembic.ini ./
-COPY backend/migrations ./migrations
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
