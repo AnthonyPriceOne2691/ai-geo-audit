@@ -38,8 +38,8 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
     diff = step(job, "Diff coverage").get("env", {})
     mutation = step(job, "Mutation testing")
     checks = [
-        # Проба A288 «до», только в ветке-пробе: таймаут 60 и бюджет 3600.
-        (job.get("timeout-minutes") == 60, f"таймаут {job.get('timeout-minutes')!r}, в пробе 60"),
+        # Проба A288 «до», только в ветке-пробе: таймаут 75 и бюджет 3600.
+        (job.get("timeout-minutes") == 75, f"таймаут {job.get('timeout-minutes')!r}, в пробе 75"),
         (
             "uv lock --check" in str(step(job, "Замок свежий").get("run", "")),
             "замок: свежесть не сверяется (`uv sync --frozen` её не видит)",
@@ -111,7 +111,7 @@ COPIES = [
         "только на запросе",
     ),
     ("A108-diff-area", r"LINT_PY_SRC: backend\n", "LINT_PY_SRC: backend/src\n", "LINT_PY_SRC"),
-    ("A99-timeout-25", r"timeout-minutes: 60\n", "timeout-minutes: 25\n", "в пробе 60"),
+    ("A99-timeout-25", r"timeout-minutes: 75\n", "timeout-minutes: 25\n", "в пробе 75"),
     ("lock-not-checked", r"run: uv lock --check\n", "run: uv lock\n", "замок"),
     (
         "A100-service-by-tag",
