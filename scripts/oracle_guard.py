@@ -119,7 +119,7 @@ def guarded[T, U](
     before = {sig: signal.getsignal(sig) for sig in SIGNALS}
 
     def stop(signum: int, _frame: FrameType | None) -> None:
-        _ignore()  # от первого сигнала до конца уборки оба глушатся: второй уборки не будет
+        _ignore()  # второй сигнал, пока тело сворачивается, не меняет код и не рвёт его finally
         raise Interrupted(signum)
 
     code: int | None = None

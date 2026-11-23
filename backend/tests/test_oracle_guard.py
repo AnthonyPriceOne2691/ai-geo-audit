@@ -182,6 +182,26 @@ def test_a74_second_signal_during_cleanup_gives_no_second_cleanup() -> None:
     assert restored
 
 
+def test_a74_second_signal_while_the_body_unwinds_keeps_the_first_code() -> None:
+    """A74, вторая строка: SIGINT в теле, SIGTERM в `finally` тела, пока оно сворачивается после
+    первого, — код по первому сигналу (130), `finally` тела дорабатывает, уборка одна. Держит порчу
+    M2 второй проверяющей: без `_ignore()` в обработчике — код 143 и оборванный `finally`."""
+    calls: list[str] = []
+
+    def body() -> None:
+        try:
+            os.kill(os.getpid(), signal.SIGINT)
+            calls.append("тело после сигнала")
+        finally:
+            calls.append("finally тела")
+            os.kill(os.getpid(), signal.SIGTERM)
+            calls.append("finally тела до конца")
+
+    code, outcome, _ = guard.guarded(body, lambda: calls.append("уборка"))
+    assert (code, outcome) == (130, None)
+    assert calls == ["finally тела", "finally тела до конца", "уборка"]
+
+
 def test_a74_body_without_a_signal_returns_its_outcome_and_cleans_up() -> None:
     """A74: без сигнала — итог тела, уборка одна, кода сигнала нет."""
     calls: list[str] = []
