@@ -24,6 +24,12 @@ from pathlib import Path
 import dbtools
 import pytest
 from hypothesis import settings
+from mutation_timing import (  # noqa: F401 -- проба хода 0 «Скорости CI», только в ветке-пробе
+    mark,
+    pytest_configure,
+    pytest_runtestloop,
+    pytest_unconfigure,
+)
 from run_summary import (  # noqa: F401 -- хуки итога A106 подключаются по именам
     pytest_collection,
     pytest_collection_finish,
@@ -60,12 +66,14 @@ def pytest_report_header() -> str:
 
 def pytest_sessionstart(session: pytest.Session) -> None:
     """A12: нет Postgres — одно сообщение с командой, а не десятки пропусков."""
+    mark("start")
     reason = asyncio.run(dbtools.unreachable())
     if reason:
         # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
         message = f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}"
         raise pytest.UsageError(message)
     asyncio.run(dbtools.prepare())
+    mark("prepared")
 
 
 @pytest.fixture(autouse=True)
