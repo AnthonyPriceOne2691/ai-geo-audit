@@ -381,6 +381,14 @@ jobs:
           python -m pip install uv==0.11.26
           cd backend && uv sync --frozen
 
+      # Проба A289 «Скорости CI», только в ветке-пробе: доля 2 падает до гейта — счёта у неё нет,
+      # сумма обязана покраснеть с её номером.
+      - name: Probe A289 — shard 2 goes down before the gate
+        if: matrix.shard == 2
+        run: |
+          echo "проба A289: доля 2 падает до гейта — счёта у неё не будет"
+          exit 1
+
       - name: Mutation testing (доля)
         env:
           BASE: origin/${{ github.base_ref }}
