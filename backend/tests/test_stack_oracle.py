@@ -171,3 +171,168 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
     code, line = oracle.verdict(0, left)
     assert code == 1 and "КРАСНОЕ" in line and "oracle_db-data" in line
     assert oracle.verdict(0, []) == (0, f"итог: шагов {len(oracle.STEPS)}, красных 0")
+
+
+#: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера.
+STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
+
+
+def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
+    """Расхождения таблицы шагов с примерами: шаг без номера, номер не из набора, пример без
+    шага."""
+    problems = [f"шаг «{title}» без номера примера" for numbers, title, *_ in steps if not numbers]
+    seen = {number for numbers, *_ in steps for number in numbers.split()}
+    problems += [f"номер {number} — не пример оракула" for number in sorted(seen - STEP_EXAMPLES)]
+    return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
+
+
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_and_a73() -> None:
+    """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
+    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73."""
+    assert steps_problems(oracle.STEPS) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ("номер стёрт", "шаг «сборка из чистой копии» без номера примера"),
+        ("шаг A73 убран", "пример A73 без шага"),
+        ("номер A68", "номер A68 — не пример оракула"),
+    ],
+)
+def test_a76_step_without_a_number_or_an_example_without_a_step_is_red(
+    change: str, problem: str
+) -> None:
+    """A76, первая строка, копии: шаг без номера, пример без шага, номер не из набора — красное с
+    названием шага или номера."""
+    steps = list(oracle.STEPS)
+    if change == "номер стёрт":
+        steps[0] = ("", *steps[0][1:])
+    elif change == "шаг A73 убран":
+        steps = [step for step in steps if "A73" not in step[0].split()]
+    else:
+        steps.append(("A68", "лишний шаг", steps[0][2], False))
+    assert problem in steps_problems(steps)
+
+
+class Clean(oracle.Docker):
+    """Подставной исполнитель: Docker отвечает пусто — уборка прошла, своего не осталось."""
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
+
+
+def steps_log(
+    *plan: tuple[str, bool, bool],
+) -> tuple[list[tuple[str, str, object, bool]], list[str]]:
+    """Шаги из плана (имя, красный ли, нужный ли) и журнал: какие шаги дошли до исполнения."""
+    ran: list[str] = []
+
+    def step(name: str, red: bool) -> object:
+        def body(run: object) -> str:
+            ran.append(name)
+            if red:
+                raise oracle.StepError(f"порча шага {name}")
+            return "сделано"
+
+        return body
+
+    return [
+        (f"A{n}", name, step(name, red), needed) for n, (name, red, needed) in enumerate(plan)
+    ], ran
+
+
+def test_a76_red_step_is_counted_named_and_an_unneeded_one_goes_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A76: красный шаг — в счёте и в журнале «КРАСНОЕ» с причиной; ненужный красный шаг следующие
+    не останавливает."""
+    steps, ran = steps_log(("первый", True, False), ("второй", False, False))
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    assert oracle.run_steps(run, steps) == 1
+    assert ran == ["первый", "второй"]
+    out = capsys.readouterr().out
+    assert "A0 первый — КРАСНОЕ: порча шага первый" in out
+    assert "A1 второй — ок: сделано" in out
+
+
+def test_a76_red_needed_step_stops_the_rest(tmp_path: Path) -> None:
+    """A76: нужный шаг красный — следующие не идут: судить их не на чем."""
+    steps, ran = steps_log(("нужный", True, True), ("следующий", False, False))
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    assert oracle.run_steps(run, steps) == 1
+    assert ran == ["нужный"]
+
+
+@pytest.mark.parametrize(("red", "code"), [(True, 1), (False, 0)])
+def test_a76_finish_result_is_the_steps_result(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], red: bool, code: int
+) -> None:
+    """A76: итог джобы — итог оракула: красный шаг — код 1 и «КРАСНОЕ» в журнале, без красных —
+    код 0; уборка своего не оставила."""
+    steps, _ = steps_log(("шаг", red, False))
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    assert oracle.finish(run, steps) == code
+    out = capsys.readouterr().out
+    assert f"красных {int(red)}" in out
+    assert ("КРАСНОЕ" in out) is red
+
+
+class DockerDown(oracle.Docker):
+    """Подставной исполнитель: `docker version` не отвечает — нет команды или нет службы."""
+
+    def __init__(self, missing: bool) -> None:
+        super().__init__()
+        self.missing = missing
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        if self.missing:
+            raise FileNotFoundError("docker")
+        return subprocess.CompletedProcess(["docker", *args], 1, b"", b"Cannot connect to daemon")
+
+
+@pytest.mark.parametrize("missing", [True, False], ids=["no-binary", "no-daemon"])
+def test_a76_docker_down_is_code_2_not_a_green_run(
+    missing: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A76: Docker не отвечает — код 2 и подсказка, а не зелёный прогон без единого шага."""
+    assert oracle.run_oracle("ai-geo-audit-oracle-test", DockerDown(missing)) == 2
+    assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
+
+
+class MigrateFails(oracle.Docker):
+    """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — строки с
+    паролем и секретом стека, ошибка alembic и две строки после неё."""
+
+    secrets: tuple[str, str] = ("", "")
+    logs_args: tuple[str, ...] = ()
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        if "up" in args:
+            stderr = b'service "migrate" didn\'t complete successfully: exit 255\n'
+            return subprocess.CompletedProcess(["docker", *args], 1, b"", stderr)
+        if "logs" in args:
+            self.logs_args = args
+            password, jwt = self.secrets
+            log = (
+                f"migrate-1  | url={password}\nmigrate-1  | jwt={jwt}\n"
+                "migrate-1  | FAILED: Path doesn't exist: 'x'.\n"
+                "migrate-1  | exit code 255\nmigrate-1  | done\n"
+            )
+            return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
+        return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
+
+
+def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
+    """A76, третья строка: подъём упал на migrate — в причине шага хвост журнала migrate
+    (`--tail 20`, шесть последних строк) с причиной от alembic («FAILED: …»); пароля и секрета
+    стека в причине нет."""
+    docker = MigrateFails()
+    run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    docker.secrets = (run.password, run.jwt)
+    with pytest.raises(oracle.StepError) as failure:
+        compose.step_up(run)
+    reason = str(failure.value)
+    assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
+    assert run.password not in reason and run.jwt not in reason
+    assert docker.logs_args[-4:] == ("--no-color", "--tail", "20", "migrate")
