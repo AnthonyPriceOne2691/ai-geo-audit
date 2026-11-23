@@ -20,8 +20,9 @@ if TYPE_CHECKING:
 WEB_ADDRESS = "WEB_ADDRESS"
 STRICT_REF = re.compile(r"\$\{([A-Za-z_]\w*):\?[^}]+\}")
 NO_NEW_PRIVILEGES = "no-new-privileges:true"
-#: Корень на запись — поимённо и с причиной (A87).
-WRITABLE_ROOT = {"db": "образ postgres пишет сокет и lock-файл в /var/run/postgresql"}
+#: Корень на запись — поимённо и с причиной (A87). Пуст: у db запись — в tmpfs (слово владельца
+#: 2026-11-23T14:12:15Z); механизм остаётся — «не в списке исключений».
+WRITABLE_ROOT: dict[str, str] = {}
 #: Внутренние сети — без выхода наружу (A86); обычная сеть — только у web.
 INTERNAL_NETS = frozenset({"data", "front"})
 

@@ -16,8 +16,10 @@ from stack_oracle_web import fetch, web_url
 if TYPE_CHECKING:
     from stack_oracle import Run
 
-#: Корень только для чтения (A87): у db — `false`, исключение названо в правилах с причиной.
-READ_ONLY = {"db": False, "redis": True, "migrate": True, "api": True, "web": True}
+#: Сервисы стека: у каждого корень только для чтения (A87); у db запись — только в tmpfs (слово
+#: владельца 2026-11-23T14:12:15Z).
+SERVICES = ("db", "redis", "migrate", "api", "web")
+TMPFS = {"db": ["/tmp", "/var/run/postgresql"]}  # noqa: S108 -- tmpfs контейнера, не файл машины
 NO_NEW_PRIVILEGES = "no-new-privileges:true"
 #: Адреса из диапазона документации (RFC 5737): не ведут ни в одну настоящую сеть.
 NOWHERE, SENT = "192.0.2.86:80", "198.51.100.83"
@@ -52,12 +54,13 @@ print(connection.getresponse().status, own)
 
 def privilege_problems(name: str, host: dict[str, Any]) -> list[str]:
     """A87: `CapDrop` — ровно `["ALL"]`, в `SecurityOpt` — `no-new-privileges:true`, корень —
-    как в `READ_ONLY`."""
+    только для чтения; у сервиса из `TMPFS` — ровно его пути в `Tmpfs`."""
     problems = [f"{name}: CapDrop {host.get('CapDrop')}"] * (host.get("CapDrop") != ["ALL"])
     options = host.get("SecurityOpt") or []
     problems += [f"{name}: SecurityOpt {options}"] * (NO_NEW_PRIVILEGES not in options)
-    root = host.get("ReadonlyRootfs")
-    return problems + [f"{name}: ReadonlyRootfs {root}"] * (root is not READ_ONLY[name])
+    root, tmpfs = host.get("ReadonlyRootfs"), sorted(host.get("Tmpfs") or {})
+    problems += [f"{name}: ReadonlyRootfs {root}"] * (root is not True)
+    return problems + [f"{name}: Tmpfs {tmpfs}"] * (name in TMPFS and tmpfs != TMPFS[name])
 
 
 def dialed(text: str) -> dict[str, tuple[str, float]]:
@@ -111,13 +114,13 @@ def clients(log: str) -> dict[str, str]:
 
 def step_privileges(run: Run) -> str:
     """A87, первая строка: у db, redis, migrate, api, web — `CapDrop` `["ALL"]` и
-    `no-new-privileges:true`; корень только для чтения у всех, кроме db."""
+    `no-new-privileges:true`; корень только для чтения у всех, у db — с `tmpfs`."""
     problems = [
-        p for name in READ_ONLY for p in privilege_problems(name, inspect(run, name)["HostConfig"])
+        p for name in SERVICES for p in privilege_problems(name, inspect(run, name)["HostConfig"])
     ]
     if problems:
         raise StepError("; ".join(problems))
-    return f"{', '.join(READ_ONLY)}: CapDrop [ALL], {NO_NEW_PRIVILEGES}; на запись — только db"
+    return f"{', '.join(SERVICES)}: CapDrop [ALL], {NO_NEW_PRIVILEGES}; корень — только чтение"
 
 
 def step_networks(run: Run) -> str:
@@ -149,7 +152,7 @@ def step_networks(run: Run) -> str:
     flags = ["--rm", "--name", probe, "--network", f"container:{web}", "--entrypoint", "python"]
     inside = dialed(run.docker("run", *flags, run.image, "-c", DIAL, "2", *INSIDE))
     problems += inside_problems(inside)
-    nets = {name: list(inspect(run, name)["NetworkSettings"]["Networks"]) for name in READ_ONLY}
+    nets = {name: list(inspect(run, name)["NetworkSettings"]["Networks"]) for name in SERVICES}
     names = sorted({net for found in nets.values() for net in found})
     shown = run.docker(
         "network", "inspect", "--format", "{{.Name}} {{.Internal}}", *names, limit="docker"

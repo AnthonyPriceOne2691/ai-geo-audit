@@ -11,11 +11,15 @@ x-hardened: &hardened
 
 services:
   # Под пользователем образа: от root входной скрипт меняет права каталогов и пользователя, а прав
-  # на это нет. Корень на запись — исключение правила read-only с причиной (A87).
+  # на это нет. Корень только для чтения: сокет, lock-файл и временные файлы — в tmpfs (A87).
   db:
     <<: *hardened
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
     user: postgres
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
     restart: unless-stopped
     networks: [data]
     environment:
