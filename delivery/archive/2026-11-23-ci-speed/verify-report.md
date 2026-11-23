@@ -356,11 +356,51 @@ CI на GitHub, журналы читала сама:
 | verify_fails_before_green | 3 — приёмка вернула работу трижды: чтение второй проверяющей на `20f855e` (три находки и вопрос A281), её порчи на `f5fddcb` (три выжившие с различающим входом), проба ведущей на `a6b2524` (дыра теста A290); блокер долга нашёл сухой прогон сдачи исполнителя — он в implement_retries; красных прогонов №12 не было; отменённый `a6b2524` — красная сумма по A289 |
 | est_token_or_cost | n/a — работа по подписке, расход сессии не измерялся |
 
-**Убрано (CONSTITUTION, п. 10):** ветки-пробы, их каталоги и базы — ход 0 (`46e3c33`), A282 (`8f57815`),
-A283 (`0f3d021`), A285 (`795017c`), A286 (`10d3ad9`), A288-engine (`58ace74`, `e411fea`), A289 «сверка»
-(`279ef0f`), «доля упала» (`ee10bf1`), «сверка `__init__`» (`eff8e67`), A288 «до» и «после» (`c0f37e1`,
-`822c5db`) — после закрытия №18 и №19; клоны прогонов в чистом клоне на `20f855e` и `650a917` и их
-базы; клон сухого прогона сдачи с его раскладкой `backend/mutants/` (порчи `domains.py`) и базой; разовые сценарии
-проб и порч. После прогона на коммите сдачи — его
-клон и тестовая база. После публикации — рабочая копия `.claude/worktrees/ci-speed`, ветка `ci-speed` и
-её тестовая база `audit_test_bcb61e9e17`.
+**Убрано (CONSTITUTION, п. 10):** ветки-пробы, их каталоги и базы — ход 0 (`46e3c33`), A282
+(`8f57815`), A283 (`0f3d021`), A285 (`795017c`), A286 (`10d3ad9`), A288-engine (`58ace74`,
+`e411fea`), A289 «сверка» (`279ef0f`), «доля упала» (`ee10bf1`), «сверка `__init__`» (`eff8e67`),
+A288 «до» и «после» (`c0f37e1`, `822c5db`) — после закрытия №18 и №19; клоны прогонов в чистом клоне
+на `20f855e` и `650a917` и их базы; клон сухого прогона сдачи с его раскладкой `backend/mutants/`
+(порчи `domains.py`) и базой; разовые сценарии проб и порч. После прогона на коммите сдачи — его
+клон и тестовая база. После публикации — рабочая копия `.claude/worktrees/ci-speed`, ветка
+`ci-speed` и её тестовая база `audit_test_bcb61e9e17`.
+
+## Прогон в чистом клоне на коммите сдачи
+
+Клон свежий, с ветки `ci-speed` на коммите сдачи `482c6a7`; база диффа — `origin/main` клона,
+`3e1a283`. 2026-11-23T13:35:52Z–13:37:10Z, нагрузка 3,79 → 6,63. Вывод дословный, длинные строки
+обрезаны; у хуков — счёт строк вывода. Повтор A23 — последней командой.
+
+```
+$ git log --format="%h %p %s" -2 && git rev-parse --short origin/main && git merge-base HEAD origin/main
+482c6a7 befeb06 chore(delivery): handoff «Скорости CI» — фаза, метрики, наблюдение, уроки L96–L102, 
+befeb06 c330d75 docs(delivery): «Скорость CI» — слово владельца на публикацию 2026-11-23T13:33Z
+3e1a283
+3e1a283de2e8
+$ python3 scripts/delivery_check.py --require-ci --diff-base origin/main; echo "exit=$?"
+простой: окно 3e1a283de2e8..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-23-ci-speed (phase=handoff)
+debt: снимков долга на HEAD не прочитано — таять нечему
+§3.1d: номера примеров сверены с архивом — спек 14, новых 11, уже встречались 0
+дайджест §3.1d: в отчёте 0, пересчёт от origin/main: 0
+breakers: files=11 net_loc=1287 (+1325/-38), excluded=18 (delivery/|knowledge/|scripts/lint/|scripts
+наблюдение §13.1: поставок в архиве 17, окон со сроком 17, истекших без observed.md 0
+сквозные проверки §6.1: сценариев в таблице 0 (delivery/evals/smoke/README.md)
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Созд
+WARNING: delivery/evals/smoke/README.md: таблица сценариев пуста, а код уже поставлен — в архиве ест
+delivery_check: 0 error(s), 2 warning(s)
+exit=0
+$ cd backend && uv sync --frozen -q; echo "uv sync exit=$?"
+uv sync exit=0
+$ cd backend && uv run pytest -q -p no:cacheprovider -W error | tail -1; echo "pytest exit=${PIPESTATUS[0]}"
+собрано 922, прошло 922, пропущено 0
+pytest exit=0
+$ uv run --project backend --no-sync pre-commit run --all-files > pc.out; echo "exit=$?"
+Passed 27, Skipped 1, не Passed/Skipped строк: 0
+exit=0
+$ uv run --project backend --no-sync pre-commit run --hook-stage pre-push --all-files > pp.out; echo "exit=$?"
+Passed 5, Skipped 0, не Passed/Skipped строк: 0
+exit=0
+$ git diff --name-only --diff-filter=AM origin/main...HEAD | xargs python3 -I rfrb_scan.py
+--- просмотрено файлов: 29; совпадений: 0 (нет)
+```
