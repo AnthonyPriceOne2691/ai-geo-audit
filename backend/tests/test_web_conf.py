@@ -46,6 +46,9 @@ CSP = (
     "frame-ancestors 'none'"
 )
 API = "server / location /api/"
+#: `/api/` — к api через DNS докера с переменной в `proxy_pass` и сроком ответа 10 с (A81): у nginx
+#: образа рабочих процессов по числу ядер, кэш DNS у каждого свой — живой A81 срок не видит.
+DNS = "resolver 127.0.0.11 valid=10s | set $api http://api:8107 | proxy_pass $api"
 #: Отказы web на `/api/` (A84) — литералами спеки: с ними сверяются раздел «прокси» файла договора
 #: и тела в `nginx.conf` (L36). `id` образца — имя location отказа.
 TOO_LARGE = "Запрос слишком большой — можно не больше 1 МБ"
@@ -132,17 +135,19 @@ def log_problems(conf: Found) -> list[str]:
 
 
 def api_problems(conf: Found) -> list[str]:
-    """A79, A83, A84: в `/api/` скрыт `nosniff` сервиса, `X-Forwarded-For` — как прислан, предел
-    тела (`m` — МиБ) равен пределу сервиса из кода Ч1.3б, текст `too-large` у сервиса и у прокси
-    один; 413, 502 и 504 — в location с `id` образца «прокси»: его тип, код и тело, `no-store`."""
+    """A79, A81, A83, A84: в `/api/` адрес api — `DNS`, скрыт `nosniff` сервиса, `X-Forwarded-For` —
+    как прислан, предел тела (`m` — МиБ) — предел сервиса из кода Ч1.3б, текст `too-large` один;
+    413, 502 и 504 — в location с `id` образца «прокси»: его тип, код и тело, `no-store`."""
     api = [words for block, words in conf if block == API]
     xff = [words[2:] for words in api if words[:2] == ["proxy_set_header", "X-Forwarded-For"]]
     size = [words[1] for words in api if words[0] == "client_max_body_size"]
     sizes = [int(text.strip("m")) << 20 * text.endswith("m") for text in size]
     texts = [probes.sample(kind)["body"]["detail"] for kind in ("too-large", "proxy-too-large")]
     pages = sorted(words[1:] for words in api if words[0] == "error_page")
+    dns = " | ".join(" ".join(w) for w in api if w[0] in ("resolver", "set", "proxy_pass"))
     hidden, limit = ["proxy_hide_header", "X-Content-Type-Options"] in api, limits.BODY_LIMIT_BYTES
     problems = [
+        *[f"/api/: адрес api — {dns}"] * (dns != DNS),
         *["/api/: нет proxy_hide_header X-Content-Type-Options"] * (not hidden),
         *[f"/api/: X-Forwarded-For — {xff}"] * (xff != [["$http_x_forwarded_for"]]),
         *[f"предел тела: web {sizes}, сервис {limit}"] * (sizes != [limit]),
@@ -218,7 +223,8 @@ def test_a83_access_log_fields_and_error_log_level() -> None:
 
 
 def test_a79_a83_a84_api_location_and_its_refusals_follow_the_spec() -> None:
-    """A79, вторая строка: в `/api/` — `proxy_hide_header X-Content-Type-Options`; A83:
+    """A79, вторая строка: в `/api/` — `proxy_hide_header X-Content-Type-Options`; A81: `resolver`
+    докера с `valid=10s` и переменная в `proxy_pass`; A83:
     `X-Forwarded-For` — как прислан; A84: `client_max_body_size` — `BODY_LIMIT_BYTES` из кода
     Ч1.3б, 1 048 576 байт; у `too-large` один текст — спеки; раздел «прокси» файла договора — три
     образца спеки по форме раздела сервиса, `nginx.conf` отдаёт их из location по `id`."""
@@ -257,6 +263,8 @@ SPOILS = [
     ("текст 413 в nginx.conf", FILES[0], "больше 1 МБ", "больше 2 МБ", "@proxy-too-large: тело"),
     ("снят types", FILES[0], TYPES, TYPES[18:], "@proxy-too-large: {'include'"),
     ("снят error_page", FILES[0], "error_page 504 @proxy-gateway-timeout;", "", "error_page в"),
+    ("resolver без valid", FILES[0], "11 valid=10s;", "11;", "api — resolver 127.0.0.11 | set"),
+    ("proxy_pass без переменной", FILES[0], "pass $api;", "pass http://api:8107;", "proxy_pass ht"),
 ]
 
 
@@ -268,7 +276,8 @@ def test_a79_a80_a83_spoiled_web_conf_is_red_with_the_name(
     испорченного: location без `include`, заголовок без `always`, `server_tokens on`, директива
     CSP ослабленная, пропавшая, лишняя или повторённая, формат журнала образа или со строкой
     запроса, журнал ошибок с `error`, путь со строкой запроса; в `/api/` снят `proxy_hide_header`,
-    `X-Forwarded-For` дописан, предел web 2 МБ, текст отказа поправлен только тут, снят `types`."""
+    `X-Forwarded-For` дописан, предел web 2 МБ, текст отказа поправлен только тут, снят `types`,
+    `resolver` без `valid`, `proxy_pass` без переменной (A81)."""
     texts = {file: (WEB / file).read_text(encoding="utf-8") for file in FILES}
     assert problems(texts) == []
     assert texts[name].count(old) == 1, spoil
