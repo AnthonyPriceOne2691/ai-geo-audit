@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import dbtools
 import pytest
@@ -259,6 +260,37 @@ def test_a82_candidate_is_taken_by_a_bound_port_or_an_overlapping_docker_net() -
     assert not busy(port, "172.16.9.0/28")
 
 
+class Networks:
+    """Подставной исполнитель для `slot`: сети докера на машине — по подсети на сеть; вызовы —
+    в счёт."""
+
+    def __init__(self, subnets: list[str]) -> None:
+        self.subnets = subnets
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str, limit: str) -> str:
+        self.calls.append(args)
+        if args[:2] == ("network", "ls"):
+            return "".join(f"net{index}\n" for index in range(len(self.subnets)))
+        return "".join(f"{subnet} \n" for subnet in self.subnets)
+
+
+@pytest.mark.parametrize("taken", [False, True])
+def test_a82_slot_reads_docker_nets_once_and_skips_a_candidate_in_one(taken: bool) -> None:
+    """A82, третья строка: порт и подсеть прогона выбираются один раз; без сетей докера их подсети
+    не читаются; подсеть первого кандидата у сети докера — берётся следующий (L88)."""
+    name = "ai-geo-audit-oracle-0123456789"
+    first = compose.web_slot(name, free)
+    docker = Networks([first[1]] if taken else [])
+    run = SimpleNamespace(name=name, facts={}, docker=docker)
+    got = compose.slot(run)
+    assert compose.slot(run) == got
+    expected = [("network", "ls"), ("network", "inspect")][: 1 + taken]
+    assert [call[:2] for call in docker.calls] == expected
+    assert got == compose.web_slot(name, compose.busy_on(docker.subnets))
+    assert not taken or (docker.calls[1][-1] == "net0" and got[1] != first[1])
+
+
 class Clean(oracle.Docker):
     """Подставной исполнитель: Docker отвечает пусто — уборка прошла, своего не осталось."""
 
@@ -344,33 +376,38 @@ def test_a76_docker_down_is_code_2_not_a_green_run(
     assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
 
 
+#: Строка журнала web: проверка здоровья смотрит не туда, nginx ответил 404.
+WEB_LOG = 'web-1  | 127.0.0.1 - - "GET /api/health HTTP/1.1" 404 153 "-" "Wget"\n'
+
+
 class MigrateFails(oracle.Docker):
     """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — строки с
-    паролем и секретом стека, ошибка alembic и две строки после неё."""
+    паролем и секретом стека, ошибка alembic и две строки после неё; журнал web — `WEB_LOG`."""
 
     secrets: tuple[str, str] = ("", "")
-    logs_args: tuple[str, ...] = ()
+    logs_calls: tuple[tuple[str, ...], ...] = ()
 
     def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
         if "up" in args:
             stderr = b'service "migrate" didn\'t complete successfully: exit 255\n'
             return subprocess.CompletedProcess(["docker", *args], 1, b"", stderr)
         if "logs" in args:
-            self.logs_args = args
+            self.logs_calls += (args,)
             password, jwt = self.secrets
             log = (
                 f"migrate-1  | url={password}\nmigrate-1  | jwt={jwt}\n"
                 "migrate-1  | FAILED: Path doesn't exist: 'x'.\n"
                 "migrate-1  | exit code 255\nmigrate-1  | done\n"
             )
+            log = log if args[-1] == "migrate" else WEB_LOG
             return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
         return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
 
 
 def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
-    """A76, третья строка: подъём упал на migrate — в причине шага хвост журнала migrate
-    (`--tail 20`, шесть последних строк) с причиной от alembic («FAILED: …»); пароля и секрета
-    стека в причине нет."""
+    """A76, третья строка: подъём упал — в причине шага хвосты журналов migrate и web
+    (`--tail 20`, шесть последних строк): причина от alembic («FAILED: …») и ответ nginx на
+    проверку здоровья web (L89); пароля и секрета стека в причине нет."""
     docker = MigrateFails()
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
     docker.secrets = (run.password, run.jwt)
@@ -378,5 +415,7 @@ def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: P
         compose.step_up(run)
     reason = str(failure.value)
     assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
+    assert '"GET /api/health HTTP/1.1" 404' in reason
     assert run.password not in reason and run.jwt not in reason
-    assert docker.logs_args[-4:] == ("--no-color", "--tail", "20", "migrate")
+    tails = [call[-4:] for call in docker.logs_calls]
+    assert tails == [("--no-color", "--tail", "20", service) for service in ("migrate", "web")]

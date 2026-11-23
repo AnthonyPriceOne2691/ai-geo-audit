@@ -1,11 +1,14 @@
 """Чистые части шагов web оракула стека без Docker (A77, A82): контекст сборки и состав образа
-web, слушающие порты контейнера. Модуль `scripts/stack_oracle_web.py` лежит вне пакета.
+web, слушающие порты контейнера, код страницы. Модуль `scripts/stack_oracle_web.py` лежит вне
+пакета.
 """
 
 from __future__ import annotations
 
 import importlib
+import socket
 import sys
+import threading
 from types import SimpleNamespace
 
 import dbtools
@@ -69,3 +72,26 @@ def test_a82_listening_ports_are_read_from_proc_net_tcp() -> None:
         "   0: 00000000000000000000000000000000:0050 00000000000000000000000000000000:0000 0A\n"
     )
     assert web.listening(tcp) == {8080, 80}
+
+
+def reply_ok(listener: socket.socket) -> None:
+    """Один ответ 200 без тела на первое соединение."""
+    connection, _ = listener.accept()
+    with connection:
+        connection.recv(4096)
+        connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+
+
+def test_a82_page_gives_the_code_or_the_failure_name() -> None:
+    """A82, первая строка: страница с машины — код ответа; закрытый порт — имя сбоя строкой, а не
+    исключение шага (L88)."""
+    with socket.socket() as listener:
+        listener.settimeout(10)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        url = f"http://127.0.0.1:{listener.getsockname()[1]}/"
+        answer = threading.Thread(target=reply_ok, args=(listener,))
+        answer.start()
+        assert web.page(url) == 200
+        answer.join()
+    assert str(web.page(url)).startswith("URLError: ")
