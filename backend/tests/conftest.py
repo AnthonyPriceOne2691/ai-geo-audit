@@ -18,10 +18,11 @@ import asyncio
 import logging
 import os
 import tempfile
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 
 import dbtools
+import mutation_db
 import pytest
 from hypothesis import settings
 from run_summary import (  # noqa: F401 -- хуки итога A106 подключаются по именам
@@ -38,12 +39,21 @@ from ai_geo_audit import config
 from ai_geo_audit.logs import setup as log_setup
 from ai_geo_audit.storage import build_engine, dispose_engine
 
-# Свойства с генератором воспроизводимы: под ними идёт мутационный гейт. Сид — от самого теста,
-# базы примеров нет. Родитель — профиль по умолчанию, а не текущий: в CI hypothesis сам грузит свой
-# профиль `ci`, и на машине и в CI правило разошлось бы.
-settings.register_profile(
-    "reproducible", settings.get_profile("default"), derandomize=True, database=None
-)
+
+def reproducible(environ: Mapping[str, str] = os.environ) -> dict[str, object]:
+    """Профиль свойств: воспроизводимый — сид от самого теста, базы примеров нет; под гейтом
+    мутаций — без срока примера (A282): в 4 потока сосед по CPU не даёт ложного «убит» по
+    `DeadlineExceeded`."""
+    options: dict[str, object] = {"derandomize": True, "database": None}
+    if mutation_db.under_mutmut(environ):
+        options["deadline"] = None
+    return options
+
+
+# Свойства с генератором воспроизводимы: под ними идёт мутационный гейт. Родитель — профиль по
+# умолчанию, а не текущий: в CI hypothesis сам грузит свой профиль `ci`, и на машине и в CI правило
+# разошлось бы.
+settings.register_profile("reproducible", settings.get_profile("default"), **reproducible())
 settings.load_profile("reproducible")
 # Хранилище hypothesis — вне дерева: кэш констант исходников (его собирает ещё сбор тестов), таблицу
 # юникода и заплатки упавших примеров он пишет и без базы примеров, по умолчанию — в `.hypothesis/`
@@ -59,13 +69,20 @@ def pytest_report_header() -> str:
 
 
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """A12: нет Postgres — одно сообщение с командой, а не десятки пропусков."""
+    """A12: нет Postgres — одно сообщение с командой, а не десятки пропусков. База сессии — база
+    рабочей копии, под mutmut — своя копия шаблона (A281)."""
     reason = asyncio.run(dbtools.unreachable())
     if reason:
         # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
         message = f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}"
         raise pytest.UsageError(message)
-    asyncio.run(dbtools.prepare())
+    mutation_db.session_start()
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """Под mutmut — снос копии сессии (A281), в самом конце: после итога A106 и развязки фикстур.
+    Хук итога подключён списком импорта выше, как был (L63)."""
+    mutation_db.session_end()
 
 
 @pytest.fixture(autouse=True)

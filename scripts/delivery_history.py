@@ -180,10 +180,18 @@ DEBT_ENTRY = re.compile(r"^(\d+):(.+)$")
 
 def debt_entries(blob: str) -> dict[str, int]:
     """{путь: вес} из текста одного снимка. Комментарии и секции пропускаются."""
+    # Адаптация (scripts/lint/adapted.json, «Скорость CI», A290): записи раздела `[exemption]`
+    # снимка длины в долг не входят — исключение по замыслу гейта не тает («швов нет»), рост
+    # сверх лимита — только словом человека. Долг — раздел `[baseline]` и снимки без разделов.
     out: dict[str, int] = {}
+    exempt = False
     for line in blob.splitlines():
-        m = DEBT_ENTRY.match(line.strip())
-        if m:
+        text = line.strip()
+        if text.startswith("[") and text.endswith("]"):
+            exempt = text == "[exemption]"
+            continue
+        m = DEBT_ENTRY.match(text)
+        if m and not exempt:
             out[m.group(2)] = out.get(m.group(2), 0) + int(m.group(1))
     return out
 
