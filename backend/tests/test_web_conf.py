@@ -1,18 +1,22 @@
 """Разбор `deploy/web/nginx.conf` и сниппета заголовков без Docker (A79, вторая строка; A80; A83,
-статическая часть): сниппет в каждом location со своим `add_header`, `always` у заголовков
+статическая часть; A84): сниппет в каждом location со своим `add_header`, `always` у заголовков
 сниппета, `server_tokens off`, директивы CSP по одной, поля журнала доступа и уровень журнала
-ошибок. Разбор nginx — свой, без пакета. Заголовки и CSP сверяются с литералами спеки в этом
-тесте, и с ними же — ожидание оракула (L36). `/api/` и `proxy_hide_header` — срез 3.
+ошибок; `/api/` и его отказы. Разбор nginx — свой, без пакета. Заголовки, CSP и тела отказов
+сверяются с литералами спеки в этом тесте, с ними же — ожидание оракула и файл договора (L36).
 """
 
 from __future__ import annotations
 
 import importlib
+import json
 import re
 import sys
 
+import api_probes as probes
 import envguard
 import pytest
+
+from ai_geo_audit.api import limits
 
 sys.path.insert(0, str(envguard.ROOT / "scripts"))
 web = importlib.import_module("stack_oracle_web")
@@ -41,19 +45,32 @@ CSP = (
     "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
     "frame-ancestors 'none'"
 )
+API = "server / location /api/"
+#: Отказы web на `/api/` (A84) — литералами спеки: с ними сверяются раздел «прокси» файла договора
+#: и тела в `nginx.conf` (L36). `id` образца — имя location отказа.
+TOO_LARGE = "Запрос слишком большой — можно не больше 1 МБ"
+DOWN = {"detail": "Сервис временно недоступен — повторите позже", "kind": "unavailable"}
+REFUSALS = {
+    "proxy-too-large": (413, {"detail": TOO_LARGE, "kind": "too-large", "retry": False}),
+    "proxy-bad-gateway": (502, DOWN | {"retry": True}),
+    "proxy-gateway-timeout": (504, DOWN | {"retry": True}),
+}
+#: Location отказа: сниппет, `no-store`, пустой `types` — тип образца и у пути с расширением.
+SHAPE = {"include": [SNIPPET], "add_header": ["Cache-Control", "no-store", "always"], "types": []}
 _TOKEN = re.compile(r"""#[^\n]*|"([^"]*)"|'([^']*)'|([{};])|([^\s{};"'#]+)""")
 Found = list[tuple[str, list[str]]]
 
 
 def directives(text: str) -> Found:
-    """Свой маленький разбор nginx: директива — блоки над ней через « / » и её слова. Слово — без
-    пробелов и `{};`, строка — в кавычках, комментарий — до конца строки."""
+    """Свой маленький разбор nginx: директива — блоки над ней через « / » и её слова, блок — и
+    своей строкой. Слово — без пробелов и `{};`, строка — в кавычках, комментарий — до конца."""
     found: Found = []
     blocks: list[str] = []
     words: list[str] = []
     for token in _TOKEN.finditer(text):
         double, single, mark, word = token.groups()
         if mark == "{":
+            found.append((" / ".join(blocks) or "http", words))
             blocks.append(" ".join(words))
         elif mark == "}":
             blocks.pop()
@@ -114,6 +131,38 @@ def log_problems(conf: Found) -> list[str]:
     return problems + [f"map $request_uri $sent_path — {cut}"] * (cut != PATH_MAP)
 
 
+def api_problems(conf: Found) -> list[str]:
+    """A79, A83, A84: в `/api/` скрыт `nosniff` сервиса, `X-Forwarded-For` — как прислан, предел
+    тела (`m` — МиБ) равен пределу сервиса из кода Ч1.3б, текст `too-large` у сервиса и у прокси
+    один; 413, 502 и 504 — в location с `id` образца «прокси»: его тип, код и тело, `no-store`."""
+    api = [words for block, words in conf if block == API]
+    xff = [words[2:] for words in api if words[:2] == ["proxy_set_header", "X-Forwarded-For"]]
+    size = [words[1] for words in api if words[0] == "client_max_body_size"]
+    sizes = [int(text.strip("m")) << 20 * text.endswith("m") for text in size]
+    texts = [probes.sample(kind)["body"]["detail"] for kind in ("too-large", "proxy-too-large")]
+    pages = sorted(words[1:] for words in api if words[0] == "error_page")
+    hidden, limit = ["proxy_hide_header", "X-Content-Type-Options"] in api, limits.BODY_LIMIT_BYTES
+    problems = [
+        *["/api/: нет proxy_hide_header X-Content-Type-Options"] * (not hidden),
+        *[f"/api/: X-Forwarded-For — {xff}"] * (xff != [["$http_x_forwarded_for"]]),
+        *[f"предел тела: web {sizes}, сервис {limit}"] * (sizes != [limit]),
+        *[f"too-large: сервис «{texts[0]}», прокси «{texts[1]}»"] * (texts[0] != texts[1]),
+        *[f"error_page в /api/ — {pages}"] * ([page[0] for page in pages] != ["413", "502", "504"]),
+    ]
+    for code, place in pages:
+        sample, inside = probes.sample(place[1:]), f"server / location {place}"
+        found = {words[0]: words[1:] for block, words in conf if block == inside}
+        status, body = found.pop("return", ["", "null"])
+        wanted = SHAPE | {"default_type": [sample["headers"]["content-type"]]}
+        nested = [block for block, _ in conf if block.startswith(f"{inside} / ")]
+        problems += [f"{place}: код {code}, return {status}"] * (
+            {code, status} != {str(sample["status"])}
+        )
+        problems += [f"{place}: тело {json.loads(body)}"] * (json.loads(body) != sample["body"])
+        problems += [f"{place}: {found}, в types {nested}"] * (found != wanted or bool(nested))
+    return problems
+
+
 def problems(texts: dict[str, str]) -> list[str]:
     conf = directives(texts["nginx.conf"])
     tokens = pick(conf, "server_tokens")
@@ -123,6 +172,7 @@ def problems(texts: dict[str, str]) -> list[str]:
         *[f"server_tokens — {tokens}"] * (tokens != [("server", ["off"])]),
         *page_problems(conf),
         *log_problems(conf),
+        *api_problems(conf),
     ]
 
 
@@ -133,13 +183,14 @@ def read(name: str) -> Found:
 def test_a79_snippet_is_included_at_server_level_and_in_each_location_with_add_header() -> None:
     """A79, вторая строка: сниппет — на уровне server и в каждом location со своим `add_header`
     (`add_header` не наследуется туда, где есть свой); `include` называет путь, куда сниппет кладёт
-    `Dockerfile`. Свои `add_header` — у страницы и у файлов сборки."""
+    `Dockerfile`. Свои `add_header` — у страницы, у файлов сборки и у отказов `/api/` (A84)."""
     dockerfile = (WEB / "Dockerfile").read_text(encoding="utf-8")
     assert f"\nCOPY deploy/web/security-headers.conf {SNIPPET}\n" in dockerfile
     conf = read("nginx.conf")
     assert include_problems(conf) == []
     own = {block for block, _ in pick(conf, "add_header")}
-    assert own == {"server / location /", "server / location /assets/"}
+    refusals = {f"server / location @{name}" for name in REFUSALS}
+    assert own == {"server / location /", "server / location /assets/"} | refusals
 
 
 def test_a79_every_snippet_header_is_always_and_server_tokens_is_off() -> None:
@@ -166,9 +217,26 @@ def test_a83_access_log_fields_and_error_log_level() -> None:
     assert log_problems(read("nginx.conf")) == []
 
 
+def test_a79_a83_a84_api_location_and_its_refusals_follow_the_spec() -> None:
+    """A79, вторая строка: в `/api/` — `proxy_hide_header X-Content-Type-Options`; A83:
+    `X-Forwarded-For` — как прислан; A84: `client_max_body_size` — `BODY_LIMIT_BYTES` из кода
+    Ч1.3б, 1 048 576 байт; у `too-large` один текст — спеки; раздел «прокси» файла договора — три
+    образца спеки по форме раздела сервиса, `nginx.conf` отдаёт их из location по `id`."""
+    proxy = probes.SAMPLES["proxy"]
+    kind = {"content-type": "application/json"}
+    assert {s["id"]: (s["status"], s["headers"], s["body"]) for s in proxy} == {
+        name: (code, kind, body) for name, (code, body) in REFUSALS.items()
+    }
+    assert all(sorted(s) == ["body", "headers", "id", "status", "when"] for s in proxy)
+    assert limits.BODY_LIMIT_BYTES == 1_048_576
+    assert probes.sample("too-large")["body"]["detail"] == TOO_LARGE
+    assert api_problems(read("nginx.conf")) == []
+
+
 PUBLIC = 'add_header Cache-Control "public'
 INCLUDE = f"include {SNIPPET};\n        {PUBLIC}"
 UNSAFE = "script-src 'self' 'unsafe-inline';"
+TYPES = "types { }\n        default_type application/json;\n        return 413"
 SPOILS = [
     ("location без include", FILES[0], INCLUDE, PUBLIC, "/assets/: нет include"),
     ("снят always", FILES[1], '"nosniff" always;', '"nosniff";', "X-Content-Type-Options — без"),
@@ -183,6 +251,12 @@ SPOILS = [
     ("$request_uri", FILES[0], "d $sent_path", "d $request_uri", "в формате $request_uri"),
     ("ошибки с error", FILES[0], "stderr crit;", "stderr error;", "'/dev/stderr', 'error'"),
     ("путь с запросом", FILES[0], "[^?]*", ".*", "map $request_uri $sent_path"),
+    ("снят proxy_hide_header", FILES[0], "proxy_hide_header X-Content-Type-Options;", "", "нет pr"),
+    ("XFF дописан", FILES[0], "$http_x_forwarded_for;", "$proxy_add_x_forwarded_for;", "'$prox"),
+    ("предел web 2 МБ", FILES[0], "size 1m;", "size 2m;", "web [2097152], сервис 1048576"),
+    ("текст 413 в nginx.conf", FILES[0], "больше 1 МБ", "больше 2 МБ", "@proxy-too-large: тело"),
+    ("снят types", FILES[0], TYPES, TYPES[18:], "@proxy-too-large: {'include'"),
+    ("снят error_page", FILES[0], "error_page 504 @proxy-gateway-timeout;", "", "error_page в"),
 ]
 
 
@@ -190,10 +264,11 @@ SPOILS = [
 def test_a79_a80_a83_spoiled_web_conf_is_red_with_the_name(
     spoil: str, name: str, old: str, new: str, why: str
 ) -> None:
-    """A79, вторая строка; A80; A83, статическая часть: порча файла web — красное с именем
+    """A79, вторая строка; A80; A83, статическая часть; A84: порча файла web — красное с именем
     испорченного: location без `include`, заголовок без `always`, `server_tokens on`, директива
     CSP ослабленная, пропавшая, лишняя или повторённая, формат журнала образа или со строкой
-    запроса, журнал ошибок с `error`, путь со строкой запроса."""
+    запроса, журнал ошибок с `error`, путь со строкой запроса; в `/api/` снят `proxy_hide_header`,
+    `X-Forwarded-For` дописан, предел web 2 МБ, текст отказа поправлен только тут, снят `types`."""
     texts = {file: (WEB / file).read_text(encoding="utf-8") for file in FILES}
     assert problems(texts) == []
     assert texts[name].count(old) == 1, spoil
