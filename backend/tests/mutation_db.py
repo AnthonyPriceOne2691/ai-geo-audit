@@ -34,6 +34,10 @@ RUN_DIR = dbtools.BACKEND / "mutants" / "db-copies"
 NAME = re.compile(rf"{dbtools.PREFIX}[0-9a-f]{{10}}")
 #: Корни, чей шаблон построен в этом процессе, — с pid главного процесса прогона.
 BUILT: dict[Path, int] = {}
+#: Проба A285 «Скорости CI», только в ветке-пробе: имя шаблона испорчено у всех клонов или клон
+#: отказывает у одной порчи — переменными шага джобы.
+BREAK_TEMPLATE = os.environ.get("A285_BREAK_TEMPLATE", "")
+BREAK_MUTANT = os.environ.get("A285_BREAK_MUTANT", "")
 
 
 class CopyError(RuntimeError):
@@ -129,7 +133,7 @@ async def clone(root: Path = dbtools.ROOT, pid: int | None = None) -> str:
     """Копия шаблона: прежняя с тем же именем — от убитого процесса с тем же pid — снесена; метка
     — имя шаблона, по ней уборка; пояс — как у базовой (A9): `ALTER DATABASE … SET` в копию не
     переносится."""
-    template, name = template_name(root), copy_name(pid, root)
+    template, name = template_name(root) + BREAK_TEMPLATE, copy_name(pid, root)
     server = await _server()
     try:
         await _drop(server, name)
@@ -213,6 +217,8 @@ def session_start(
         asyncio.run(dbtools.prepare())
         return
     try:
+        if BREAK_MUTANT and label == BREAK_MUTANT:
+            raise RuntimeError("проба A285: клон отказал у одной порчи")
         builds = mutmut_process() if main is None else main
         if builds and label in MAIN_PHASES and root not in BUILT:
             asyncio.run(build_template(root))

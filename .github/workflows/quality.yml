@@ -348,4 +348,17 @@ jobs:
           MUTATION_WORKERS: "4"
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
+          # Проба A285 «Скорости CI», только в ветке-пробе: клон отказывает у одной порчи.
+          A285_BREAK_MUTANT: ai_geo_audit.probe_a285.x_a285__mutmut_3
+        run: bash scripts/lint/check_mutation_gate.sh
+
+      # Проба A285: имя шаблона испорчено — клон отказывает у всех, уже на сессии статистики.
+      - name: Probe A285 — template name broken for every copy
+        if: always() && github.event_name == 'pull_request'
+        env:
+          LINT_PY_SRC: backend/src
+          MUTATION_WORKERS: "4"
+          MIN_KILLED: "60"
+          BUDGET_SEC: "1200"
+          A285_BREAK_TEMPLATE: "-broken"
         run: bash scripts/lint/check_mutation_gate.sh
