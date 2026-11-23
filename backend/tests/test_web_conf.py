@@ -222,6 +222,7 @@ def test_a79_a83_a84_api_location_and_its_refusals_follow_the_spec() -> None:
     `X-Forwarded-For` — как прислан; A84: `client_max_body_size` — `BODY_LIMIT_BYTES` из кода
     Ч1.3б, 1 048 576 байт; у `too-large` один текст — спеки; раздел «прокси» файла договора — три
     образца спеки по форме раздела сервиса, `nginx.conf` отдаёт их из location по `id`."""
+    assert api_problems(read("nginx.conf")) == []
     proxy = probes.SAMPLES["proxy"]
     kind = {"content-type": "application/json"}
     assert {s["id"]: (s["status"], s["headers"], s["body"]) for s in proxy} == {
@@ -230,7 +231,6 @@ def test_a79_a83_a84_api_location_and_its_refusals_follow_the_spec() -> None:
     assert all(sorted(s) == ["body", "headers", "id", "status", "when"] for s in proxy)
     assert limits.BODY_LIMIT_BYTES == 1_048_576
     assert probes.sample("too-large")["body"]["detail"] == TOO_LARGE
-    assert api_problems(read("nginx.conf")) == []
 
 
 PUBLIC = 'add_header Cache-Control "public'
