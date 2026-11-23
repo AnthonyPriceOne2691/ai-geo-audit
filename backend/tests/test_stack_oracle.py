@@ -177,8 +177,9 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
-#: срез 1 — A77 и A82.
-STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73", "A77", "A82"}
+#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80.
+STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
+STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A82"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -190,9 +191,10 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_a82() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a80_a82() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
-    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77 и A82."""
+    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
+    A80 и A82."""
     assert steps_problems(oracle.STEPS) == []
 
 
