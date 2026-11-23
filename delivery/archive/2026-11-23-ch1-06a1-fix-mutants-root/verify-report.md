@@ -74,6 +74,65 @@ pytest exit=0
   проверок — контура (`delivery@2.23`), не этой поставки.
 - Тестовая база клона снята после прогона, клон удалён.
 
+### На коммите сдачи `c22b5fa`
+
+Один прогон после коммита сдачи `c22b5fa` и слияния main `2438287` («Оракул стека в CI»),
+с 2026-11-23T10:32:56Z по 10:34:49Z. Клон свежий (`--no-local`), база диффа — `origin/main`
+клона, `2438287`. Код правки тот же, что на `2e233d6`: после него — вердикт, слияние main и
+документы. Вывод дословный, длинные строки обрезаны знаком «…»:
+
+```
+$ git clone -q --no-local -b ch1-06a1-fix-mutants-root <репозиторий> <клон> && cd <клон>
+$ git checkout -q c22b5fa37e94e9db03f1eacb8499ac9e3889ca84
+$ git log --format="%h %p %s" -5 && git rev-parse --short origin/main
+c22b5fa 1c9a294 chore(delivery): handoff правки 6а-1 — фаза, метрики, наблюдение, уроки L94–L95, пе…
+1c9a294 576bdb7 2438287 merge: main 2438287 («Оракул стека в CI», запрос №8) в правку 6а-1 перед сд…
+2438287 4b46e66 feat(ci): Ч1.5 — оракул стека в CI и сканер образа (#8)
+576bdb7 ee8fa60 docs(delivery): правка 6а-1 — вердикт проверяющего: к сдаче; слово владельца 10:15Z
+ee8fa60 bcd6177 docs(delivery): правка 6а-1 — необратимое как у всех поставок: четыре поверхности и…
+2438287
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно 2438287c7693..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-23-ch1-06a1-fix-mutants-ro…
+debt: каталогов в archive/ 16, ревизий закрытия найдено 16, окно 5, в долге 2 записей весом 581
+debt: на начале окна (f3710a5) снимков долга не прочитано — мерить нечего. Если снимки на той ревиз…
+breakers: files=2 net_loc=41 (+42/-1), excluded=8 (delivery/|knowledge/|scripts/lint/|scripts/merge…
+наблюдение §13.1: поставок в архиве 16, окон со сроком 16, истекших без observed.md 0
+сквозные проверки §6.1: сценариев в таблице 0 (delivery/evals/smoke/README.md)
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Соз…
+WARNING: delivery/evals/smoke/README.md: таблица сценариев пуста, а код уже поставлен — в архиве ес…
+delivery_check: 0 error(s), 2 warning(s)
+exit=0
+$ (cd backend && uv sync --frozen -q); echo "uv sync exit=$?"
+uv sync exit=0
+$ backend/.venv/bin/pre-commit run --all-files > hooks.txt; echo "exit=$?"; \
+    grep -c 'Passed$' hooks.txt; grep -c 'Skipped$' hooks.txt; grep 'Failed$' hooks.txt
+exit=0
+27
+1
+$ backend/.venv/bin/pre-commit run --all-files --hook-stage pre-push; echo "exit=$?"
+check for added large files.......................................................Passed
+dead code — объявлено и никем не зовётся (ратчет, pre-push).......................Passed
+delivery phase gate + breakers (pre-push).........................................Passed
+baseline only melts (pre-push)....................................................Passed
+новая зависимость объявлена в STATUS (pre-push)...................................Passed
+exit=0
+$ cd backend && uv run --frozen pytest -q -p no:cacheprovider -W error | tail -1; \
+    echo "pytest exit=${PIPESTATUS[0]}"
+собрано 867, прошло 867, пропущено 0
+pytest exit=0
+$ cd backend && cp -R tests mutants/tests && cd mutants \
+    && ../.venv/bin/python -m pytest -q -p no:cacheprovider -W error tests | tail -1; \
+    echo "pytest exit=${PIPESTATUS[0]}"
+собрано 867, прошло 867, пропущено 0
+pytest exit=0
+```
+
+- Счёт — 41 строка в 2 файлах; судится архив поставки, фаза handoff. WARNING «idle» — после
+  переноса активной поставки нет; таблица сквозных проверок — предупреждение контура.
+- Набор вырос до 867 с тестами «Оракула» из main; из раскладки mutmut — те же 867.
+- Тестовая база клона `audit_test_f767dce001` снята после прогона, клон удалён.
+
 ## Ревью рисковых мест
 
 - **Новый модуль** — `backend/tests/test_mutants_layout.py`. Тест кладёт копию трёх помощников и
