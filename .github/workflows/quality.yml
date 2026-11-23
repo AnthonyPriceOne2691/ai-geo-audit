@@ -350,6 +350,28 @@ jobs:
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
 
+      # Проба A288-engine «Скорости CI», только в ветке-пробе: код выхода каждой просуженной порчи из
+      # `.meta` mutmut (3 — сессия упала в начале, до тестов; 1 — упал тест; не гонявшиеся не
+      # печатаются), затем исходы `mutmut results`: счёт по исходам и имена всех, кроме «not checked».
+      - name: Probe A288-engine — exit codes and outcomes
+        if: always() && github.event_name == 'pull_request'
+        working-directory: backend
+        run: |
+          python3 - <<'PY'
+          import collections, json, pathlib
+          codes = collections.Counter()
+          for meta in sorted(pathlib.Path("mutants").rglob("*.meta")):
+              data = json.loads(meta.read_text(encoding="utf-8"))
+              for name, code in sorted(data.get("exit_code_by_key", {}).items()):
+                  if code is not None:
+                      codes[code] += 1
+                      print(f"{name}\t{code}")
+          print("коды:", ", ".join(f"{code}: {count}" for code, count in sorted(codes.items())))
+          PY
+          uv run --no-sync mutmut results --all true | sort > /tmp/a288e.txt
+          cut -d: -f2 /tmp/a288e.txt | sort | uniq -c
+          grep -v ': not checked$' /tmp/a288e.txt
+
   # «Оракул стека в CI» (A76): собранный образ делает продукт. Оракул Ч1.5а строит стек из чистой
   # копии `git archive HEAD` и гоняет шаги примеров; итог джобы — итог оракула. Docker и Python —
   # с раннера, пакеты не ставятся: оракул — стандартная библиотека. Время — по первому прогону.

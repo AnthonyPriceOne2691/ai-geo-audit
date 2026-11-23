@@ -132,3 +132,6 @@ async def task_engine(name: str = "task") -> AsyncIterator[AsyncEngine]:
         yield engine
     finally:
         await engine.dispose()
+
+
+# Проба A282 «Скорости CI»: метка области гейта мутаций, в main не идёт.
