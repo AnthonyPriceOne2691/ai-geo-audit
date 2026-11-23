@@ -511,6 +511,27 @@ A114); замок payload `scripts/lint/payload.lock.json` — доктор: «�
   поверх него (`79d0830`).
 - **Для канона:** закрыто в `cqg@3.30`.
 
+### 2026-11-23 — тесты, ломающиеся под раскладкой mutmut, видит только запрос с кодом
+
+- **Находка:** прогон 45150681177 — ветка-проба «Скорости CI» от main `4b46e66`, порчи в
+  `storage/engine.py` и `api/health.py`. Шаг статистики mutmut: `FileNotFoundError` на
+  `backend/deploy/deploy.py` при сборе `tests/test_deploy_core.py`, «failed to collect stats».
+  Гейт порч краснеет «не просудил ничего» на любом запросе с правкой в `backend/src`.
+- **Причина:** помощник тестов выката 6а-1 (`backend/tests/deploy_fakes.py`) считал корень копии
+  по глубине (`parents[2]`). mutmut кладёт тесты в `backend/mutants/tests`, и глубина там на
+  уровень больше. Запрос 6а-1 (№11) правил `deploy/` и тесты, гейт порч ответил «изменённых
+  prod-файлов нет» и mutmut не звал. Раскладку `mutants/` не собрал никто: ни CI, ни приёмка, ни
+  чистые клоны.
+- **Сделано:** поставка-правка `ch1-06a1-fix-mutants-root`. Тест-повтор `test_mutants_layout.py`:
+  копия помощников в раскладке mutmut грузит скрипт выката. `deploy_fakes.py` берёт корень у
+  `envguard.repo_root()` — по меткам, как остальные тесты. Набор из копии `backend/tests` в
+  `backend/mutants/tests` — 763 из 763.
+- **Для канона:** CQG `cqg@3.30`, гейт порч (`scripts/lint/check_mutation_gate.sh`): запрос без
+  правок в `backend/src` mutmut не запускает, поэтому тесты, ломающиеся под раскладкой
+  `mutants/`, проходят незамеченными до первого запроса с кодом. Кандидат: на запросе, который
+  меняет тесты, собирать набор в раскладке mutmut — `pytest --collect-only` из копии тестов в
+  `mutants/tests`, дёшево и без порч.
+
 ### 2026-11-20 — таблица сквозных проверок пуста с bootstrap
 
 - **Находка:** вторая проверяющая, приёмка В1а. `delivery/evals/smoke/README.md` с bootstrap
