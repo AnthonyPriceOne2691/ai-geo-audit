@@ -227,14 +227,15 @@ def step_rules_on_file(run: Run) -> str:
     return f"{lines[-1]}; config --services — {len(services)}"
 
 
-def migrate_log(run: Run) -> str:
-    """Хвост журнала migrate для причины отказа: alembic пишет «FAILED: …» в вывод контейнера,
-    а не в вывод `up`. Пароль и секрет стека заменены звёздочками (A67: пароля нет в выводе)."""
-    log = compose(run, "logs", "--no-color", "--tail", "20", "migrate", limit="docker", check=False)
+def service_log(run: Run, service: str) -> str:
+    """Хвост журнала сервиса для причины отказа: alembic пишет «FAILED: …» в вывод migrate, nginx
+    — отказ конфига и ответы проверке здоровья в вывод web, а не в вывод `up` (L89). Пароль и
+    секрет стека заменены звёздочками (A67: пароля нет в выводе)."""
+    log = compose(run, "logs", "--no-color", "--tail", "20", service, limit="docker", check=False)
     tail = " | ".join(log.strip().splitlines()[-6:])
     for secret in (run.password, run.jwt):
         tail = tail.replace(secret, "***")
-    return f"журнал migrate: {tail}"
+    return f"журнал {service}: {tail}"
 
 
 def step_up(run: Run) -> str:
@@ -242,9 +243,8 @@ def step_up(run: Run) -> str:
     равна голове, обе — из образа; migrate и процессы api — от uid 10001."""
     done = compose_result(run, "up", "--detach", "--wait", "--wait-timeout", "240", limit="up")
     if done.returncode:
-        raise StepError(
-            f"up --wait — код {done.returncode}: {output(done)[-500:]}; {migrate_log(run)}"
-        )
+        logs = "; ".join(service_log(run, service) for service in ("migrate", "web"))
+        raise StepError(f"up --wait — код {done.returncode}: {output(done)[-500:]}; {logs}")
     migrate, api = inspect(run, "migrate"), inspect(run, "api")
     finished, started = (
         parse_time(migrate["State"]["FinishedAt"]),
