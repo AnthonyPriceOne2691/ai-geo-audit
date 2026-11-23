@@ -16,6 +16,7 @@
 # Настройка (env):
 #   CI_WORKFLOW — имя workflow (дефолт: quality)
 #   CI_BRANCH   — ветка (дефолт: аргумент $1, иначе текущая)
+#   BASE        — база окна поставки после сдачи (дефолт: main; merge_guard даёт цель)
 #   STRICT=0    — soft (warning, exit 0)
 #
 # Нет `gh`, нет авторизации, нет ни одного прогона — WARNING и exit 0: гейт честно
@@ -49,8 +50,23 @@ fi
 # не увидел ни одного прогона, а STATUS утверждает `deployed`/`tooling`. Заявление
 # сильнее факта — это не приёмка, а её имитация.
 no_ci_evidence() { # $1 = причина, которую увидел гейт
-  local st=delivery/active/STATUS.md val
-  [[ -f "$st" ]] || return 0
+  local st=delivery/active/STATUS.md val mb p text
+  # Коммит сдачи уносит STATUS в архив, а гейт мержа идёт ПОСЛЕ сдачи: `deployed` при «нет
+  # хостинга» в момент слияния не сверял никто (`cqg@3.27`, первый проект на `cqg@3.14`). Без
+  # активного заявление — у поставки, которую архивирует дифф ветки, как её находит гейт
+  # поставки (Delivery §2.3a): STATUS архива, ДОБАВЛЕННЫЙ в окне `merge-base(BASE, ветка)..ветка`.
+  if [[ -f "$st" ]]; then text=$(cat "$st")
+  else
+    mb=$(git merge-base "${BASE:-main}" "$BRANCH" 2>/dev/null) || {
+      printf '%s⚠ ci-status: активного STATUS нет, а база окна «%s» не разрешается — заявление поставки, которую архивирует дифф, не сверено (задай BASE)%s\n' \
+        "$yellow" "${BASE:-main}" "$reset" >&2; return 0; }
+    st=""
+    while IFS= read -r p; do
+      [[ "$p" =~ ^delivery/archive/[^/]+/STATUS\.md$ ]] && { st=$p; break; }
+    done < <(git diff --name-only -z --diff-filter=A --no-renames "$mb" "$BRANCH" -- | tr '\0' '\n')
+    [[ -n "$st" ]] || return 0
+    text=$(git show "$BRANCH:$st" 2>/dev/null)
+  fi
   # ⚠ `\**` ПОСЛЕ двоеточия обязательна: в STATUS поле пишут как
   # `- **ci-oracles:** deployed`, то есть закрывающие звёздочки стоят за
   # двоеточием, а не перед ним. Без этого регулярка читала ПУСТО из штатной
@@ -60,12 +76,12 @@ no_ci_evidence() { # $1 = причина, которую увидел гейт
   # ТРЕТИЙ рецидив класса: то же чинили в `check_new_dependency.py` (`:\**`) и
   # в `delivery_check.field()`. Нашло первое живое применение гейта мержа —
   # он печатал «⚠ gh не авторизован» и следом «OK».
-  val=$(sed -n 's/^[[:space:]]*[-*]\{0,1\}[[:space:]]*\**ci-oracles\**[[:space:]]*:\**[[:space:]]*\([a-z]*\).*/\1/p' \
-        "$st" | sed -n 1p)
+  val=$(printf '%s\n' "$text" | sed -n 's/^[[:space:]]*[-*]\{0,1\}[[:space:]]*\**ci-oracles\**[[:space:]]*:\**[[:space:]]*\([a-z]*\).*/\1/p' \
+        | sed -n 1p)
   # Строки нет вовсе — это отдельный дефект, его ловит delivery_check, не этот гейт.
   [[ -n "$val" ]] || return 0
   if [[ "$val" == "weak" ]]; then
-    printf 'ci-status: `ci-oracles: weak` в STATUS соответствует факту (%s)\n' "$1"
+    printf 'ci-status: `ci-oracles: weak` в %s соответствует факту (%s)\n' "$st" "$1"
     return 0
   fi
   # Роль, ОБЪЯВЛЕННАЯ неприменимой, — законный выход, и он обязан работать
@@ -94,8 +110,8 @@ sys.stdout.write(v if isinstance(v, str) else "")' 2>/dev/null)
     printf '   ролей и печатается на каждом прогоне, а не забывается в прозе.\n'
     return 0
   fi
-  printf '%sERROR%s: в STATUS `ci-oracles: %s`, а CI не подтверждён: %s\n' \
-    "$red" "$reset" "$val" "$1" >&2
+  printf '%sERROR%s: в %s `ci-oracles: %s`, а CI не подтверждён: %s\n' \
+    "$red" "$reset" "$st" "$val" "$1" >&2
   printf 'Честное значение — `weak` плюс blocker (Delivery §10.4). Гейт не требует\n' >&2
   printf 'поднять CI: он требует, чтобы запись совпадала с наблюдением.\n' >&2
   [[ "$STRICT" == "0" ]] && { printf '%sWARNING (STRICT=0)%s\n' "$yellow" "$reset" >&2; return 0; }
@@ -154,23 +170,12 @@ if ! command -v gh >/dev/null 2>&1; then
   no_ci_evidence "нет gh" || exit 1
   exit 0
 fi
-# ⚠ Авторизация проверяется `gh auth token`, а НЕ `gh auth status`. Второй ходит
-# В СЕТЬ валидировать токен и на порванном канале выходит ненулём — гейт печатал
-# «gh не авторизован» и отправлял чинить `gh auth login` там, где авторизация в
-# порядке, а лежала сеть. Диагноз по симптому — тот же класс, что «реестр
-# недоступен» у npm. `gh auth token` читает сохранённые учётки ЛОКАЛЬНО, поэтому
-# различает «учёток нет» и «не дозвонились»: второе всплывёт ниже, на реальном
-# вызове API, и уже со своим текстом.
-#
-# Найдено полем (portfolio-site, 2026-08-07) — и это лучше первой канонной
-# правки, которая осталась на `gh auth status` и лишь разбирала текст ошибки.
-# Разбор оставлен ниже, для СЕТЕВЫХ отказов самого вызова: там причина
-# по-прежнему бывает неотличима, и тогда её называют неизвестной.
-#
-# АДАПТАЦИЯ проекта (adapted.json): проверки `gh auth token` здесь нет — она выводит токен
-# (выше — в /dev/null), а на машинах проекта токен не выводится. Вход проверяет сам вызов
-# `gh run list` ниже: его отказ — «статус CI не проверен» с причиной из stderr, выход — как у
-# ветки «нет входа» канона.
+# ⚠ Вход отдельно НЕ проверяется (`cqg@3.26`). `gh auth status` ходит в СЕТЬ и на
+# порванном канале объявлял «не авторизован» (`cqg@1.89`); сменивший его `gh auth token`
+# печатает сам токен — в /dev/null, но достаёт, а там, где токен не выводится ни в каком
+# виде, такая проверка запрещена (первый проект на `cqg@3.14`). Вход судит сам вызов ниже,
+# и «нет входа ≠ нет сети» без похода в сеть держит его КОД: без учёток `gh` отказывает до
+# запроса кодом 4 (authentication required), сетевой отказ — код 1 со своим текстом.
 
 # stderr НЕ глушим: «репозитория на хостинге нет» и «workflow ни разу не гонялся» —
 # разные состояния, и раньше оба выглядели одинаково («нет прогонов»). Для первого
@@ -178,7 +183,7 @@ fi
 # Три развёртывания споткнулись об это независимо.
 gh_err=$(mktemp); trap 'rm -f "$gh_err"' EXIT
 run=$(gh run list --workflow "$CI_WORKFLOW" --branch "$BRANCH" --limit 1 \
-        --json status,conclusion,url,headSha,displayTitle 2>"$gh_err"); gh_code=$?
+        --json status,conclusion,url,headSha,displayTitle 2>"$gh_err"); gh_rc=$?
 if [[ -s "$gh_err" ]] && grep -qiE 'no.*repositor|not a git repositor|could not resolve|base repo' "$gh_err"; then
   printf '%s⚠ ci-status: у репозитория нет хостинга с Actions — CI не существует, а не «пока нет прогонов»%s\n' \
     "$yellow" "$reset" >&2
@@ -187,8 +192,11 @@ if [[ -s "$gh_err" ]] && grep -qiE 'no.*repositor|not a git repositor|could not 
   no_ci_evidence "у репозитория нет хостинга с Actions" || exit 1
   exit 0
 fi
-if (( gh_code != 0 )); then   # АДАПТАЦИЯ: отказ вызова (нет входа, сеть) — не «нет прогонов»
-  why="gh run list — код $gh_code: $(sed -n '1p' "$gh_err")"
+# Отказ вызова — «не проверен», а не «прогонов нет»: пустой вывод отказа уходил в «ни разу
+# не гонялся» и без входа, и без сети (`cqg@3.26`).
+if (( gh_rc != 0 )); then
+  why="gh run list — код $gh_rc: $(sed -n 1p "$gh_err")"
+  (( gh_rc == 4 )) && why="нет входа в gh, $why"
   printf '%s⚠ ci-status: статус CI не проверен: %s%s\n' "$yellow" "$why" "$reset" >&2
   no_ci_evidence "$why" || exit 1
   exit 0

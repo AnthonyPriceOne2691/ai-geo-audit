@@ -20,6 +20,47 @@ if [[ -z "$killed" && -z "$survived" ]]; then
   survived=$(printf '%s\n' "$res" | grep -oE '🙁 *[0-9]+' | grep -oE '[0-9]+' | sed -n 1p)
 fi
 
+# Население — по `.meta` mutmut (`cqg@3.18`). Ключи мутантов файла он пишет туда ДО фильтра
+# по глобам: это связь «файл → ключи», не зависящая от того, как гейт выводит ключ из пути.
+# До `3.18` гейт выводил его иначе, чем mutmut (раскладка `src/`), глоб не выбирал ничего, и
+# «судить нечего» выходило нулём — зелёное без предмета. Законный ноль — `.meta` без ключей
+# (константы, только импорты); файл с ключами, из которых глоб не выбрал ни одного, и файл
+# без `.meta` (mutmut его не мутирует) — не просужены. Поле не нашлось — код 3, не «ключей нет».
+meta_keys() {
+  awk '{ t = t $0 } END {
+    i = index(t, "\"exit_code_by_key\""); if (!i) exit 3
+    t = substr(t, i + 18); t = substr(t, index(t, "{") + 1); t = substr(t, 1, index(t, "}") - 1)
+    n = split(t, kv, ",")
+    for (j = 1; j <= n; j++) if (match(kv[j], /"[^"]*"/)) print substr(kv[j], RSTART + 1, RLENGTH - 2)
+  }' "$1"
+}
+py_population() {
+  local i f meta keys key n hit files=0 mutants=0 empty=0
+  local -a lost=()
+  for (( i = 0; i < ${#mut_files[@]}; i++ )); do
+    f=${mut_files[i]}; meta="$REPO_ROOT/$MUT_CWD/mutants/${f#"$MUT_CWD"/}.meta"
+    if [[ ! -f "$meta" ]] || ! keys=$(meta_keys "$meta"); then
+      lost+=("$f — нет .meta с ключами: файл вне source_paths mutmut либо формат незнаком"); continue
+    fi
+    n=0; hit=0
+    while IFS= read -r key; do
+      [[ -n "$key" ]] || continue
+      n=$((n + 1))
+      # shellcheck disable=SC2053  # справа глоб, как его читает fnmatch mutmut
+      [[ "$key" == ${mut_globs[i]} ]] && hit=$((hit + 1))
+    done <<< "$keys"
+    if (( n == 0 )); then empty=$((empty + 1))
+    elif (( hit == 0 )); then lost+=("$f — ключей $n (первый $(sed -n 1p <<< "$keys")), глоб ${mut_globs[i]} не выбрал ни одного")
+    else files=$((files + 1)); mutants=$((mutants + hit)); fi
+  done
+  printf 'mutation: судил файлов %s из %s, мутантов %s; без мутантов %s\n' "$files" "${#mut_files[@]}" "$mutants" "$empty"
+  (( ${#lost[@]} == 0 )) && return 0
+  printf '%s⚠ mutation: изменённые файлы не просужены — мутантов, выбранных гейтом, у них нет:\n' "$yellow"
+  printf '  %s\n' "${lost[@]}"
+  printf 'Это не законный ноль. Глоб гейта — путь файла от %s без `src/`.%s\n' "$MUT_CWD" "$reset"
+  return 1
+}
+
 # Ни один источник не дал числа. Причин несколько, и они РАЗНЫЕ: ключи мутантов не
 # совпали с путями импорта, mutmut не смог запустить pytest, мутанты не покрыты,
 # mutmut упал (rc != 0), формат вывода незнаком. Каждая печатается с уликами, и ни
@@ -37,18 +78,25 @@ undecided() {
   # общая ветка «завершился с кодом N» его бы не поймала, а «мутанты не
   # сгенерированы» соврала бы про тесты.
   if grep -q 'Filtered for specific mutants, but nothing matches' "$out"; then
-    # Изменённые файлы не дали ни одного мутанта: константы, только импорты,
-    # `__all__`. Это честный «нечего судить», а НЕ «тесты плохие» и не поломка
-    # гейта — иначе исполнитель увидел бы трассировку AssertionError апстрима.
-    printf '%smutation: изменённые файлы не дали мутантов (константы? только импорты?)\n' "$yellow"
-    printf 'Область была: %s. Гейт не судит — судить нечего.%s\n' "${mut_globs[*]}" "$reset"
-    honest=1
+    # Глобы не выбрали ни одного мутанта. Честное «нечего судить» (константы, только
+    # импорты, `__all__`) — только когда и по `.meta` мутантов у изменённых файлов нет.
+    if py_population; then
+      printf '%smutation: изменённые файлы не дали мутантов (константы? только импорты?)\n' "$yellow"
+      printf 'Область была: %s. Гейт не судит — судить нечего.%s\n' "${mut_globs[*]}" "$reset"
+      honest=1
+    fi
   elif grep -q 'none match any mutant key' "$out"; then
     printf '%s⚠ mutation: путь импорта пакета не совпал с путём файла — гейт не судит\n' "$yellow"
     printf '(тесты тут ни при чём). mutmut выводит ключ мутанта ИЗ ПУТИ ФАЙЛА, и он обязан\n'
     printf 'совпасть с тем, как тесты импортируют пакет. Гейт уже запускается из `%s`,\n' "$MUT_CWD"
     printf 'то есть ждёт `import %s...`. Расхождение обычно даёт лишний `pythonpath` или\n' "$MUT_SRC"
     printf 'sys.path-инъекция в conftest. Ключи, которые не сошлись, — в выводе ниже.%s\n' "$reset"
+  elif grep -qE 'BadTestExecutionCommandsException.*::[^ ]*\[[^]]*\\(u[0-9a-f]{4}|x[0-9a-f]{2}|U[0-9a-f]{8})' "$out"; then
+    # Узел с не-ASCII в `ids` pytest печатает экранированным, и второй `pytest.main` процесса (так
+    # зовёт mutmut) его не находит — код 4, pytest 8.4–9.2: гейт не судил ничего (`cqg@3.18`).
+    printf '%s⚠ mutation: pytest не нашёл узел теста, который сам назвал, — гейт не судит (тесты тут ни при чём).\n' "$yellow"
+    printf 'Узел с не-ASCII в параметре напечатан экранированным, обратно его не выбрать. Ключ фрагмента\n'
+    printf '(CQG Приложение B): disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true%s\n' "$reset"
   elif grep -qE 'BadTestExecutionCommandsException|Failed to run pytest' "$out"; then
     printf '%s⚠ mutation: mutmut не смог ЗАПУСТИТЬ pytest — гейт не судит (тесты тут ни при чём).\n' "$yellow"
     printf 'mutmut копирует `source_paths` в `%s/mutants/` и гоняет pytest ИЗ НЕГО,\n' "$MUT_CWD"
@@ -90,6 +138,7 @@ if (( total == 0 )); then
   # «мутанты не сгенерированы» как ПОСЛЕДНЮЮ, а не как единственную.
   undecided empty
 fi
+py_population || not_judged
 
 pct=$(( killed * 100 / total ))
 printf 'mutation: убито %d из %d (%d%%), выжило %d\n' "$killed" "$total" "$pct" "$survived"

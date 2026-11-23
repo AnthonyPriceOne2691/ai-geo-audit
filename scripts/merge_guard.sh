@@ -190,16 +190,27 @@ gate_or_skip() {                 # gate_or_skip <метка> <причина|п�
   if [[ -n "$why" ]]; then
     printf '  → %s\n' "$label"
     printf '    %sПРОПУЩЕН%s: %s\n' "$yellow" "$reset" "$why"
-    skipped+=("$label")
+    skipped+=("$label — $why")
     return 0
   fi
   run_gate "$label" "$@"
 }
 
-why=""
-command -v pre-commit >/dev/null 2>&1 || why="нет pre-commit в PATH"
-[[ -n "$why" || -f .pre-commit-config.yaml ]] || why="нет .pre-commit-config.yaml"
-gate_or_skip "pre-commit (all files)" "$why" pre-commit run --all-files
+# pre-commit — из PATH или из venv проекта: адаптер GitLab (§8.3a) ставит его только в
+# `backend/.venv`. Конфиг лежит, а прогнать нечем — не пропуск, а «не просудил»: проект
+# объявил гейты коммита, и мерж без них — по пустоте (`cqg@3.27`).
+PC=$(command -v pre-commit 2>/dev/null || true)
+for cand in backend/.venv/bin/pre-commit .venv/bin/pre-commit; do
+  if [[ -z "$PC" && -x "$cand" ]]; then PC="$REPO_ROOT/$cand"; fi
+done
+if [[ ! -f .pre-commit-config.yaml ]]; then
+  gate_or_skip "pre-commit (all files)" "нет .pre-commit-config.yaml"
+elif [[ -z "$PC" ]]; then
+  printf '  → pre-commit (all files)\n    %sНЕ ПРОСУДИЛ%s: .pre-commit-config.yaml есть, а pre-commit нет ни в PATH, ни в venv проекта\n' "$red" "$reset"
+  failed+=("pre-commit (all files)")
+else
+  run_gate "pre-commit (all files)" "$PC" run --all-files
+fi
 
 why=""; [[ -f scripts/lint/check_baseline_ratchet.sh ]] || why="нет scripts/lint/check_baseline_ratchet.sh"
 gate_or_skip "baseline ratchet" "$why" env BASE="$TARGET" bash scripts/lint/check_baseline_ratchet.sh
@@ -216,26 +227,33 @@ gate_or_skip "smoke evals" "$why" bash delivery/evals/smoke/run.sh
 # ПОСЛЕДНИМ и в основном клоне, а не в worktree: всё выше гонялось локально —
 # своим Python, своим venv. Этот шаг спрашивает у CI, зелено ли оно ТАМ. Без него
 # merge_guard подтверждает лишь «на моей машине прошло» (см. §3, гейт ci-status, и §8.7).
+# Зелёный ответ гейта — только строка «ci-status: OK»; выход нулём без неё — честное «не
+# проверен» (нет gh, нет хостинга, `weak`): шаг не судился и назван в итоге (`cqg@3.27`).
+# BASE — цель: после сдачи заявление `ci-oracles` гейт берёт у архивируемой поставки.
 if [[ -f scripts/lint/check_ci_status.sh ]]; then
   printf '  → %s\n' "ci status ($SOURCE)"
-  if bash scripts/lint/check_ci_status.sh "$SOURCE"; then
+  ci_rc=0; ci_out=$(BASE="$TARGET" bash scripts/lint/check_ci_status.sh "$SOURCE" 2>&1) || ci_rc=$?
+  printf '%s\n' "$ci_out" | sed 's/^/    /'
+  if (( ci_rc != 0 )); then
+    printf '    %sFAIL%s\n' "$red" "$reset"; failed+=("ci status")
+  elif grep -q 'ci-status: OK' <<< "$ci_out"; then
     printf '    %sOK%s\n' "$green" "$reset"
   else
-    printf '    %sFAIL%s\n' "$red" "$reset"
-    failed+=("ci status")
+    printf '    %sНЕ ПРОВЕРЕН%s\n' "$yellow" "$reset"
+    skipped+=("ci status ($SOURCE) — $(tr -d '\033' <<< "$ci_out" | sed -n 's/\[[0-9;]*m//g; s/^.*ci-status: //p' | sed -n 1p)")
   fi
 else
-  printf '  → %s\n' "ci status ($SOURCE)"
-  printf '    %sПРОПУЩЕН%s: нет scripts/lint/check_ci_status.sh\n' "$yellow" "$reset"
-  skipped+=("ci status")
+  gate_or_skip "ci status ($SOURCE)" "нет scripts/lint/check_ci_status.sh"
 fi
 
-# «Зелено» без этой строки означало бы «зелено по пустоте». Пропуск не роняет
-# мерж — стенд может быть беден законно, — но и молчать о нём нельзя: цена
-# решения видна тому, кто мержит, а не тому, кто потом ищет причину.
+# Пропуск не роняет мерж — стенд может быть беден законно, — но ИТОГОВАЯ строка называет,
+# что не судилось и почему, и «всё зелено» тогда не печатает (`cqg@3.27`): оговорку строкой
+# выше читали не все — первый проект на `cqg@3.14` видел «всё зелено» без pre-commit и smoke.
+verdict="всё зелено"; col=$green
 if (( ${#skipped[@]} )); then
-  printf '\n%s⚠ merge_guard: ПРОПУЩЕНО гейтов: %s%s\n' "$yellow" "${skipped[*]}" "$reset"
-  printf '  «зелено» ниже относится только к прогнанным (§8.5.2).\n'
+  unjudged=$(printf '%s; ' "${skipped[@]}"); unjudged=${unjudged%; }
+  printf '\n%s⚠ merge_guard: ПРОПУЩЕНО гейтов: %s%s\n' "$yellow" "$unjudged" "$reset"
+  verdict="зелено только по прогнанным, не судились: $unjudged"; col=$yellow
 fi
 
 if (( ${#failed[@]} )); then
@@ -245,7 +263,7 @@ if (( ${#failed[@]} )); then
 fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  printf '\n%smerge_guard: всё зелено (DRY_RUN=1, мерж не выполнен)%s\n' "$green" "$reset"
+  printf '\n%smerge_guard: %s (DRY_RUN=1, мерж не выполнен)%s\n' "$col" "$verdict" "$reset"
   exit 0
 fi
 
@@ -264,5 +282,6 @@ case "$MERGE_MODE" in
     ;;
   *) die "неизвестный MERGE_MODE='$MERGE_MODE' (squash|no-ff)" ;;
 esac
-printf '\n%smerge_guard: %s слит в %s (%s) после зелёных гейтов%s\n' \
-  "$green" "$SOURCE" "$TARGET" "$MERGE_MODE" "$reset"
+[[ "$verdict" == "всё зелено" ]] && verdict="после зелёных гейтов" || verdict="— $verdict"
+printf '\n%smerge_guard: %s слит в %s (%s) %s%s\n' \
+  "$col" "$SOURCE" "$TARGET" "$MERGE_MODE" "$verdict" "$reset"

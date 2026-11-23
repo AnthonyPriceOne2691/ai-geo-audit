@@ -227,7 +227,13 @@ class ProbeChecks:
                 self.add(DEAD, point,
                          f"инструмента НЕТ, а гейт заявляет успех: {out.strip()[:70]!r}")
             elif named:
-                self.add(WEAK, point, out.strip().splitlines()[0][:78])
+                # Ловит ли гейт с инструментом, проба не видит по построению: это SKIP
+                # доктора, а не WEAK проекта (`cqg@3.22`). WEAK стоял у каждого гейта на
+                # внешнем инструменте, и с инструментом в `backend/.venv`, а у адаптированного
+                # шёл второй строкой. Есть ли инструмент — строка «инструмент …».
+                self.add(SKIP, point, f"пропуск назван; ловит ли гейт с {tool}, проба не "
+                                      f"видит — своя канарейка ({OWN_CANARIES}) пробуется в "
+                                      f"дереве окружением хука: {out.strip().splitlines()[0][:50]}")
             elif code != 0:
                 self.add(AUTO, point, "инструмента нет → гейт краснеет, а не молчит")
             else:
@@ -254,6 +260,10 @@ class ProbeChecks:
         Цена: доктор пишет файл в рабочее дерево. Поэтому — отказ, если файл уже
         есть (чужое не трогаем), и удаление в `finally` вместе с каталогами,
         которые создали сами. Коммитить канарейку НЕЛЬЗЯ: индекс проекта не наш.
+
+        Окружение — хука, `LINT_*` из `entry:` (`cqg@3.22`): без них гейт смотрел в дефолт
+        (`backend/features`), и канарейка под настроенным корнем шла мимо — выход из пробы
+        без инструмента был закрыт там, где §6 велит настраивать гейт.
         """
         point = f"канарейка {script.name}" + (f":{rule}" if rule else "") + " (своя)"
         target = self.root / path
@@ -261,7 +271,7 @@ class ProbeChecks:
 
         clean = target.exists()
         (before_code, before_out), (after_code, after_out) = self._run_with_canary(
-            cmd, target, content)
+            cmd, target, content, self.hook_env_of(script.name))
         # Красный без канарейки — «судить нечем», но не у входа без части: тот не
         # стартовал, и это `DEAD` с её именем, а не непокрытость доктора (`cqg@2.79`).
         if self._did_not_start(script, point, before_out):
@@ -290,7 +300,7 @@ class ProbeChecks:
             self.add(DEAD, point, "МОЛЧИТ на объявленной канарейке (exit 0): "
                                   f"{after_out.strip()[:60]!r}")
 
-    def _run_with_canary(self, cmd: list[str], target: Path, content: str):
+    def _run_with_canary(self, cmd: list[str], target: Path, content: str, env: dict):
         """Два прогона гейта — БЕЗ канарейки и С ней — и дерево, как было.
 
         Шов по данным: наружу блок отдаёт ровно две пары «код, вывод»; `backup`
@@ -311,10 +321,10 @@ class ProbeChecks:
             made.append(d)
             d = d.parent
         try:
-            before = run(cmd, self.root)
+            before = run(cmd, self.root, env)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            after = run(cmd, self.root)
+            after = run(cmd, self.root, env)
         finally:
             if backup is None:
                 if target.exists():

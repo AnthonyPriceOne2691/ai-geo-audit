@@ -47,7 +47,9 @@ fi
 # границы файлов и ханков: метка на неизменной строке `def test…` не засчитывалась,
 # а утверждение, дописанное в чужой непомеченный тест, наследовало метку блока,
 # добавленного выше, — то есть `n/a` над ожиданием, которого никто не подписывал.
-read -r -a TEST_GLOBS <<< "${LINT_TEST_GLOB:-*test*.py *test*.ts *test*.tsx *_test.go *Tests.swift *Test.swift}"
+# JS — вся родня, которую разбор узнаёт по расширению (`js` ниже, `cqg@3.29`): тест
+# `*.test.mjs` уходил в «не разбирал» (первый проект на `cqg@3.14`).
+read -r -a TEST_GLOBS <<< "${LINT_TEST_GLOB:-*test*.py *test*.ts *test*.tsx *test*.mts *test*.cts *test*.js *test*.jsx *test*.mjs *test*.cjs *_test.go *Tests.swift *Test.swift}"
 diff_text=$(git diff --no-color --no-ext-diff --unified=1000000 "$BASE"...HEAD \
   -- "${TEST_GLOBS[@]}" 2>/dev/null)
 
@@ -151,7 +153,7 @@ marker() {
 # «утверждений нет» и 0. Упавший разбор — `unknown` (ниже).
 classified=$(printf '%s\n' "$diff_text" | LC_ALL=C awk -v ids="$spec_ids" -v have_spec="$([[ -f "$SPEC" ]] && echo 1)" '
   BEGIN {
-    Q = "\"\047`"
+    Q = "\"\047`"; REQ = "(^|[^a-zA-Z_.])require[ \t]*[(]?[ \t]*[" Q "]"
     n = split(ids, a, " "); for (i = 1; i <= n; i++) known[a[i]] = 1
   }
   # Первая ссылка строки на пример; без спеки — первый кандидат с пометкой «?».
@@ -210,7 +212,10 @@ classified=$(printf '%s\n' "$diff_text" | LC_ALL=C awk -v ids="$spec_ids" -v hav
     if (blank) { pend = ""; pind = -1 }
     else if (com || deco) { if (pind < 0) pind = d }
     else if (stmt && (pind < 0 || d <= pind)) { pend = ""; pind = -1 }
-    if (added && line ~ /(^|[^a-zA-Z_])(assert[a-zA-Z_]*|XCTAssert[a-zA-Z]*|XCTFail|expect|require|should)[ (]/) {
+    # Утверждение — и метод объекта-утверждения (`assert.equal(` у node:assert, chai,
+    # testify); подключение модуля — нет: `import … assert …`, `require("…")` (`cqg@3.29`).
+    imp = (s ~ /^(import|from)[ \t]/ || line ~ REQ)
+    if (added && !imp && line ~ /(^|[^a-zA-Z_])(assert[a-zA-Z_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*|XCTAssert[a-zA-Z]*|XCTFail|expect|require|should)[ (]/) {
       lab = (t >= 0) ? cur : olab
       sub(/^[ \t]+/, "", line)
       printf "%s\t%s\n", (lab == "" ? "-" : lab), line
@@ -301,6 +306,7 @@ else
   echo
   echo "Читать нужно **только строки с \`-\` в первой колонке**: их ожидание"
   echo "ничем не подписано. Подпись: \`asserts_reviewed_by: human:… at=…\`."
+  echo "Старый тест, чьё ожидание поменял пример этой спеки, называет в метке и номер нового — прежний к ней не привязывает."
 fi
 echo
 # Машинно-читаемый маркер: по нему delivery_check решает, заслужен ли `n/a`
