@@ -373,3 +373,33 @@ jobs:
         run: |
           d=$(python3 -c "import tempfile; print(tempfile.gettempdir())")
           for f in "$d"/a283-*/results.log; do echo "== $f"; cat "$f"; done
+
+  # «Оракул стека в CI» (A76): собранный образ делает продукт. Оракул Ч1.5а строит стек из чистой
+  # копии `git archive HEAD` и гоняет шаги примеров; итог джобы — итог оракула. Docker и Python —
+  # с раннера, пакеты не ставятся: оракул — стандартная библиотека. Время — по первому прогону.
+  stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+      - name: Оракул стека (A60–A67, A69, A73)
+        run: python3 scripts/stack_oracle.py
+
+  # Скан образа (A124–A129): Trivy 0.76.2 файлом выпуска по сумме, канарейка, скан файла образа
+  # `docker save` — сокета Docker сканер не получает, опись CycloneDX того же файла. Права —
+  # сверху, только чтение (A129; свой блок джобе запрещает тест контракта, A100).
+  image-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+      - name: Trivy 0.76.2 файлом выпуска (A124)
+        run: python3 scripts/image_scan.py install --dir "$RUNNER_TEMP/trivy"
+      - name: Канарейка и скан образов (A125, A126, A128)
+        run: python3 scripts/image_scan.py run --work "$RUNNER_TEMP/scan" --trivy "$RUNNER_TEMP/trivy/trivy"
+      - name: Опись CycloneDX (A127)
+        run: python3 scripts/image_scan.py sbom --work "$RUNNER_TEMP/scan" --trivy "$RUNNER_TEMP/trivy/trivy"
