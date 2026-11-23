@@ -149,6 +149,9 @@ esac
 """
 #: Дифф: `__init__.py` пакета с модулем и модулем подпакета, и два модуля без изменённого пакета.
 PACKAGE = ("pkg/__init__.py", "pkg/m.py", "pkg/sub/n.py", "other/a.py", "other/b.py")
+#: Тот же дифф и изменённый `__init__.py` подпакета: маски `pkg.*` и `pkg.sub.*` выбирают одни
+#: порчи подпакета.
+NESTED = (*PACKAGE, "pkg/sub/__init__.py")
 #: Порчи по правилу имён mutmut 3.8.1: модуль, затем `x_функция__mutmut_N`; у `pkg/__init__.py`
 #: модуль — `pkg`.
 NAMES = (
@@ -163,13 +166,17 @@ NAMES = (
 )
 
 
-def test_a289_package_init_and_its_modules_share_a_shard(tmp_path: Path) -> None:
-    """A289, находка проверяющей 2026-11-23T12:16Z: маска `пакет/__init__.py` — `пакет.*` (канон)
-    — выбирает и порчи модулей пакета; файлы под изменённым `__init__.py` идут в его долю, иначе
-    одну порчу выбрали бы две доли и сумма сочла бы её дважды. Маски — из настоящего гейта, выбор —
-    `fnmatch`, как у mutmut: каждую порчу выбирает не больше одной доли, а все доли вместе — то же,
-    что одна машина."""
-    root = make_repo(tmp_path / "repo", PACKAGE)
+@pytest.mark.parametrize("diff", [PACKAGE, NESTED], ids=["package", "nested"])
+def test_a289_package_init_and_its_modules_share_a_shard(
+    tmp_path: Path, diff: tuple[str, ...]
+) -> None:
+    """A289, находки проверяющей 2026-11-23T12:16Z и 12:50Z (порча G2): маска `пакет/__init__.py`
+    — `пакет.*` (канон) — выбирает и порчи модулей пакета и его подпакетов; файлы под изменённым
+    `__init__.py` идут в долю самого верхнего изменённого пакета — и `__init__.py` подпакета тоже,
+    иначе одну порчу выбрали бы две доли и сумма сочла бы её дважды. Маски — из настоящего гейта,
+    выбор — `fnmatch`, как у mutmut: каждую порчу выбирает не больше одной доли, а все доли вместе
+    — то же, что одна машина."""
+    root = make_repo(tmp_path / "repo", diff)
     fake = root / "backend" / ".venv" / "bin" / "mutmut"
     fake.parent.mkdir(parents=True)
     fake.write_text(FAKE_MUTMUT, encoding="utf-8")
@@ -201,16 +208,21 @@ def block(start: str, part: str = "mutation_verdict.sh") -> str:
 def test_a289_python_shard_counts_after_its_recheck_and_skips_the_threshold(
     tmp_path: Path, shard: str
 ) -> None:
-    """A289: доля python порог не судит — самопроверка, счёт «убито всего» в файл доли и выход нулём
-    даже при 10 % убитых; вне долей ветка не срабатывает и счёта не пишет."""
+    """A289, находка проверяющей 2026-11-23T12:50Z (порча G11): доля python порог не судит —
+    самопроверка, счёт «убито всего» в файл доли и выход нулём даже при 10 % убитых, до порога
+    (здесь — строка «порог» после ветки) не доходит; вне долей ветка не срабатывает и счёта не
+    пишет."""
     head = f'. "{LINT / "mutation_shard.sh"}"; py_recheck() {{ echo "самопроверка"; }}\n'
     head += f'MUTATION_COUNTS_DIR="{tmp_path}"; MUTATION_SHARD="{shard}"; killed=1; total=10\n'
     code = head + block('if [[ -n "${MUTATION_SHARD:-}" ]]; then\n  py_recheck') + "echo порог\n"
     done = bash(code)
     counts = sorted(path.read_text(encoding="utf-8") for path in tmp_path.glob("*.counts"))
     if shard:
-        said = "самопроверка\nmutation: доля 2/4 — убито 1 из 10; порог судит сумма долей"
-        assert (done.returncode, said in done.stdout, counts) == (0, True, ["1 10\n"])
+        said = [
+            "самопроверка",
+            "mutation: доля 2/4 — убито 1 из 10; порог судит сумма долей (MUTATION_SUM)",
+        ]
+        assert (done.returncode, done.stdout.splitlines(), counts) == (0, said, ["1 10\n"])
     else:
         assert (done.stdout, counts) == ("порог\n", [])
 

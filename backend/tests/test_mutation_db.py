@@ -164,6 +164,31 @@ async def test_a283_two_copies_do_not_see_each_others_rows(tmp_path: Path) -> No
     assert (mine, theirs) == (1, 0)
 
 
+async def test_a281_a286_killed_pid_copy_gives_way_to_a_fresh_one(tmp_path: Path) -> None:
+    """A281, A286, находка проверяющей 2026-11-23T12:50Z (порча M8): копия ребёнка, убитого до
+    сноса, ждёт уборки; новый ребёнок с тем же pid получает свежую копию шаблона под тем же
+    именем — прежняя снесена клоном, строки убитого в ней нет, метка — имя шаблона. Без сноса клон
+    упал бы на занятом имени, и порчу пометил бы ложный сбой копии вместо суда."""
+    template = await mutation_db.build_template(tmp_path)
+    killed = await mutation_db.clone(tmp_path, pid=101)
+    try:
+        conn = await connect(killed)
+        try:
+            await conn.execute("INSERT INTO probe.probe (key) VALUES ('a286-killed-pid')")
+        finally:
+            await conn.close()
+        again = await mutation_db.clone(tmp_path, pid=101)
+        conn = await connect(again)
+        try:
+            rows = await conn.fetchval("SELECT count(*) FROM probe.probe")
+        finally:
+            await conn.close()
+        label = (await labels())[again]
+    finally:
+        await mutation_db.sweep(tmp_path)
+    assert (again, rows, label) == (killed, 0, template)
+
+
 async def test_a284_template_stays_as_built_whatever_a_copy_does(tmp_path: Path) -> None:
     """A284: копия сносит таблицу проб и правит ревизию alembic — у шаблона после сноса копии та же
     ревизия и тот же состав таблиц."""
