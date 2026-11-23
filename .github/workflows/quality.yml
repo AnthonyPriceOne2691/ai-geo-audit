@@ -349,3 +349,27 @@ jobs:
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
+
+      # Проба A283 «Скорости CI», только в ветке-пробе: итог каждой сессии порчи с соседом в 4
+      # потока (шаг выше), затем копия — тот же гейт в 1 поток, где соседа нет.
+      - name: Probe A283 — neighbour sessions, 4 workers
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          d=$(python3 -c "import tempfile; print(tempfile.gettempdir())")
+          for f in "$d"/a283-*/results.log; do echo "== $f"; cat "$f"; done
+          rm -rf "$d"/a283-*
+
+      - name: Probe A283 — control, mutation gate, 1 worker
+        if: always() && github.event_name == 'pull_request'
+        env:
+          LINT_PY_SRC: backend/src
+          MUTATION_WORKERS: "1"
+          MIN_KILLED: "60"
+          BUDGET_SEC: "1200"
+        run: bash scripts/lint/check_mutation_gate.sh
+
+      - name: Probe A283 — neighbour sessions, 1 worker
+        if: always() && github.event_name == 'pull_request'
+        run: |
+          d=$(python3 -c "import tempfile; print(tempfile.gettempdir())")
+          for f in "$d"/a283-*/results.log; do echo "== $f"; cat "$f"; done
