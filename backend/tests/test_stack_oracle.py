@@ -177,9 +177,9 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
-#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84.
+#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87.
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
-STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84"}
+STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -191,10 +191,10 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_a87() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
-    A80, A81, A82, A83 и A84."""
+    A80, A81, A82, A83, A84, A86 и A87."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -291,6 +291,25 @@ def test_a82_slot_reads_docker_nets_once_and_skips_a_candidate_in_one(taken: boo
     assert [call[:2] for call in docker.calls] == expected
     assert got == compose.web_slot(name, compose.busy_on(docker.subnets))
     assert not taken or (docker.calls[1][-1] == "net0" and got[1] != first[1])
+
+
+@pytest.mark.parametrize("subnet", ["172.16.0.0/28", "172.16.15.240/28"])
+def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet: str) -> None:
+    """A83, первая строка: адрес web — последний адрес узла подсети front прогона, не шлюз и не
+    широковещательный; он же — `WEB_ADDRESS` окружения compose, то есть доверенный прокси api."""
+    net = ipaddress.ip_network(subnet)
+    address = compose.web_address(subnet)
+    assert ipaddress.ip_address(address) == net.broadcast_address - 1
+    run = SimpleNamespace(
+        name="ai-geo-audit-oracle-0123456789",
+        facts={"slot": (18100, subnet)},
+        image="backend:oracle",
+        password="p",
+        jwt="j",
+        copy=Path("/work/copy"),
+    )
+    env = compose.stack_env(run)
+    assert (env["FRONT_SUBNET"], env["WEB_ADDRESS"]) == (subnet, address)
 
 
 class Clean(oracle.Docker):
