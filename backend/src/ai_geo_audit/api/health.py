@@ -94,3 +94,6 @@ class _Cut:
             driver = sync.connection.driver_connection
             if driver is not None:
                 driver.terminate()
+
+
+# проба шага статистики mutmut после правки корня тестов выката — ветка не сливается
