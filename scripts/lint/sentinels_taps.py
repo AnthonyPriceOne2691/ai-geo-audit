@@ -3,6 +3,8 @@
 Часть `run_sentinels.py` — разрезан по планке 300 строк (Delivery §9.1a п.5). Здесь
 вопрос «что тест отправил в код и что код записал»: метки, перехват логгера, запросов
 теста, кадров WebSocket и пула. Вердикты и итог остались во входном модуле.
+Всё, что касается чужого (значение лога, тело, кадр, API библиотеки), — под `guarded`:
+сбой стража — его отказ словами, а не исключение в коде под тестом (`cqg@3.24`).
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 
 #: Секретное имя переменной — по ЧАСТИ имени, а не списком имён.
 SECRET_NAME = re.compile(r"(?:^|_)(?:SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIALS?|"
@@ -33,9 +36,14 @@ class Watch:
         self.taken: dict[int, str] = {}     # id записи пула → тест, взявший её
         self.local_urls: set[str] = set()   # запросы теста к приложению
         self.leaks: list[str] = []
-        self.seen = self.text_tests = self.pool = self.lost = 0
+        self.faults: list[tuple[str, str]] = []  # (тест или "" вне теста, «где — Тип: текст»)
+        self.seen = self.text_tests = self.pool = self.lost = self.streams = self.refused = 0
         self.phase = self.nodeid = ""
         self._re: re.Pattern | None = None
+
+    def record_fault(self, where: str, exc: Exception) -> None:
+        """Сбой самого стража — отказ у текущего теста, вне теста — у прогона."""
+        self.faults.append((self.nodeid, f"{where} — {type(exc).__name__}: {as_text(exc)}"))
 
     def mark(self, value: str, source: str) -> None:
         if value and value not in self.marks:
@@ -52,6 +60,29 @@ class Watch:
 
 
 WATCH = Watch()
+
+
+def as_text(value) -> str:
+    """Значение записи текстом; не печатается — заглушка с именем типа. Поле с падающим
+    `__str__` логгер переживает, а `str()` стража ронял им весь прогон (INTERNALERROR)."""
+    try:
+        return str(value)
+    except Exception:  # silent-ok: заглушка вместо значения — запись судится дальше
+        return f"<{type(value).__name__}: не печатается>"
+
+
+def guarded(where: str):
+    """Сбой стража на чужом входе — запись для отказа, а не исключение в коде под тестом
+    (тест краснел бы чужим диагнозом) и не обрыв прогона."""
+    def wrap(fn):
+        def run(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                WATCH.record_fault(where, exc)
+                return None
+        return run
+    return wrap
 
 
 def watch_secrets() -> None:
@@ -86,6 +117,7 @@ def mark_text(values: list[str], body) -> None:
             WATCH.mark(v[:PREFIX], "текст из запроса теста")
 
 
+@guarded("установка перехвата httpx")
 def wrap_httpx() -> None:
     """Запрос ТЕСТА к приложению: транспорт внутри процесса (ASGI/WSGI/TestClient).
     Исходящие запросы самого приложения к внешним API сюда не попадают."""
@@ -96,13 +128,16 @@ def wrap_httpx() -> None:
     local = ("ASGITransport", "WSGITransport", "_TestClientTransport")
     sync_send, async_send = httpx.Client.send, httpx.AsyncClient.send
 
+    @guarded("перехват httpx")
     def mark(client, request) -> None:
-        if type(getattr(client, "_transport", None)).__name__ in local:
-            WATCH.local_urls.add(str(request.url))
-            # Потоковое тело не читаем: `content` у него бросает RequestNotRead,
-            # а чтение съело бы поток до транспорта.
-            body = request.content if isinstance(request.stream, httpx.ByteStream) else b""
-            mark_text([v for _, v in request.url.params.multi_items()], body)
+        if type(getattr(client, "_transport", None)).__name__ not in local:
+            return
+        WATCH.local_urls.add(str(request.url))
+        try:
+            body = request.content
+        except httpx.RequestNotRead:    # тело потоком (генератор, multipart): чтение съело
+            body, WATCH.streams = None, WATCH.streams + 1   # бы его до приложения — итог скажет
+        mark_text([v for _, v in request.url.params.multi_items()], body)
 
     def send(self, request, **kw):
         mark(self, request)
@@ -115,6 +150,7 @@ def wrap_httpx() -> None:
     httpx.Client.send, httpx.AsyncClient.send = send, asend
 
 
+@guarded("установка перехвата WebSocket")
 def wrap_websocket() -> None:
     """Кадр WebSocket, отправленный ТЕСТОМ (`send_text`/`send_json` идут через `send`).
 
@@ -122,16 +158,19 @@ def wrap_websocket() -> None:
     бросает DeprecationWarning («install httpx2»), и плагин шумел бы в каждом проекте,
     а при `-W error` ронял бы прогон (замер в CI канона, `cqg@2.74`). Оборачивается то,
     что загрузил сам проект, — зовётся на старте каждого теста, патчит один раз."""
-    import sys
     module = sys.modules.get("starlette.testclient")
     session = getattr(module, "WebSocketTestSession", None)
     if session is None or getattr(session.send, "contour_tap", False):
         return
     orig = session.send
 
-    def send(self, message):
+    @guarded("перехват WebSocket")
+    def note(message) -> None:
         if isinstance(message, dict):
             mark_text([], message.get("text"))
+
+    def send(self, message):
+        note(message)
         return orig(self, message)
 
     send.contour_tap = True
@@ -151,13 +190,7 @@ LOG_METHODS = ("debug", "info", "warning", "warn", "error", "exception", "critic
 _WRAPPER = """
 def method(self, *args, **kwargs):
     if getattr(depth, "n", 0) == 0:
-        exc = sys.exc_info()[1] if name == "exception" or kwargs.get("exc_info") else None
-        who = self.logger.name if isinstance(self, LoggerAdapter) else self.name
-        extra = kwargs.get("extra")
-        if isinstance(extra, dict):
-            extra = {key: printable(value) for key, value in extra.items()}
-        exc = None if exc is None else printable(exc)
-        WATCH.records.append((who, name, tuple(printable(a) for a in args), extra, exc))
+        note(self, name, args, kwargs)
     depth.n = getattr(depth, "n", 0) + 1
     try:
         return orig(self, *args, **kwargs)
@@ -166,35 +199,32 @@ def method(self, *args, **kwargs):
 """
 
 
-def printable(value: object) -> object:
-    """АДАПТАЦИЯ проекта (adapted.json): значение записи для стража — печатается — как есть, нет —
-    заглушка с именем типа. Страж превращает аргументы, `extra` и исключение в текст, и поле,
-    чей `__str__` падает, роняло весь прогон (INTERNALERROR, тест A48 Ч1.3б)."""
-    try:
-        str(value)
-    except Exception:  # noqa: BLE001 -- любой отказ печати — повод для заглушки, а не падения
-        return f"<{type(value).__name__}: не печатается>"
-    return value
+@guarded("перехват лога")
+def note_record(logger, name: str, args: tuple, kwargs: dict) -> None:
+    """Запись для стража: кто, каким методом, с чем. Кадр закрыт до вызова логгера."""
+    exc = sys.exc_info()[1] if name == "exception" or kwargs.get("exc_info") else None
+    who = logger.logger.name if isinstance(logger, logging.LoggerAdapter) else logger.name
+    WATCH.records.append((who, name, args, kwargs.get("extra"), exc))
 
 
+@guarded("установка перехвата лога")
 def wrap_logging() -> None:
     """Вызов метода логгера — запись для стража; поведение логгера не меняется.
     Хендлеры приложение вправе снести (`basicConfig(force=True)`) — страж не на них.
     Считается внешний вызов: `exception` зовёт `error`, адаптер — логгер."""
-    import sys
     import threading
     code = compile(_WRAPPER, logging.addLevelName.__code__.co_filename, "exec")
     depth = threading.local()
     for cls in (logging.Logger, logging.LoggerAdapter):
         for name in LOG_METHODS:
             if hasattr(cls, name):          # `fatal`/`warn` есть не у всех и не везде
-                ns = {"WATCH": WATCH, "depth": depth, "sys": sys, "name": name,
-                      "orig": getattr(cls, name), "LoggerAdapter": logging.LoggerAdapter,
-                      "printable": printable}
+                ns = {"depth": depth, "name": name, "orig": getattr(cls, name),
+                      "note": note_record}
                 exec(code, ns)  # noqa: S102 -- тело — константа выше, не внешний ввод
                 setattr(cls, name, ns["method"])
 
 
+@guarded("установка перехвата пула")
 def watch_pool() -> None:
     try:
         from sqlalchemy import event
@@ -202,11 +232,13 @@ def watch_pool() -> None:
     except ImportError:  # silent-ok: нет SQLAlchemy — пула нет, итог это скажет
         return
 
+    @guarded("перехват пула")
     def checkout(_dbapi, rec, _proxy) -> None:
         if WATCH.phase == "call":
             WATCH.taken[id(rec)] = WATCH.nodeid
             WATCH.pool += 1
 
+    @guarded("перехват пула")
     def checkin(_dbapi, rec) -> None:
         WATCH.taken.pop(id(rec), None)
 

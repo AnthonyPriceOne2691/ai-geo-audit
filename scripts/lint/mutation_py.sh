@@ -156,11 +156,15 @@ out=$(mktemp); trap 'rm -f "$out"' EXIT
 # считая по всему пакету, гейт судил бы автора диффа за легаси-модуль, который он не
 # трогал, — то есть был бы красным навсегда на любом проекте с непокрытым старым
 # кодом. Ровно тот провал, который у гейта сложности лечили снимком-ратчетом.
-mut_globs=()
+# Приставку `src.` у ключа mutmut срезает сам (`get_mutant_name`, 3.7–3.8.1): на раскладке
+# `src/` глоб `src.pkg.calc.*` не выбирал ничего, и гейт выходил нулём (`cqg@3.18`).
+# Глоб и файл — парами: по ним `py_population` сверяет население с `.meta` mutmut.
+mut_globs=(); mut_files=()
 while IFS= read -r f; do
   [[ -n "$f" ]] || continue
+  mut_files+=("$f")
   rel=${f#"$MUT_CWD"/}                 # backend/app/calc.py → app/calc.py
-  rel=${rel#src/}
+  rel=${rel#src/}                      # backend/src/pkg/calc.py → pkg/calc.py
   rel=${rel%.py}
   rel=${rel%/__init__}                 # пакетный __init__ = сам пакет
   mut_globs+=("${rel//\//.}.*")        # app/calc → app.calc.*

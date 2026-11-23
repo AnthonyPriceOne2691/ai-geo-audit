@@ -64,7 +64,7 @@ precommit_lines() {
 
 unwired=()
 unwired_rules=()
-exempted=0
+exempted=0; rules_na=0; na_seen=""   # скрипты и правила — счёт раздельный (`cqg@3.16`)
 rules_checked=0
 
 # Подключено то, что ИСПОЛНЯЕТСЯ (`cqg@2.77`): строки мест принуждения вне
@@ -112,7 +112,7 @@ for path in "${gates[@]}"; do
   # Роль неприменима НА ЭТОМ СТЕКЕ — объявлено проектом, причина печатается.
   if reason=$(na_reason "$base"); then
     printf '  ○ %-30s n/a на этом стеке: %s\n' "$base" "$reason"
-    exempted=$((exempted + 1))
+    exempted=$((exempted + 1)); na_seen+="$base"$'\n'
     continue
   fi
   # Сначала ФАКТ подключения, потом причина (`cqg@2.77`, F3): у подключённого
@@ -161,7 +161,7 @@ for path in "${gates[@]}"; do
       # иначе «выключить одно» неотличимо от «выключить весь скрипт».
       if reason=$(na_reason "$base:$rule"); then
         printf '  ○ %-30s n/a на этом стеке: %s\n' "$base --rule $rule" "$reason"
-        exempted=$((exempted + 1))
+        rules_na=$((rules_na + 1)); na_seen+="$base:$rule"$'\n'
         continue
       fi
       rules_checked=$((rules_checked + 1))
@@ -173,6 +173,7 @@ for path in "${gates[@]}"; do
     done < <(printf '%s\n' "$rules")
   fi
 done
+na_print_rest "$na_seen"   # половины, файлы и прочие ключи — с причиной, своим счётом
 
 # --- Незаполненный шаблон в КОНФИГЕ контура ---------------------------------
 # Для полей STATUS канон это проверяет (`is_placeholder` в delivery_check), а для
@@ -250,9 +251,10 @@ done
 # и документированный soft-режим до этой ветки не доходил (lab-11 F5).
 
 if (( ${#unwired[@]} == 0 && ${#missing[@]} == 0 && ${#unwired_rules[@]} == 0 && ${#placeholders[@]} == 0 )); then
-  printf '%sgate-coverage: OK%s — %d скрипт(ов), подключено %d, осознанно нет %d; правил сверено %d (%d конфиг(ов))\n' \
+  # Объявленное правило — не скрипт: до `3.16` оно вычиталось из подключённых скриптов.
+  printf '%sgate-coverage: OK%s — %d скрипт(ов), подключено %d, осознанно нет %d; правил сверено %d, n/a %d; прочих объявлений n/a %d (%d конфиг(ов))\n' \
     "$green" "$reset" "${#gates[@]}" "$(( ${#gates[@]} - exempted ))" "$exempted" \
-    "$rules_checked" "${#CONFIGS[@]}"
+    "$rules_checked" "$rules_na" "$na_other" "${#CONFIGS[@]}"
   exit 0
 fi
 

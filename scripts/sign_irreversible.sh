@@ -29,8 +29,8 @@
 #
 #   --watch    для наблюдателя: молчит, если сверка зелёная или про этот
 #              же текст уже спрашивали недавно
-#   --install  поставить наблюдателя (launchd). Ставит ЧЕЛОВЕК: постоянный
-#              агент, который будет просить его палец, заводится с его ведома
+#   --install  поставить наблюдателя этого дерева (launchd). Ставит ЧЕЛОВЕК:
+#              постоянный агент, который будет просить его палец, заводится с его ведома
 #   --dry      напечатать, что было бы в окне, и никого не спрашивать
 set -uo pipefail
 
@@ -44,7 +44,11 @@ SIGNED="$REPO/delivery/active/irreversible.signed.txt"
 SIGNERS="$REPO/.github/allowed_signers"
 CHECK="$REPO/scripts/check_irreversible_signature.sh"
 NS="irreversible"
-LABEL="contour.irreversible-watch"
+# Наблюдатель — один на дерево, имя от его пути: под прежним общим `--install` снимал
+# наблюдателя соседнего проекта, а `watcher_installed` отвечал «стоит» про чужого.
+OLD_LABEL="contour.irreversible-watch"
+LABEL="$OLD_LABEL.$(cd "$REPO" && pwd -P | shasum | cut -c1-12)"
+AGENTS_DIR="$HOME/Library/LaunchAgents"
 # Путь к сокету агента берётся у приложения ключа и подставляется
 # переменной: искать его `find`'ом по `~/Library/Containers` нельзя —
 # macOS отвечает `Operation not permitted` и находит ноль (§3.4a②).
@@ -168,8 +172,9 @@ install_watcher() {
     echo "эффект даёт вызов '--watch' из хука или таймера системы." >&2
     exit 1
   fi
-  local plist="$HOME/Library/LaunchAgents/$LABEL.plist"
-  mkdir -p "$HOME/Library/LaunchAgents"
+  local plist="$AGENTS_DIR/$LABEL.plist"
+  mkdir -p "$AGENTS_DIR"
+  retire_old_name
   cat > "$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -205,6 +210,23 @@ PLIST
   exit 0
 }
 
+old_name_is_ours() {  # свой под прежним общим именем узнаётся по программе, а не по имени
+  grep -qF "<string>$REPO/scripts/sign_irreversible.sh</string>" \
+    "$AGENTS_DIR/$OLD_LABEL.plist" 2>/dev/null
+}
+
+retire_old_name() {
+  # Свой под прежним именем снимается — иначе окон станет два; чужой не трогается.
+  [ -f "$AGENTS_DIR/$OLD_LABEL.plist" ] || return 0
+  if old_name_is_ours; then
+    launchctl bootout "gui/$(id -u)/$OLD_LABEL" 2>/dev/null
+    rm -f "$AGENTS_DIR/$OLD_LABEL.plist"
+    echo "Снят наблюдатель этого дерева под прежним общим именем $OLD_LABEL."
+  else
+    echo "Под прежним общим именем $OLD_LABEL стоит наблюдатель другого дерева — не трогаю."
+  fi
+}
+
 notify() {
   osascript -e "display notification \"$1\" with title \"Подпись необратимого\"" >/dev/null 2>&1
 }
@@ -221,10 +243,20 @@ offer_install() {
   watcher_installed && return 0
   [ "$MODE" = "--watch" ] && return 0
   echo
-  echo "Окно приходит само, если поставить наблюдателя (один раз на машину):"
+  if old_name_is_ours; then
+    echo "Наблюдатель этого дерева стоит под прежним общим именем $OLD_LABEL — перепоставь под своим:"
+  else
+    echo "Окно приходит само, если поставить наблюдателя (один раз на дерево):"
+  fi
   echo "  bash $REPO/scripts/sign_irreversible.sh --install"
 }
 
+# Пара двух входов, не комплект: сверку зовёт и CI. Без неё «нет файла» читался бы
+# красным вердиктом, а пустая выходит нулём — окно просило бы подпись или молчало.
+if [ ! -s "$CHECK" ]; then
+  echo "сверка scripts/check_irreversible_signature.sh не развёрнута (нет файла или он пуст): окно подписи без неё не судит — пара B12 и B13 разворачивается вместе (§7.2 п.5а)."
+  exit 1
+fi
 [ "$MODE" = "--install" ] && install_watcher
 
 line=$(declaration)

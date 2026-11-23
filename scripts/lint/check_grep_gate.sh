@@ -64,6 +64,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # расхождение обещания и выборки — ложное срабатывание по §4.3b.
 FILTER=""
 EXCLUDE=""
+BY_NAME=0   # правило имени файла: нарушение — сам файл, строки у него нет
 case "$RULE" in
   config-access)
     PATTERN='getattr\([[:space:]]*config|(^|[^A-Za-z_.])os\.getenv|(^|[^A-Za-z_.])os\.environ'
@@ -89,7 +90,7 @@ case "$RULE" in
     # Любая строка = нарушение: правило имени файла, не содержимого. Новый
     # utils/misc/common/helpers.py (без темы) имеет count>0 -> hard fail; легаси в
     # baseline и не растёт. `_helpers.py` (с подчёркиванием) FILTER не матчит — разрешён.
-    PATTERN='^'
+    PATTERN='^'; BY_NAME=1
     FILTER='/(utils|misc|common|helpers)\.py$'
     BASELINE="$SCRIPT_DIR/no_grab_bag_baseline.txt"
     LABEL='no-grab-bag-module: файлы-помойки utils/misc/common/helpers.py без темы запрещены'
@@ -175,6 +176,13 @@ list_targets() {
 
 # Число строк-нарушений в файле (grep -c всегда печатает число; 0 при отсутствии).
 count_hits() { grep -cE "$PATTERN" "$1" 2>/dev/null; }
+# Место каждой находки — `путь:строка`, тем же выражением, что счёт. Первый проект на
+# `cqg@3.14`: «1 нарушений» без строки искали глазами. Снимок помнит число на файл, а не
+# строки, поэтому печатаются ВСЕ находки файла; у правила имени файла места нет.
+print_hits() {
+  [[ "$BY_NAME" == "1" ]] && return 0
+  grep -nE "$PATTERN" "$1" 2>/dev/null | while IFS=: read -r n _; do printf '       %s:%s\n' "$1" "$n"; done
+}
 
 # Снимок для точного пути (awk-сравнение точной строки — корректно с пробелами в пути).
 baseline_lookup() {
@@ -247,6 +255,7 @@ while IFS= read -r f; do
     else
       printf '%s  ⚠  %s: %d нарушений (разрешено %d)%s\n' "$yellow" "$f" "$hits" "$allowed" "$reset"
     fi
+    print_hits "$f"
   fi
 done < <(list_targets)
 

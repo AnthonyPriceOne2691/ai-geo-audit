@@ -6,9 +6,9 @@
 # eslint_warnings_baseline.txt; гейт падает, если счётчик ВЫРОС. Правишь файл с
 # warnings -> счисти часть и пере-сними вниз (--generate). Только вниз.
 #
-# Бинарь eslint ищется в node_modules фронта, затем в PATH. Нет бинаря — гейт не
-# блокирует, только предупреждает (свежий clone без npm ci). Нет самого каталога
-# фронта — тоже skip: backend-only проект не должен падать на фронт-гейте.
+# Бинарь eslint ищется в node_modules фронта, затем в PATH. Нет бинаря при каталоге
+# фронта — «не просудил», красное (`cqg@3.29`); выход — роль в not-applicable.json или
+# STRICT=0. Нет самого каталога фронта — skip: backend-only проекту судить нечего.
 #
 # Настройка (env): LINT_FE_DIR — фронт-каталог с package.json/src (дефолт: frontend)
 #
@@ -46,8 +46,17 @@ if [[ -x "node_modules/.bin/eslint" ]]; then
 elif command -v eslint >/dev/null 2>&1; then
   ESLINT="eslint"
 else
-  printf '%s⚠ eslint не найден — warning-ратчет пропущен. Установка: npm ci%s\n' "$yellow" "$reset"
-  exit 0
+  # Фронт есть, eslint нет — ратчет не просудил ничего; выйти нулём нельзя (`cqg@2.96`).
+  na="$REPO_ROOT/scripts/lint/not-applicable.json"
+  if [[ -f "$na" ]] && grep -q '"check_eslint_warnings.sh"' "$na"; then
+    printf '%s⚠ eslint не найден; ратчет объявлен неприменимым в not-applicable.json — пропуск НАЗВАН.%s\n' "$yellow" "$reset"
+    exit 0
+  fi
+  printf '%s✗ eslint не найден — warning-ратчет не просудил НИЧЕГО: это НЕ «предупреждений не прибавилось».\n' "$red"
+  printf 'Поставь фронт (npm ci) либо объяви роль неприменимой в scripts/lint/not-applicable.json\n'
+  printf 'с причиной ("check_eslint_warnings.sh").%s\n' "$reset"
+  [[ "$STRICT" == "0" ]] && { printf '%sWARNING (STRICT=0)%s\n' "$yellow" "$reset"; exit 0; }
+  exit 1
 fi
 
 # Полный прогон по src: сумма warnings И пофайловые счётчики ERRORS.

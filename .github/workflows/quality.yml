@@ -1,6 +1,6 @@
 name: quality
 
-# Шаблон канона cqg@3.14 с адаптациями — scripts/lint/adapted.json, запись `.github/workflows/quality.yml`.
+# Шаблон канона cqg@3.30 с адаптациями — scripts/lint/adapted.json, запись `.github/workflows/quality.yml`.
 # Правила этого файла держит тест контракта backend/tests/test_ci_contract.py (A99–A101, A103, A123).
 on:
   pull_request:

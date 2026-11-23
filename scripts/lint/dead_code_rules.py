@@ -2,7 +2,7 @@
 """Правила гейта мёртвого кода: что зовут НЕ по имени (python-половина).
 
 Часть `check_dead_code.py` (`cqg@3.09`), разрез — по вопросу, а не по размеру: вход
-гоняет инструменты, держит снимок и выносит вердикт; здесь — пять правил, которые
+гоняет инструменты, держит снимок и выносит вердикт; здесь — шесть правил, которые
 снимают ложное у vulture. Он судит по имени: объявление живо, если имя где-то читают.
 Фреймворк зовёт иначе — декоратором, рефлексией, по строке, — и такое объявление
 vulture назвал бы мёртвым (замер 26.10 на трёх проектах: 401 сырая находка, 38 в остатке).
@@ -58,6 +58,9 @@ CALL_RE = re.compile(r"(?<![\w.])(?<!class )([A-Z]\w*)\(")
 ADDR_RE = re.compile(r"""["']([A-Za-z_][\w.]*)[.:]([A-Za-z_]\w*)["']""")
 # ⑤ Атрибут судится только у СВОЕГО объекта (`self.x = …`). Запись в чужой —
 # настройка библиотеки (`resolver.lifetime = …`), читает её она: замер — 0 мёртвых из 7.
+# ⑥ Переопределение (`@override`, PEP 698) зовёт база класса по своему имени: `logging.Handler`
+# зовёт `handleError` сам. Только в теле класса — функции вне класса переопределять нечего.
+OVERRIDE = re.compile(r"(^|\.)override$")
 
 
 class Known(NamedTuple):
@@ -119,6 +122,14 @@ def decorators(tree: ast.AST, line: int, name: str) -> list[str]:
     return []
 
 
+def overrides(tree: ast.AST, line: int, name: str) -> bool:
+    """⑥ Метод прямо в теле класса, и среди его декораторов — `override`."""
+    return any(isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)) and stmt.name == name
+               and bool(stmt.decorator_list) and stmt.decorator_list[0].lineno == line
+               and any(OVERRIDE.search(dotted(d)) for d in stmt.decorator_list)
+               for node in ast.walk(tree) if isinstance(node, ast.ClassDef) for stmt in node.body)
+
+
 def owner(tree: ast.AST, line: int) -> ast.ClassDef | None:
     """Класс, в ТЕЛЕ которого стоит присваивание на этой строке; None — не поле."""
     for node in ast.walk(tree):
@@ -144,9 +155,10 @@ def is_own_attribute(tree: ast.AST, line: int, name: str) -> bool:
 
 
 def alive(tree: ast.AST, finding: tuple, known: Known) -> bool:
-    """True — объявление зовут не по имени: находка vulture ложная (правила ①–⑤)."""
+    """True — объявление зовут не по имени: находка vulture ложная (правила ①–⑥)."""
     path, line, kind, name = finding
-    if any(REGISTRAR.search(d) for d in decorators(tree, line, name)):
+    registered = any(REGISTRAR.search(d) for d in decorators(tree, line, name))
+    if registered or overrides(tree, line, name):
         return True
     module = "." + path[:-3].replace("/", ".").removesuffix(".__init__")
     if any(module.endswith("." + m) for m in known.addr.get(name, ())):

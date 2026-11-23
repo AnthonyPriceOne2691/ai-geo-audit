@@ -157,13 +157,21 @@ else
 fi
 
 # --- frontend: npm audit ------------------------------------------------------
+# Где манифест JS — отвечает этот поиск, как `py_manifest` выше; итог «манифестов нет»
+# читает оба ответа, а не корень заново (`cqg@3.20`).
+js_manifest=""
+for cand in "$FE_DIR/package.json" package.json; do
+  [[ -f "$cand" ]] && { js_manifest="$cand"; break; }
+done
 if command -v npm >/dev/null 2>&1 && [[ -f "$FE_DIR/package-lock.json" ]]; then
+  # `total` у npm ≥ 7 — сумма тех же вёдер severity: в сумме он удваивал счёт
+  # (7 moderate → js_total=14, `cqg@3.20`). Считаются вёдра; у npm 6 `total` нет.
   read -r js_crit js_high js_total < <(
     npm audit --json --prefix "$FE_DIR" 2>/dev/null \
       | python3 -c 'import json,sys
 try: v=json.load(sys.stdin).get("metadata",{}).get("vulnerabilities",{})
 except Exception: v={}
-print(v.get("critical",0), v.get("high",0), sum(int(x) for x in v.values() if str(x).isdigit()))' 2>/dev/null \
+print(v.get("critical",0), v.get("high",0), sum(int(x) for k,x in v.items() if k!="total" and str(x).isdigit()))' 2>/dev/null \
       || echo "0 0 0"
   )
 else
@@ -232,8 +240,9 @@ if (( fails == 0 && hard == 0 )); then
   # аудировать». На Swift/SPM-проекте с двумя настоящими зависимостями гейт
   # печатал «OK — py_total=0 js_critical=0», то есть врал зелёным (полевая находка
   # lab-3). Образец правильного поведения лежит рядом: jscpd в такой ситуации
-  # честно говорит «инструмента нет, гейт пропущен».
-  if [[ -z "$py_manifest" && ! -f "$FE_DIR/package.json" ]]; then
+  # честно говорит «инструмента нет, гейт пропущен». Манифест — ответ поиска выше:
+  # проверка корня заново объявляла n/a проверенную раскладку `backend/` (`cqg@3.20`).
+  if [[ -z "$py_manifest" && -z "$js_manifest" ]]; then
     printf '%sdeps-audit: WARNING%s — не найдено ни одного поддерживаемого манифеста '\
 '(pyproject/requirements/package.json). Зависимости ЭТОГО стека не проверены: для\n'\
 'SPM/Cargo/Go роль «уязвимые зависимости» занимает другой инструмент — впиши его\n'\
