@@ -216,3 +216,6 @@ class EntryLayer:
             return message
 
         await self.app(scope, receive_counted, send)
+
+
+# Проба хода 0 «Скорости CI»: метка области гейта мутаций, в main не идёт.

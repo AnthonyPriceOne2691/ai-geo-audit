@@ -113,3 +113,6 @@ class ApiSettings(Settings):
     def trusted_proxies(self) -> list[str]:
         """Адреса и сети прокси списком — так их ждёт uvicorn."""
         return [part.strip() for part in self.trusted_proxies_text.split(",")]
+
+
+# Проба хода 0 «Скорости CI»: метка области гейта мутаций, в main не идёт.
