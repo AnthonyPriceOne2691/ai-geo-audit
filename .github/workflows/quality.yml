@@ -398,6 +398,23 @@ jobs:
           path: reports/mutation/shards/
           if-no-files-found: error
           retention-days: 1
+      # Проба A289 «Скорости CI», только в ветке-пробе: исходы порч доли — артефактом для
+      # сравнения с одной машиной (джоба a289-compare).
+      - name: Probe A289 — shard outcomes
+        if: always()
+        working-directory: backend
+        run: |
+          mkdir -p ../reports/a289
+          uv run --no-sync mutmut results --all true | grep -v ': not checked$' | sort \
+            > "../reports/a289/shard-${{ matrix.shard }}.txt" || true
+          wc -l < "../reports/a289/shard-${{ matrix.shard }}.txt"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: a289-outcomes-shard-${{ matrix.shard }}
+          path: reports/a289/
+          retention-days: 1
 
   # Сумма долей (A289): порог 60 % — по сумме счёта всех четырёх. `if: always()` — упавшая, отменённая
   # или пропущенная доля не пропускает сумму: доля без счёта — красная сумма с номером доли, а
@@ -424,6 +441,97 @@ jobs:
         env:
           MUTATION_SUM: "4"
         run: bash scripts/lint/check_mutation_gate.sh
+
+  # Проба A289 «Скорости CI», только в ветке-пробе: та же область одной машиной — гейт без долей,
+  # 4 воркера, тот же коммит; исходы — артефактом для сравнения с долями.
+  mutation-single:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      # Как служба джобы `tests`, строка в строку; совпадение держит тест контракта (A289).
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit  # pragma: allowlist secret
+          POSTGRES_DB: audit
+        ports:
+          - 127.0.0.1:5462:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U audit -d audit"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Инструменты из замка
+        run: |
+          python -m pip install uv==0.11.26
+          cd backend && uv sync --frozen
+
+      - name: Probe A289 — mutation gate, one machine
+        env:
+          BASE: origin/${{ github.base_ref }}
+          LINT_PY_SRC: backend/src
+          MUTATION_WORKERS: "4"
+          MIN_KILLED: "60"
+          BUDGET_SEC: "1200"
+        run: bash scripts/lint/check_mutation_gate.sh
+
+      - name: Probe A289 — single outcomes
+        if: always()
+        working-directory: backend
+        run: |
+          mkdir -p ../reports/a289
+          uv run --no-sync mutmut results --all true | grep -v ': not checked$' | sort \
+            > "../reports/a289/single.txt" || true
+          wc -l < "../reports/a289/single.txt"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: a289-outcomes-single
+          path: reports/a289/
+          retention-days: 1
+
+  # Проба A289: исходы долей против одной машины поимённо; порча в двух долях или расхождение —
+  # красное с именами.
+  a289-compare:
+    needs: [mutation-shard, mutation-single]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          pattern: a289-outcomes-*
+          path: a289/
+          merge-multiple: true
+
+      - name: Probe A289 — outcomes, shards against one machine
+        run: |
+          ls a289
+          cat a289/shard-*.txt | sort > shards.txt
+          sort a289/single.txt > single.txt
+          echo "доли:        $(cut -d: -f2 shards.txt | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+          echo "одна машина: $(cut -d: -f2 single.txt | sort | uniq -c | tr -s ' ' | tr '\n' ';')"
+          dup=$(cut -d: -f1 shards.txt | sort | uniq -d)
+          if [ -n "$dup" ]; then echo "::error::A289: порча в двух долях:"; echo "$dup"; exit 1; fi
+          if diff single.txt shards.txt; then
+            echo "A289: исходы совпали поимённо — порч $(wc -l < single.txt)"
+          else
+            echo "::error::A289: исходы разошлись — строки выше: «<» одна машина, «>» доли"
+            exit 1
+          fi
 
   # «Оракул стека в CI» (A76): собранный образ делает продукт. Оракул Ч1.5а строит стек из чистой
   # копии `git archive HEAD` и гоняет шаги примеров; итог джобы — итог оракула. Docker и Python —
