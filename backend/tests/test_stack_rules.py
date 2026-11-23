@@ -56,9 +56,8 @@ Found = set[tuple[str, str | None, str | None]]
 
 def hardened(name: str, *nets: str) -> dict[str, Any]:
     """Урезанные права и сети сервиса в виде вывода compose 5.7.0 (A87): сети — отображением."""
-    root = {} if name == "db" else {"read_only": True}
-    shield = {"cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"]}
-    return root | shield | {"networks": dict.fromkeys(nets)}
+    shield = {"cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"], "read_only": True}
+    return shield | {"networks": dict.fromkeys(nets)}
 
 
 def valid() -> dict[str, Any]:
@@ -498,6 +497,7 @@ HARDENING = [
     ),
     (drop(svc("migrate"), "read_only"), {("read-only", "migrate", None)}),
     (put(svc("web"), "read_only", False), {("read-only", "web", None)}),
+    (put(svc("db"), "read_only", False), {("read-only", "db", None)}),
     (drop(web_front, "ipv4_address"), {("web-address", "web", None)}),
     (put(web_front, "ipv4_address", "${WEB_ADDRESS:-172.16.0.14}"), {("web-address", "web", None)}),
     (put(svc("web"), "networks", {"edge": None}), {("web-address", "web", None)}),
@@ -541,10 +541,9 @@ def both_literal(config: dict[str, Any]) -> None:
     config["services"]["api"]["environment"][TRUSTED] = " 172.16.0.14"
 
 
-# Соседние случаи без нарушения (L53): исключение db, лишние права к ALL, адрес числом у обоих,
-# сети списком, обычная сеть у web.
+# Соседние случаи без нарушения (L53): лишние права к ALL, адрес числом у обоих, сети списком,
+# обычная сеть у web.
 CALM = [
-    put(svc("db"), "read_only", False),
     put(svc("redis"), "cap_drop", ["NET_RAW", "ALL"]),
     put(svc("api"), "security_opt", ["seccomp=unconfined", "no-new-privileges:true"]),
     both_literal,
@@ -556,20 +555,21 @@ CALM = [
 @pytest.mark.parametrize(
     "change",
     CALM,
-    ids=["db-на-запись", "all-и-ещё", "две-опции", "адрес-числом", "сети-списком", "edge-у-web"],
+    ids=["all-и-ещё", "две-опции", "адрес-числом", "сети-списком", "edge-у-web"],
 )
 def test_a87_neighbour_cases_are_not_violations(change: Callable) -> None:
-    """A87, вторая строка: соседние случаи — db на запись по исключению, `ALL` среди других,
-    `no-new-privileges` среди опций, один и тот же адрес числом у web и api, сети списком, обычная
-    сеть у web — не нарушения."""
+    """A87, вторая строка: соседние случаи — `ALL` среди других, `no-new-privileges` среди
+    опций, один и тот же адрес числом у web и api, сети списком, обычная сеть у web — не
+    нарушения."""
     config = valid()
     change(config)
     assert found(config) == set()
 
 
-def test_a87_db_root_exception_is_named_with_its_reason() -> None:
-    """A87, первая строка: исключение корня на запись — только db, и у него названа причина."""
+def test_a87_root_is_read_only_everywhere_and_the_exception_list_is_empty() -> None:
+    """A87, первая строка: корень только для чтения у всех пяти, у db — с `tmpfs` (слово
+    владельца 2026-11-23T14:12:15Z). Список исключений правила `read-only` пуст, механизм
+    остаётся: вторая строка A87 — «не в списке исключений»."""
     from ai_geo_audit.ops import stack_hardening
 
-    assert list(stack_hardening.WRITABLE_ROOT) == ["db"]
-    assert "/var/run/postgresql" in stack_hardening.WRITABLE_ROOT["db"]
+    assert stack_hardening.WRITABLE_ROOT == {}
