@@ -1,4 +1,5 @@
-"""Контракт джобы `tests` (A106–A110): служба базы, покрытие с привязкой, мутации, игнор.
+"""Контракт джобы `tests` (A106–A110): служба базы, покрытие с привязкой, игнор; мутации — доли
+`mutation-shard` и джоба суммы `mutation` (A289).
 
 Файл — метка `until` у объявлений гейтов покрытия изменённого и мутаций: с его появлением оба
 гейта обязаны стоять в джобе (`scripts/lint/not-applicable.json`, решение 2026-11-19).
@@ -36,9 +37,8 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
     service = job.get("services", {}).get("postgres", {})
     run = str(step(job, "Тесты с покрытием").get("run", ""))
     diff = step(job, "Diff coverage").get("env", {})
-    mutation = step(job, "Mutation testing")
     checks = [
-        (job.get("timeout-minutes") == 30, f"таймаут {job.get('timeout-minutes')!r}, в спеке 30"),
+        (job.get("timeout-minutes") == 15, f"таймаут {job.get('timeout-minutes')!r}, ждём 15"),
         (
             "uv lock --check" in str(step(job, "Замок свежий").get("run", "")),
             "замок: свежесть не сверяется (`uv sync --frozen` её не видит)",
@@ -61,25 +61,67 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
             "покрытие изменённого: не отчёт джобы",
         ),
         (diff.get("MIN_PCT") == "70", f"покрытие изменённого: цель {diff.get('MIN_PCT')!r}"),
+        (not step(job, "Mutation testing"), "мутации: шаг остался в tests, а не в долях (A289)"),
+    ]
+    return [message for ok, message in checks if not ok] + mutation_jobs_problems(workflow)
+
+
+#: Обязательные проверки main после хода 3 — слово владельца 2026-11-23T11:29Z (A116, A289) —
+#: и доли, сведённые суммой; других джоб нет.
+JOBS = {"gates", "delivery", "tests", "mutation-shard", "mutation", "stack", "image-scan"}
+
+
+def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A289: порчи — matrix из 4 долей параллельно с `tests`, порог — джоба суммы при любом исходе
+    долей; счёт доли — артефактом; служба базы долей — как у `tests`."""
+    jobs = workflow.get("jobs", {})
+    shard, total = jobs.get("mutation-shard", {}), jobs.get("mutation", {})
+    gate = step(shard, "Mutation testing (доля)").get("env", {})
+    upload = next(
+        (s for s in shard.get("steps", []) if "upload-artifact" in str(s.get("uses"))), {}
+    )
+    download = next(
+        (s for s in total.get("steps", []) if "download-artifact" in str(s.get("uses"))), {}
+    )
+    checks = [
+        (set(jobs) == JOBS, f"джобы {sorted(jobs)}, ждём {sorted(JOBS)}"),
+        (shard.get("if") == "github.event_name == 'pull_request'", "доли: не только на запросе"),
+        (shard.get("strategy", {}).get("matrix", {}).get("shard") == [1, 2, 3, 4], "долей не 4"),
+        (shard.get("strategy", {}).get("fail-fast") is False, "доли: fail-fast снимет соседей"),
+        (gate.get("MUTATION_SHARD") == "${{ matrix.shard }}/4", "доли: MUTATION_SHARD не k/4"),
+        (gate.get("BUDGET_SEC") == "1200", "доли: бюджет не 1200 с"),
+        (gate.get("MIN_KILLED") == "60", "доли: цель не 60 %"),
+        (gate.get("MUTATION_WORKERS") == "4", "доли: воркеров не 4"),
+        (gate.get("LINT_PY_SRC") == "backend/src", "доли: область не backend/src"),
         (
-            mutation.get("if") == "github.event_name == 'pull_request'",
-            "мутации: не только на запросе",
+            shard.get("services") == jobs.get("tests", {}).get("services"),
+            "доли: служба базы не как у tests",
         ),
-        (mutation.get("env", {}).get("BUDGET_SEC") == "1200", "мутации: бюджет не 1200 с"),
-        (mutation.get("env", {}).get("MIN_KILLED") == "60", "мутации: цель не 60 %"),
-        (mutation.get("env", {}).get("MUTATION_WORKERS") == "4", "мутации: воркеров не 4"),
         (
-            mutation.get("env", {}).get("LINT_PY_SRC") == "backend/src",
-            "мутации: область не backend/src",
+            upload.get("with", {}).get("name") == "mutation-shard-${{ matrix.shard }}",
+            "доли: имя счёта",
         ),
+        (upload.get("with", {}).get("path") == "reports/mutation/shards/", "доли: путь счёта"),
+        (total.get("needs") == "mutation-shard", "сумма: needs не на доли"),
+        ("always()" in str(total.get("if")), "сумма: без `if: always()` упавшая доля её пропустит"),
+        ("pull_request" in str(total.get("if")), "сумма: не только на запросе"),
+        (
+            download.get("with", {}).get("pattern") == "mutation-shard-*",
+            "сумма: не все счета долей",
+        ),
+        (
+            download.get("with", {}).get("merge-multiple") is True,
+            "сумма: счета не в одном каталоге",
+        ),
+        (step(total, "Mutation testing (сумма").get("env") == {"MUTATION_SUM": "4"}, "сумма: не 4"),
     ]
     return [message for ok, message in checks if not ok]
 
 
 def test_a106_a107_a108_a109_tests_job_keeps_the_contract() -> None:
     """A99, A106–A109: таймаут по спеке, свежесть замка, служба базы по дайджесту, набор с
-    покрытием и привязкой, покрытие изменённого по отчёту джобы, мутации только на запросе в
-    бюджете."""
+    покрытием и привязкой, покрытие изменённого по отчёту джобы; мутации — 4 доли только на запросе
+    в бюджете и сумма при любом исходе долей (A289)."""
     assert job_contract_problems(yaml.safe_load(QUALITY.read_text(encoding="utf-8"))) == []
 
 
@@ -105,14 +147,34 @@ COPIES = [
     ("A108-report-not-bound", r"\n\s*git rev-parse HEAD > coverage\.json\.head", "", "не привязан"),
     (
         "A109-mutation-always",
-        r"if: github\.event_name == 'pull_request'",
-        "if: always()",
-        "только на запросе",
+        r"if: github\.event_name == 'pull_request'\n    runs-on",
+        "if: always()\n    runs-on",
+        "доли: не только на запросе",
     ),
     ("A108-diff-area", r"LINT_PY_SRC: backend\n", "LINT_PY_SRC: backend/src\n", "LINT_PY_SRC"),
-    ("A99-timeout-25", r"timeout-minutes: 30\n", "timeout-minutes: 25\n", "в спеке 30"),
+    ("A99-timeout-25", r"timeout-minutes: 15\n", "timeout-minutes: 25\n", "ждём 15"),
     ("lock-not-checked", r"run: uv lock --check\n", "run: uv lock\n", "замок"),
     ("A281-workers-1", r'MUTATION_WORKERS: "4"', 'MUTATION_WORKERS: "1"', "воркеров не 4"),
+    ("A289-sum-not-always", r"if: always\(\) && ", "if: ", "без `if: always()`"),
+    ("A289-sum-no-needs", r" {4}needs: mutation-shard\n", "", "needs не на доли"),
+    ("A289-three-shards", r"shard: \[1, 2, 3, 4\]", "shard: [1, 2, 3]", "долей не 4"),
+    ("A289-fail-fast", r"fail-fast: false", "fail-fast: true", "fail-fast"),
+    ("A289-shard-of-3", r"\{\{ matrix\.shard \}\}/4", "{{ matrix.shard }}/3", "не k/4"),
+    ("A289-sum-of-3", r'MUTATION_SUM: "4"', 'MUTATION_SUM: "3"', "сумма: не 4"),
+    ("A289-one-count", r"pattern: mutation-shard-\*", "pattern: mutation-shard-1", "все счета"),
+    (
+        "A289-db-by-tag",
+        r"\(A289\)\.\n      postgres:\n        image: postgres:16-alpine@sha256:[0-9a-f]{64}",
+        "(A289).\n      postgres:\n        image: postgres:16-alpine",
+        "служба базы не как у tests",
+    ),
+    (
+        "A289-step-back-in-tests",
+        r"(?=\n  # Ход 3 «Скорости CI»)",
+        "\n      - name: Mutation testing (changed files, budgeted)\n"
+        "        run: bash scripts/lint/check_mutation_gate.sh\n",
+        "шаг остался в tests",
+    ),
     (
         "A100-service-by-tag",
         r"postgres:16-alpine@sha256:[0-9a-f]{64}",
@@ -124,7 +186,8 @@ COPIES = [
 
 @pytest.mark.parametrize(("case", "old", "new", "named"), COPIES, ids=[c[0] for c in COPIES])
 def test_tests_job_copies_are_red_and_named(case: str, old: str, new: str, named: str) -> None:
-    """A100, A108, A109, A281, копии: порча джобы tests — красный, названо правило."""
+    """A100, A108, A109, A281, A289, копии: порча джобы tests, долей или суммы — красный, названо
+    правило."""
     text = QUALITY.read_text(encoding="utf-8")
     spoiled, count = re.subn(old, lambda _: new, text, count=1)
     assert count == 1, f"{case}: в quality.yml нет места порчи {old!r}"

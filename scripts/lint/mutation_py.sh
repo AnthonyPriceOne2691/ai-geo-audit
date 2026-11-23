@@ -36,8 +36,17 @@ changed=$(git diff --name-only -z "$BASE"...HEAD -- "$PY_SRC/*.py" 2>/dev/null \
 if [[ -z "$changed" ]]; then
   printf '%smutation: изменённых prod-файлов нет (BASE=%s, смотрел в %s)%s\n' \
     "$green" "$BASE" "$PY_SRC" "$reset"
+  ts_counts 0 0
   exit 0
 fi
+
+# Адаптация (scripts/lint/adapted.json, A289): доля — каждый N-й файл списка (`ts_shard`
+# канона), до проверок инструментов: доле, на которую файлов не пришлось, mutmut не нужен —
+# счёт «0 0», судит сумма. Иной код решения — сбой, а не «нечего» (`cqg@2.75`).
+ts_shard; shard_rc=$?
+(( shard_rc == 1 )) && { ts_counts 0 0; exit 0; }
+(( shard_rc == 0 )) || { printf '%s⚠ mutation: доля не выбрана — ts_shard вышел с кодом %s%s\n' \
+  "$yellow" "$shard_rc" "$reset"; not_judged; }
 
 # Дальше — проверки инструментов, и они СПЕЦИАЛЬНО тут, а не выше: пока не известно,
 # что мутировать, требовать mutmut и coreutils незачем. Порядок «сначала есть ли работа,
@@ -72,7 +81,8 @@ if [[ -z "$TIMEOUT_BIN" ]]; then
 fi
 
 n=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
-printf 'mutation: %s файл(ов), бюджет %ss, цель ≥%s%% убитых\n' "$n" "$BUDGET_SEC" "$MIN_KILLED"
+printf 'mutation: %s файл(ов)%s, бюджет %ss, цель ≥%s%% убитых\n' \
+  "$n" "${MUTATION_SHARD:+, доля $MUTATION_SHARD}" "$BUDGET_SEC" "$MIN_KILLED"
 
 # ⚠ ГДЕ ЗАПУСКАТЬ — условие работоспособности, а не деталь, и оно определяется ДО
 # любого вызова mutmut: конфиг `[mutmut]` он читает из своего cwd, поэтому даже

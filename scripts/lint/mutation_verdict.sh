@@ -122,7 +122,7 @@ undecided() {
   tail -15 "$out" >&2
   # Честное «судить нечего» — тихо; любой другой исход — гейт НЕ судил при
   # объявленной роли, и это не зелёное (`cqg@2.46`).
-  [[ -n "$honest" ]] && exit 0
+  [[ -n "$honest" ]] && { ts_counts 0 0; exit 0; }   # адаптация A289: у доли — счёт «0 0»
   not_judged
 }
 
@@ -171,6 +171,17 @@ py_recheck() {
     2>/dev/null | awk -F': ' 'NR == FNR { pick[$0]; next } { sub(/^ +/, "", $1) }
       ($1 in pick) { print $2 "\t" $1 }' <(printf '%s\n' "${names[@]}") - )"
 }
+
+# Адаптация (scripts/lint/adapted.json, A289): доля только считает, как у TS-половины —
+# самопроверка всегда (ложь параллели — в сторону зелёного суммы), счёт в
+# `shard-k-of-N.counts`, порог судит сумма (`MUTATION_SUM`).
+if [[ -n "${MUTATION_SHARD:-}" ]]; then
+  py_recheck
+  ts_counts "$killed" "$total"
+  printf 'mutation: доля %s — убито %s из %s; порог судит сумма долей (MUTATION_SUM)\n' \
+    "$MUTATION_SHARD" "$killed" "$total"
+  exit 0
+fi
 
 if (( pct >= MIN_KILLED )); then
   py_recheck

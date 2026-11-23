@@ -255,10 +255,10 @@ jobs:
 
   tests:
     runs-on: ubuntu-24.04
-    # §8.7: установка, набор с покрытием и потолок мутаций на запросе — минуты; 30 (спека, A99;
-    # слово владельца 2026-11-20T10:59Z): 99 с прочего + 1200 с мутаций + ~5 с замка ≈ 1304 с, запас
-    # ~8 мин — гейт успевает сказать «бюджет исчерпан» раньше таймаута. Число держит тест контракта.
-    timeout-minutes: 30
+    # §8.7: установка и набор с покрытием — минуты; 15: мутации с хода 3 «Скорости CI» — в долях
+    # `mutation-shard` (A289), прежние 30 (A99) держали бюджет мутаций 1200 с. Установка ~1 мин и
+    # набор ~3 мин (A288: 162 с) — запас на медленную машину. Число держит тест контракта.
+    timeout-minutes: 15
     services:
       # Как служба db в docker-compose.dev.yml: база живёт только в прогоне, пароль — публичный
       # пароль стенда. Образ — строкой стека «линия@дайджест» (A100). Готовность — `pg_isready` по
@@ -280,7 +280,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          fetch-depth: 0              # база диффа покрытия изменённого и мутаций (A108, A109)
+          fetch-depth: 0              # база диффа покрытия изменённого (A108)
           persist-credentials: false  # токен не остаётся в .git/config (A100)
       - name: Diff base (одна на джобу, отказ — вслух)
         run: |
@@ -338,16 +338,91 @@ jobs:
           MIN_PCT: "70"
         run: bash scripts/lint/check_diff_coverage.sh
 
-      # Самый дорогой гейт — только на запросе и с бюджетом; один воркер: база у копии одна (A109).
-      # Бюджет 1200 с — слово владельца 2026-11-20T10:59Z: замер 610 с (статистика 55 с, 582
-      # мутанта по 0,95 с); шаг дольше 900 с на запросе — пересмотр до следующей поставки.
-      - name: Mutation testing (changed files, budgeted)
-        if: github.event_name == 'pull_request'
+  # Ход 3 «Скорости CI» (A289): порчи — на 4 машинах параллельно с `tests`. Доля берёт каждый 4-й
+  # файл диффа (`MUTATION_SHARD`, адаптация гейта — scripts/lint/adapted.json) и только считает;
+  # счёт — артефактом, порог 60 % судит джоба суммы `mutation`. Бюджет 1200 с — на долю, как был на
+  # весь шаг (слово владельца 2026-11-20T10:59Z); 30 мин: установка ~1 мин, 1200 с порч и 120 с
+  # самопроверки — гейт успевает сказать «бюджет исчерпан» раньше таймаута.
+  mutation-shard:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false            # упавшая доля не снимает соседей: сумма назовёт её сама
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      # Как служба джобы `tests`, строка в строку; совпадение держит тест контракта (A289).
+      postgres:
+        image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
         env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit  # pragma: allowlist secret
+          POSTGRES_DB: audit
+        ports:
+          - 127.0.0.1:5462:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U audit -d audit"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0              # база диффа мутаций (A109)
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Инструменты из замка
+        run: |
+          python -m pip install uv==0.11.26
+          cd backend && uv sync --frozen
+
+      - name: Mutation testing (доля)
+        env:
+          BASE: origin/${{ github.base_ref }}
           LINT_PY_SRC: backend/src
+          MUTATION_SHARD: ${{ matrix.shard }}/4
           MUTATION_WORKERS: "4"
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
+        run: bash scripts/lint/check_mutation_gate.sh
+
+      # Только на зелёном шаге доли: доля, не давшая счёта, артефакта не оставляет — сумма её назовёт.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: mutation-shard-${{ matrix.shard }}
+          path: reports/mutation/shards/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Сумма долей (A289): порог 60 % — по сумме счёта всех четырёх. `if: always()` — упавшая, отменённая
+  # или пропущенная доля не пропускает сумму: доля без счёта — красная сумма с номером доли, а
+  # пропущенную обязательную проверку GitHub счёл бы пройденной.
+  mutation:
+    needs: mutation-shard
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+
+      # Ни одной доли со счётом — артефактов нет, и шаг падает; гейт ниже назовёт номера долей сам.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: mutation-shard-*
+          path: reports/mutation/shards/
+          merge-multiple: true
+
+      - name: Mutation testing (сумма долей)
+        env:
+          MUTATION_SUM: "4"
         run: bash scripts/lint/check_mutation_gate.sh
 
   # «Оракул стека в CI» (A76): собранный образ делает продукт. Оракул Ч1.5а строит стек из чистой
