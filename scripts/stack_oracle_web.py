@@ -1,10 +1,11 @@
-"""Шаги оракула стека Ч1.5б: образ web (A77) и сервис web на поднятом compose (A78–A80, A82).
+"""Шаги оракула стека Ч1.5б: образ web (A77) и сервис web на поднятом compose (A78–A84).
 Импорт в одну сторону: `stack_oracle.py` ставит шаги образа до подъёма стека, шаги сервиса — до
 A67.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import time
@@ -12,13 +13,14 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from email.message import Message
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from stack_oracle_compose import (
     StepError,
     compose,
     health,
     inspect,
+    service_log,
     slot,
     tag,
     top_uids,
@@ -56,6 +58,15 @@ CSP = (
 #: Кэш (A78): страница — только со сверкой, файлы сборки — год и immutable; любой путь экрана —
 #: страница.
 PAGE_CACHE, ASSET_CACHE, PAGES = "no-cache", "public, max-age=31536000, immutable", ("/", "/x/y")
+#: `/api/` через web (A79, A84): предел тела, присланный номер запроса, образцы отказов web; адрес
+#: клиента шага отказов — из диапазона документации, по нему строки журнала web — свои (A83).
+BODY, REQUEST_ID, CLIENT = 1_048_576, "oracle-request-a79", "203.0.113.84"
+CONTRACT = "contracts/api-refusals.json"
+#: Строка журнала доступа web (A83): время ISO 8601, метод, путь без «?», код, время ответа в
+#: секундах с тремя знаками, адрес клиента или «-».
+LINE = re.compile(
+    r"\d{4}(-\d\d){2}T\d\d(:\d\d){2}[+-]\d\d:\d\d [A-Z]+ /[^?\s]* \d{3} \d+\.\d{3} [\d.:a-f-]+"
+)
 
 
 def context_problems(names: set[str]) -> list[str]:
@@ -95,12 +106,15 @@ def page(url: str) -> int | str:
         return f"{type(error).__name__}: {error}"
 
 
-def fetch(url: str) -> tuple[int, Message, bytes]:
-    """Ответ web с машины мимо прокси окружения: код, все значения заголовков, тело. Ответ 4xx и
-    5xx — тоже ответ; сбой соединения — красное шага с именем сбоя (A78–A80)."""
+def fetch(
+    url: str, head: dict[str, str] | None = None, data: bytes | None = None, timeout: float = 5
+) -> tuple[int, Message, bytes]:
+    """Ответ web с машины мимо прокси окружения на запрос с `head` и `data`: код, все значения
+    заголовков, тело; 4xx и 5xx — тоже ответ, сбой соединения — красное шага с его именем."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    opener.addheaders += list((head or {}).items())
     try:
-        with opener.open(url, timeout=5) as response:
+        with opener.open(url, data, timeout) as response:
             return int(response.status), response.headers, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.headers, error.read()
@@ -112,6 +126,32 @@ def header_problems(where: str, headers: Message, wanted: dict[str, str]) -> lis
     """Каждый заголовок `wanted` — ровно один и со своим значением; иначе — имя и что пришло."""
     found = {name: headers.get_all(name) or [] for name in wanted}
     return [f"{where}: {name} — {got}" for name, got in found.items() if got != [wanted[name]]]
+
+
+def refusal_problems(where: str, got: tuple[int, Message, bytes], sample: Any) -> list[str]:
+    """A84, A79: отказ web — код, тип и тело образца раздела «прокси», а не страница nginx; по
+    одному заголовку защиты, `Server` без версии, `Cache-Control: no-store`."""
+    code, headers, body = got
+    try:
+        found: object = json.loads(body)
+    except ValueError:
+        found = body[:40]
+    want = (sample["status"], [sample["headers"]["content-type"]], sample["body"])
+    have = (code, headers.get_all("Content-Type"), found)
+    head = SECURITY | {"Server": "nginx", "Cache-Control": "no-store"}
+    problems = [f"{where}: {have}, а не {want}"] * (have != want)
+    return problems + header_problems(where, headers, head)
+
+
+def journal_problems(log: str, label: str, sent: list[str]) -> list[str]:
+    """A83: метки нет в журнале web; своих строк (адрес `CLIENT`) — по одной на ответ, по маске,
+    путь как прислан. Строка проверки здоровья web `GET /` раз в 10 с — без адреса, не в счёт."""
+    lines = log.strip().splitlines()
+    mine = [line for line in lines if line.endswith(f" {CLIENT}")]
+    got = [" ".join(line.split()[1:4]) for line in mine]
+    problems = [f"метка в журнале web: {line}" for line in lines if label in line][:1]
+    problems += [f"не по маске: {line}" for line in mine if not LINE.fullmatch(line)][:1]
+    return problems + [f"свои строки — {got}, а не {sent}"] * (got != sent)
 
 
 def csp_rules(value: str) -> list[tuple[str, list[str]]]:
@@ -258,16 +298,19 @@ def step_web_cache(run: Run) -> str:
 
 
 def step_web_headers(run: Run) -> str:
-    """A79, первая строка: у страницы и файла сборки — ровно по одному каждому из пяти заголовков
-    защиты; `Server` — `nginx` без версии. Ответы `/api/` — срез 3."""
+    """A79, первая строка: у страницы, файла сборки, `/api/health` 200 и `/api/nope` 403 — ровно по
+    одному каждому из пяти заголовков защиты; `Server` — `nginx` без версии; у ответов сервиса —
+    его `no-store` и присланный `X-Request-ID` без изменений. 502 — в шаге отказов `/api/`."""
     problems = []
-    for path in (*PAGES, asset(run)):
-        code, headers, _ = fetch(web_url(run, path))
-        problems += [f"{path}: код {code}"] * (code != 200)
-        problems += header_problems(path, headers, SECURITY | {"Server": "nginx"})
+    codes = dict.fromkeys((*PAGES, asset(run), "/api/health"), 200) | {"/api/nope": 403}
+    for path, wanted in codes.items():
+        code, headers, _ = fetch(web_url(run, path), {"X-Request-ID": REQUEST_ID})
+        own = {"Cache-Control": "no-store", "X-Request-ID": REQUEST_ID} if "/api/" in path else {}
+        problems += [f"{path}: код {code}"] * (code != wanted)
+        problems += header_problems(path, headers, SECURITY | {"Server": "nginx"} | own)
     if problems:
         raise StepError("; ".join(problems))
-    return f"страница и файл сборки — по одному: {', '.join(SECURITY)}; Server — nginx"
+    return f"страница, сборка и /api/ — по одному: {', '.join(SECURITY)}; у api — no-store, номер"
 
 
 def step_web_csp(run: Run) -> str:
@@ -284,6 +327,83 @@ def step_web_csp(run: Run) -> str:
     return f"{', '.join(PAGES)}: CSP — ровно десять директив спеки; COOP — same-origin"
 
 
+def step_api_recreate(run: Run) -> str:
+    """A81: `/api/health` через web — 200; api остановлен, его адрес занят разовым контейнером, и
+    `up -d --force-recreate api` даёт новому api другой адрес. 200 — не позже 15 с после того, как
+    он healthy: срок DNS в nginx — 10 с. web не перезапускался: `State.StartedAt` прежний."""
+    web, old = inspect(run, "web"), inspect(run, "api")
+    nets = web["NetworkSettings"]["Networks"]
+    net = next(name for name in old["NetworkSettings"]["Networks"] if name in nets)
+    before, squat = fetch(web_url(run, "/api/health"))[0], f"{run.name}-squat"
+    codes: list[int] = []
+    run.docker.containers.append(squat)
+    compose(run, "stop", "api", limit="up")
+    try:
+        flags = ["-d", "--rm", "--name", squat, "--network", net, "--entrypoint", "sleep"]
+        run.docker("run", *flags, run.image, "120", limit="docker")
+        compose(run, "up", "-d", "--force-recreate", "api", limit="up")
+        healthy = wait_health(run, "api", "healthy", 90)
+        while 200 not in codes and time.monotonic() < healthy + 15:
+            time.sleep(0.5 * bool(codes))
+            codes.append(fetch(web_url(run, "/api/health"))[0])
+        took = time.monotonic() - healthy
+    except StepError as error:
+        logs = "; ".join(service_log(run, name) for name in ("migrate", "api"))
+        raise StepError(f"{error}; {logs}") from None
+    finally:
+        run.docker("rm", "-f", squat, limit="docker", check=False)
+    new = inspect(run, "api")
+    ips = [api["NetworkSettings"]["Networks"][net]["IPAddress"] for api in (old, new)]
+    problems = [f"до пересоздания — {before}"] * (before != 200)
+    problems += [f"адрес api прежний {ips[0]}: судить не по чему"] * (ips[0] == ips[1])
+    problems += [f"за 15 с после healthy — {sorted(set(codes))}"] * (200 not in codes)
+    restarted = inspect(run, "web")["State"]["StartedAt"] != web["State"]["StartedAt"]
+    if problems or restarted:
+        raise StepError("; ".join(problems + ["web перезапускался"] * restarted))
+    return f"200; адрес api {ips[0]} → {ips[1]}; снова 200 через {took:.1f} с после healthy"
+
+
+def step_api_refusals(run: Run) -> str:
+    """A84, A83 (вторая строка), A79 (502): тело 1 048 577 байт — 413, 1 048 576 — ответ api; api
+    на паузе — 504 через 30–31 с, затем остановлен — 502 (за паузу истёк срок DNS в nginx); отказы
+    — образцы «прокси». Метка — при живом, замершем и остановленном api и на `/x/y`; в журнале её
+    нет."""
+    proxy = {s["id"]: s for s in json.loads((run.copy / CONTRACT).read_text("utf-8"))["proxy"]}
+    head = {"X-Forwarded-For": CLIENT}
+    marked = head | {"Authorization": f"Basic {run.label}", "X-Access-Token": run.label}
+    api, mark = web_url(run, "/api/health"), f"?token={run.label}"
+    sent = [
+        ("GET /api/health", fetch(api + mark, marked)),
+        ("GET /x/y", fetch(web_url(run, "/x/y" + mark), marked)),
+        ("POST /api/health", fetch(api, head, b"x" * (BODY + 1))),
+        ("POST /api/health", fetch(api, head, b"x" * BODY)),
+    ]
+    try:
+        compose(run, "pause", "api", limit="docker")
+        start = time.monotonic()
+        sent.append(("GET /api/health", fetch(api + mark, marked, timeout=40)))
+        waited = time.monotonic() - start
+        compose(run, "unpause", "api", limit="docker")
+        compose(run, "stop", "api", limit="up")
+        sent.append(("GET /api/health", fetch(api + mark, marked)))
+    finally:
+        compose(run, "unpause", "api", limit="docker", check=False)
+        compose(run, "start", "api", limit="up")
+        wait_health(run, "api", "healthy", 90)
+    live, page, large, edge, paused, stopped = (answer for _, answer in sent)
+    problems = [f"/api/health и /x/y — {live[0]}, {page[0]}"] * ((live[0], page[0]) != (200, 200))
+    problems += [f"тело {BODY} — {edge[0]} не от api"] * (not edge[1].get_all("X-Request-ID"))
+    problems += [f"504 через {waited:.1f} с"] * (not 30 <= waited <= 31)
+    problems += refusal_problems("413", large, proxy["proxy-too-large"])
+    problems += refusal_problems("504", paused, proxy["proxy-gateway-timeout"])
+    problems += refusal_problems("502", stopped, proxy["proxy-bad-gateway"])
+    log = compose(run, "logs", "--no-color", "--no-log-prefix", "web", limit="docker")
+    problems += journal_problems(log, run.label, [f"{what} {got[0]}" for what, got in sent])
+    if problems:
+        raise StepError("; ".join(problems))
+    return f"413; {BODY} — api {edge[0]}; 504 через {waited:.1f} с; 502; журнал — {len(sent)} строк"
+
+
 #: Шаги образа web — до подъёма стека; сборка нужна подъёму.
 WEB_BUILD_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A77", "сборка образа web с канарейками", step_web_build, True),
@@ -296,4 +416,6 @@ WEB_STACK_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A79", "заголовки защиты web", step_web_headers, False),
     ("A80", "CSP страницы web", step_web_csp, False),
     ("A82", "web без api 40 с", step_web_without_api, False),
+    ("A81", "пересоздание api за web", step_api_recreate, False),
+    ("A84 A83 A79", "отказы /api/ и журнал web", step_api_refusals, False),
 ]
