@@ -338,8 +338,9 @@ jobs:
           MIN_PCT: "70"
         run: bash scripts/lint/check_diff_coverage.sh
 
-  # Ход 3 «Скорости CI» (A289): порчи — на 4 машинах параллельно с `tests`. Доля берёт каждый 4-й
-  # файл диффа (`MUTATION_SHARD`, адаптация гейта — scripts/lint/adapted.json) и только считает;
+  # Ход 3 «Скорости CI» (A289): порчи — на 4 машинах параллельно с `tests`. Доля берёт каждую 4-ю
+  # группу файлов диффа — изменённый `__init__.py` идёт с файлами своего пакета (`MUTATION_SHARD`,
+  # адаптация гейта — scripts/lint/adapted.json) и только считает;
   # счёт — артефактом, порог 60 % судит джоба суммы `mutation`. Бюджет 1200 с — на долю, как был на
   # весь шаг (слово владельца 2026-11-20T10:59Z); 30 мин: установка ~1 мин, 1200 с порч и 120 с
   # самопроверки — гейт успевает сказать «бюджет исчерпан» раньше таймаута.
@@ -387,7 +388,6 @@ jobs:
           LINT_PY_SRC: backend/src
           MUTATION_SHARD: ${{ matrix.shard }}/4
           MUTATION_WORKERS: "4"
-          MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
 
@@ -423,6 +423,7 @@ jobs:
       - name: Mutation testing (сумма долей)
         env:
           MUTATION_SUM: "4"
+          MIN_KILLED: "60"            # порог судит сумма, доля только считает (A109, A289)
         run: bash scripts/lint/check_mutation_gate.sh
 
   # «Оракул стека в CI» (A76): собранный образ делает продукт. Оракул Ч1.5а строит стек из чистой

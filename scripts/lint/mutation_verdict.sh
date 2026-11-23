@@ -166,6 +166,7 @@ py_recheck() {
   ( cd "$REPO_ROOT/$MUT_CWD" && ${TIMEOUT_BIN:+"$TIMEOUT_BIN" "$RECHECK_SEC"} \
       "$MUTMUT" run --max-children 1 "${names[@]}" ) >"$out" 2>&1
   rc=$?
+  db_marks   # адаптация (A285, A287): сбой копии базы в самопроверке — «не просудил», а не «убит снова»
   (( rc == 0 || rc == 124 )) || tail -15 "$out" >&2
   recheck_judge "${#names[@]}" "$rc" "$( cd "$REPO_ROOT/$MUT_CWD" && "$MUTMUT" results --all true \
     2>/dev/null | awk -F': ' 'NR == FNR { pick[$0]; next } { sub(/^ +/, "", $1) }

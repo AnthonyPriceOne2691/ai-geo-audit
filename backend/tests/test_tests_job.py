@@ -77,6 +77,7 @@ def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
     jobs = workflow.get("jobs", {})
     shard, total = jobs.get("mutation-shard", {}), jobs.get("mutation", {})
     gate = step(shard, "Mutation testing (доля)").get("env", {})
+    summed = step(total, "Mutation testing (сумма").get("env", {})
     upload = next(
         (s for s in shard.get("steps", []) if "upload-artifact" in str(s.get("uses"))), {}
     )
@@ -90,7 +91,7 @@ def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
         (shard.get("strategy", {}).get("fail-fast") is False, "доли: fail-fast снимет соседей"),
         (gate.get("MUTATION_SHARD") == "${{ matrix.shard }}/4", "доли: MUTATION_SHARD не k/4"),
         (gate.get("BUDGET_SEC") == "1200", "доли: бюджет не 1200 с"),
-        (gate.get("MIN_KILLED") == "60", "доли: цель не 60 %"),
+        ("MIN_KILLED" not in gate, "доли: порог у доли — доля только считает, судит сумма"),
         (gate.get("MUTATION_WORKERS") == "4", "доли: воркеров не 4"),
         (gate.get("LINT_PY_SRC") == "backend/src", "доли: область не backend/src"),
         (
@@ -113,7 +114,9 @@ def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
             download.get("with", {}).get("merge-multiple") is True,
             "сумма: счета не в одном каталоге",
         ),
-        (step(total, "Mutation testing (сумма").get("env") == {"MUTATION_SUM": "4"}, "сумма: не 4"),
+        (summed.get("MUTATION_SUM") == "4", "сумма: не 4"),
+        (summed.get("MIN_KILLED") == "60", "сумма: порог не 60 % — он судит здесь (A109)"),
+        (set(summed) == {"MUTATION_SUM", "MIN_KILLED"}, f"сумма: лишнее в env {sorted(summed)}"),
     ]
     return [message for ok, message in checks if not ok]
 
@@ -161,6 +164,13 @@ COPIES = [
     ("A289-fail-fast", r"fail-fast: false", "fail-fast: true", "fail-fast"),
     ("A289-shard-of-3", r"\{\{ matrix\.shard \}\}/4", "{{ matrix.shard }}/3", "не k/4"),
     ("A289-sum-of-3", r'MUTATION_SUM: "4"', 'MUTATION_SUM: "3"', "сумма: не 4"),
+    ("A289-sum-threshold-50", r'MIN_KILLED: "60"', 'MIN_KILLED: "50"', "сумма: порог не 60 %"),
+    (
+        "A289-threshold-on-shard",
+        r'(?=          BUDGET_SEC: "1200")',
+        '          MIN_KILLED: "60"\n',
+        "порог у доли",
+    ),
     ("A289-one-count", r"pattern: mutation-shard-\*", "pattern: mutation-shard-1", "все счета"),
     (
         "A289-db-by-tag",

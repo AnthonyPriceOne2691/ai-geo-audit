@@ -23,6 +23,8 @@ import dbtools
 import mutation_db
 import pytest
 import run_summary
+from hypothesis import given
+from hypothesis import strategies as st
 from sqlalchemy.engine import make_url
 
 NAME = r"audit_test_[0-9a-f]{10}"
@@ -335,7 +337,7 @@ def gate_block(mutants: Path) -> str:
     """Блок адаптации `mutation_py.sh` (метки и итог баз прогона) с заглушками тела гейта."""
     text = GATE.read_text(encoding="utf-8")
     start = text.index("# Адаптация (scripts/lint/adapted.json): у каждой сессии pytest")
-    end = text.index("\nfi\n", start) + len("\nfi\n")
+    end = text.index("\ndb_marks\n", start) + len("\ndb_marks\n")
     stubs = f'mut_dir="{mutants}"; yellow=""; reset=""\n'
     stubs += 'not_judged() { echo "не судил"; exit 7; }\n'
     return stubs + text[start:end] + 'echo "дальше"\n'
@@ -400,6 +402,36 @@ def test_a281_most_copies_at_once_come_from_the_journal() -> None:
     assert mutation_db.copies_at_once(chain, until=20) == (1, 0)
     assert mutation_db.copies_at_once(killed, until=5) == (2, 2)
     assert mutation_db.copies_at_once(reused, until=9) == (1, 1)
+
+
+#: Потоки прогона: у каждого — сессии подряд, (длительность, убита ли до сноса).
+SLOTS = st.lists(
+    st.lists(st.tuples(st.integers(1, 5), st.booleans()), max_size=5), min_size=1, max_size=4
+)
+
+
+@given(slots=SLOTS)
+def test_a281_copies_at_once_stay_within_workers_plus_abandoned(
+    slots: list[list[tuple[int, bool]]],
+) -> None:
+    """A281, слово владельца 2026-11-23T12:23Z: наибольшее число копий разом — не больше числа
+    потоков плюс копии «без сноса» (сессии, не дошедшие до сноса, — их копии ждут уборки); на
+    журнале «4 потока, одна сессия без сноса» строка покажет 5 — граница, а не нарушение."""
+    lines, until = [], 0
+    for slot, sessions in enumerate(slots):
+        moment = 0
+        for number, (length, killed) in enumerate(sessions):
+            lines.append(f"{moment}\tstart\tc{slot}-{number}\tm")
+            if not killed:
+                lines.append(f"{moment + length}\tend\tc{slot}-{number}\tm")
+            moment += length
+        until = max(until, moment + 1)
+    journal = sorted(lines, key=lambda line: float(line.split("\t")[0]))
+    most, abandoned = mutation_db.copies_at_once(journal, until)
+    assert most <= len(slots) + abandoned
+    four = [f"0\tstart\tc{i}\tm" for i in range(4)] + ["1\tstart\tc4\tm"]
+    four += [f"{i + 1}\tend\tc{i}\tm" for i in range(1, 5)]
+    assert mutation_db.copies_at_once(four, until=9) == (5, 1)
 
 
 async def test_a283_base_database_is_prepared_under_an_os_lock(
