@@ -18,21 +18,33 @@ LENGTH = """# file_length_baseline.txt — снимок
 [exemption]
 580:deploy/deploy.py
 """
+#: Снимок без разделов — как `dead_code_baseline.txt`.
+DEAD = "# dead_code_baseline.txt — снимок\n1:backend/src/pkg/a.py::name\n"
 CALL = (
     "import json, sys; sys.path.insert(0, sys.argv[1]); import delivery_history as h; "
     "print(json.dumps(h.debt_entries(sys.stdin.read())))"
 )
 
 
-def test_a290_exemption_is_not_debt_and_baseline_is() -> None:
-    """A290: снимок длины с записью в разделе `[exemption]` и записью в разделе `[baseline]` — в
-    долге только запись `[baseline]`."""
+def entries(blob: str) -> dict[str, int]:
+    """Долг снимка `blob` по `debt_entries` настоящего скрипта."""
     done = subprocess.run(
         [sys.executable, "-I", "-c", CALL, str(SCRIPTS)],
-        input=LENGTH,
+        input=blob,
         capture_output=True,
         text=True,
         timeout=30,
         check=True,
     )
-    assert json.loads(done.stdout) == {"backend/src/pkg/big.py": 640}
+    found: dict[str, int] = json.loads(done.stdout)
+    return found
+
+
+def test_a290_exemption_is_not_debt_and_baseline_is() -> None:
+    """A290: в долг не входит только запись раздела `[exemption]` снимка длины; записи раздела
+    `[baseline]` и снимков без разделов (как `dead_code_baseline.txt`) — входят, как у канона.
+    Второй вход — страж неизменного поведения канона: правка не ослепляет снимки без разделов."""
+    assert (entries(LENGTH), entries(DEAD)) == (
+        {"backend/src/pkg/big.py": 640},
+        {"backend/src/pkg/a.py::name": 1},
+    )
