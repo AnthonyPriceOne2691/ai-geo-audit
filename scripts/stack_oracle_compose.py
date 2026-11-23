@@ -28,10 +28,6 @@ if TYPE_CHECKING:
 COMPOSE = "docker-compose.yml"
 
 
-#: Адрес web для доверия api — петля, выдуманный: сам web — Ч1.5б.
-WEB_ADDRESS = "127.0.0.1"
-
-
 DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
 
 
@@ -128,9 +124,16 @@ def slot(run: Run) -> tuple[int, str]:
     return found
 
 
+def web_address(subnet: str) -> str:
+    """A83: постоянный адрес web — последний адрес узла подсети front: докер раздаёт адреса с
+    начала подсети, и api с разовыми контейнерами его не займут."""
+    return str(ipaddress.ip_network(subnet)[-2])
+
+
 def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
     """Окружение compose: переменные сервера стека без чужих `COMPOSE_*`; `wrong` — неверный
-    пароль у migrate (A67); образ web, его порт и подсеть `front` — свои у прогона (A82)."""
+    пароль у migrate (A67); образ web, его порт, подсеть `front` и адрес в ней — свои у прогона
+    (A82, A83)."""
     clean = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
     port, subnet = slot(run)
     return clean | {
@@ -142,7 +145,7 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
         "MIGRATE_DATABASE_URL": DB_URL.format(wrong or run.password),
         "API_DATABASE_URL": DB_URL.format(run.password),
         "JWT_SECRET": run.jwt,
-        "WEB_ADDRESS": WEB_ADDRESS,
+        "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
     }
 
@@ -210,7 +213,8 @@ def alembic(run: Run, command: str) -> list[str]:
 
 
 def step_rules_on_file(run: Run) -> str:
-    """A73: правила на настоящем файле внутри собранного образа. Файл назван явно — чужой
+    """A73, A87: правила на настоящем файле внутри собранного образа — «сервисов 5, правил 23»,
+    нарушений 0. Файл назван явно — чужой
     `docker-compose.override.yml` не подмешается; профили включены все; без `-p`."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
     base = ["compose", "-f", str(run.copy / COMPOSE), "--env-file", os.devnull, "--profile", "*"]
@@ -222,7 +226,7 @@ def step_rules_on_file(run: Run) -> str:
     rules = ["-m", "ai_geo_audit.ops.stack_rules"]
     done = run.docker.result("run", *flags, run.image, *rules, stdin=raw.encode())
     lines = output(done).strip().splitlines()
-    if done.returncode or lines[-1:] != [f"итог: сервисов {len(services)}, правил 16, нарушений 0"]:
+    if done.returncode or lines[-1:] != [f"итог: сервисов {len(services)}, правил 23, нарушений 0"]:
         raise StepError(f"правила — код {done.returncode}: {' | '.join(lines[-5:])}")
     return f"{lines[-1]}; config --services — {len(services)}"
 
@@ -344,7 +348,7 @@ def step_bad_migrate(run: Run) -> str:
 #: Шаги стека: примеры, название, функция, нужен ли он следующим шагам. A67 ломает стек — он
 #: отдельно и последним: шаги на живом стеке встают до него.
 STACK_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
-    ("A73", "правила на настоящем docker-compose.yml", step_rules_on_file, False),
+    ("A73 A87", "правила на настоящем docker-compose.yml", step_rules_on_file, False),
     ("A65 A63", "подъём стека и migrate", step_up, True),
     ("A69", "здоровье api после старта", step_health, False),
     ("A66", "повтор migrate", step_repeat, False),
