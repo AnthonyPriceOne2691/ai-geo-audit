@@ -1,17 +1,18 @@
 """Проба хода 0 «Скорости CI» (A280) — только в ветке-пробе, в main не идёт.
 
 Каждая сессия pytest под mutmut пишет строку отметок времени в журнал главного процесса mutmut:
-начало настройки, начало сессии, база готова, начало и конец тестов, конец настройки. `atexit`
-главного процесса печатает сводку частей одной порчи. Без mutmut (`MUTANT_UNDER_TEST` пуст) молчит.
-Дети mutmut выходят через `os._exit` и `atexit` не зовут.
+начало настройки, начало сессии, база готова, начало и конец тестов, конец настройки. Сводку
+печатает отдельный шаг джобы (`python tests/mutation_timing.py`) из журнала — и после обрыва
+по бюджету (`timeout` шлёт SIGTERM, `atexit` не идёт), и после SIGKILL: вывод mutmut гейт
+складывает в файл и на зелёном не показывает. Без mutmut (`MUTANT_UNDER_TEST` пуст) молчит.
 """
 
 from __future__ import annotations
 
-import atexit
 import itertools
 import os
 import statistics
+import sys
 import tempfile
 import time
 from collections.abc import Iterator
@@ -23,7 +24,6 @@ KEYS = ("configure", "start", "prepared", "loop", "loop_end", "unconfigure")
 #: Фазы главного процесса mutmut; остальные значения `MUTANT_UNDER_TEST` — имена мутантов.
 MAIN_PHASES = {"stats", "fail", "list_all_tests", "mutant_generation"}
 MARKS: dict[str, float] = {}
-REGISTERED: list[int] = []
 
 
 def phase() -> str:
@@ -60,13 +60,9 @@ def pytest_unconfigure(config: pytest.Config) -> None:
     if not phase():
         return
     mark("unconfigure")
-    main = main_pid()
     row = "\t".join([str(os.getpid()), phase(), *(f"{MARKS.get(k, 0.0):.4f}" for k in KEYS)])
-    with journal(main).open("a", encoding="utf-8") as out:
+    with journal(main_pid()).open("a", encoding="utf-8") as out:
         out.write(row + "\n")
-    if main == os.getpid() and not REGISTERED:
-        REGISTERED.append(main)
-        atexit.register(summary, main)
 
 
 def part(rows: list[dict[str, float]], end: str, begin: str) -> list[float]:
@@ -82,16 +78,17 @@ def line(name: str, values: list[float]) -> str:
     )
 
 
-def summary(main: int) -> None:
-    rows, stats = [], []
-    for raw in journal(main).read_text(encoding="utf-8").splitlines():
-        _pid, name, *marks = raw.split("\t")
+def summary(path: Path) -> None:
+    rows, main = [], []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        _, name, *marks = raw.split("\t")
         row = dict(zip(KEYS, map(float, marks), strict=True))
-        (stats if name in MAIN_PHASES else rows).append(row)
-    rows.sort(key=lambda r: r["configure"])
-    gaps = [b["configure"] - a["unconfigure"] for a, b in itertools.pairwise(rows)]
-    print(f"проба хода 0: сессий порч {len(rows)}, сессий главного процесса {len(stats)}")
-    print(line("статистика (весь набор)", part(stats, "unconfigure", "configure")))
+        (main if name in MAIN_PHASES else rows).append((name, row))
+    print(f"проба хода 0: {path.name} — сессий порч {len(rows)}, главного процесса {len(main)}")
+    for name, row in main:
+        print(f"  главный процесс, {name}: {row['unconfigure'] - row['configure']:.1f} с")
+    sessions = sorted((row for _, row in rows), key=lambda r: r["configure"])
+    gaps = [b["configure"] - a["unconfigure"] for a, b in itertools.pairwise(sessions)]
     for name, end, begin in (
         ("запуск pytest до сессии", "start", "configure"),
         ("подготовка базы", "prepared", "start"),
@@ -100,5 +97,17 @@ def summary(main: int) -> None:
         ("конец сессии", "unconfigure", "loop_end"),
         ("вся сессия", "unconfigure", "configure"),
     ):
-        print(line(name, part(rows, end, begin)))
+        print(line(name, part(sessions, end, begin)))
     print(line("между сессиями (fork, mutmut, pytest до настройки)", gaps))
+    if sessions:
+        wall = sessions[-1]["unconfigure"] - sessions[0]["configure"]
+        print(f"  фаза порч по стене: {wall:.1f} с, на порчу {wall / len(sessions):.3f} с")
+
+
+if __name__ == "__main__":
+    found = sorted(Path(tempfile.gettempdir()).glob("mutation-timing-*.tsv"))
+    if not found:
+        print(f"проба хода 0: журналов в {tempfile.gettempdir()} нет")
+        sys.exit(1)
+    for path in found:
+        summary(path)

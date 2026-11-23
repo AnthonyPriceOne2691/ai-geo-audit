@@ -349,3 +349,10 @@ jobs:
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
+
+      # Проба хода 0 «Скорости CI» (A280), только в ветке-пробе: сводка из журнала сессий порч —
+      # и после обрыва по бюджету; вывод mutmut гейт складывает в файл и на зелёном не показывает.
+      - name: Probe step 0 — mutant session timing
+        if: always() && github.event_name == 'pull_request'
+        working-directory: backend
+        run: uv run --no-sync python tests/mutation_timing.py

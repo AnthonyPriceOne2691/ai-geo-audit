@@ -162,6 +162,3 @@ def _test_exists(root: Path, ref: str | None) -> bool:
         return False
     pattern = rf"(?m)^(async )?def {re.escape(name)}\("
     return re.search(pattern, file.read_text(encoding="utf-8")) is not None
-
-
-# Проба хода 0 «Скорости CI»: метка области гейта мутаций, в main не идёт.
