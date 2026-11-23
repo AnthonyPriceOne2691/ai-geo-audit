@@ -51,7 +51,13 @@
 - **hooks:** not-deployed
 - **blockers:** none
 - **waivers:** none
-- **new_dependency:** none reason=пакетов нет: стандартная библиотека (`fcntl`, `hashlib`, `atexit`) и asyncpg из замка by=human:owner at=2026-11-23T08:42Z
+- **new_dependency:** actions/upload-artifact reason=v7.0.2, `cf430e030ddbb5b0abf93d22962f4752f3646cd9`, выпуск 2026-10-07: доля кладёт счёт порч файлом для джобы суммы (A289), как в образце канона §3.7 by=human:owner at=2026-11-23T12:05Z
+- **new_dependency:** actions/download-artifact reason=v8.0.2, `9000827ccba6bdab643e8b6fd33ac0654aef8333`, выпуск 2026-10-07: джоба суммы собирает счёт долей (A289) by=human:owner at=2026-11-23T12:05Z
+  <!-- Слово владельца 2026-11-23T12:05Z («да на всё»), пункт 1 списка ведущей: два действия
+       GitHub для хода 3. Хеши ведущая сверила тремя чтениями — ref тега, commits API,
+       `git ls-remote`; теги лёгкие. Пакетов Python по-прежнему нет: стандартная библиотека
+       (`fcntl`, `hashlib`, `atexit`) и asyncpg из замка — прежняя строка «none» от
+       2026-11-23T08:42Z заменена этими двумя. Внесла ведущая. -->
   <!-- `by=human:owner at=2026-11-23T08:42Z` — подпись владельца под поставкой; тест контракта
        В1а (A104) требует `by=human:` и у строки отказа `none`. -->
 - **runtime_paths:** .github/workflows/
