@@ -98,6 +98,44 @@
   образа — без `cap_add`; postgres с корнем только для чтения — с `tmpfs` на
   `/var/run/postgresql` и `/tmp`.
 
+- Покрытие изменённого в `scripts/` тестами без Docker — долг по путям: CI покрытие и порчи
+  `scripts/` не мерит (решение проверяющего 2026-11-20 на сдаче «Оракула»). Замер —
+  at=2026-11-23T14:43:11Z на `11bdc2d`, код — `329aa47`. Команда из `backend/`:
+
+  ```
+  .venv/bin/python -m coverage run --data-file=<tmp>/.coverage --source=<копия>/scripts \
+    -m pytest -q -p no:cacheprovider -W error tests/test_stack_oracle.py \
+    tests/test_stack_oracle_web.py tests/test_stack_oracle_hardening.py tests/test_oracle_guard.py \
+    tests/test_image_scan.py tests/test_web_conf.py tests/test_dockerfiles.py \
+    tests/test_oracle_jobs.py tests/test_stack_rules.py
+  .venv/bin/python -m coverage combine --data-file=<tmp>/.coverage <tmp>
+  ```
+
+  Тестов — 320 из 320. `--source` стоит в командной строке: `source` из `[tool.coverage.run]`
+  (`src`, `migrations`) гасит `--include`, и замер выходит пустым. Изменённые операторы —
+  операторы coverage на строках `git diff -U0 fe0f367..HEAD` своего файла.
+
+  | Файл | Изменённых операторов | Покрыто | Вне тел шагов | В телах шагов |
+  |---|---|---|---|---|
+  | `scripts/stack_oracle.py` | 3 | 3 (100 %) | 3 из 3 | — |
+  | `scripts/stack_oracle_compose.py` | 42 | 41 (97,6 %) | 39 из 39 | 2 из 3 |
+  | `scripts/stack_oracle_web.py` | 257 | 168 (65,4 %) | 103 из 103 | 65 из 154 |
+  | `scripts/stack_oracle_hardening.py` | 91 | 49 (53,8 %) | 45 из 45 | 4 из 46 |
+  | `scripts/image_scan.py` | 1 | 1 (100 %) | 1 из 1 | — |
+  | **Всего** | **394** | **262 (66,5 %)** | **191 из 191** | **71 из 203** |
+
+  Вне тел шагов покрыто всё. Непокрытые 132 оператора — тела живых шагов: они зовут Docker и
+  исполняются только живьём — в CI, прогон 45195151903, джоба `stack`: шагов 25, красных 0, и
+  на машине — прогон на `2fdfa3a` выше. По шагам:
+  - `stack_oracle_compose.step_rules_on_file` (A73 A87) — 1, строка счёта «правил 23»;
+  - `stack_oracle_web.step_web_build` и `step_web_files` (A77) — 14 и 17;
+  - `step_web_process` и `step_web_without_api` (A82) — 15 и 11;
+  - `step_api_recreate` (A81) — 14; `step_api_refusals` (A84 A83 A79) — 18;
+  - `stack_oracle_hardening.step_privileges` (A87) — 4; `step_networks` (A86) — 17;
+  - `front_net` и `step_client_address` (A83) — 5 и 16.
+  Покрытые 71 оператор в телах шагов — тесты веток отказа на подставном исполнителе (L88, L89).
+  Красные исходы шагов — живые порчи, раздел «Behavior oracles».
+
 ## Shape oracles
 - [x] PASS — ruff, ruff format и mypy strict — хуки каждого коммита. На `329aa47` pre-push по
       всему дереву — зелёный: мёртвый код, гейт поставки, ratchet снимков, новая зависимость.
@@ -154,9 +192,10 @@
 - A88 и A89 — Ч1.5в (разрез, слово владельца 2026-11-23T14:06:40Z).
 - Проба проверяющего по спеке («Безопасность», п. 4) — Chrome без окна, ноль нарушений CSP в
   обеих темах.
-- A86, порча «у `data` снят `internal`»: на Docker Desktop — `connected` за 0,013 с, а не
-  тайм-аут; шаг судит «`ENETUNREACH` меньше чем за секунду» — красное в обоих случаях. На
-  раннере Linux ожидается тайм-аут спеки — сверить журнал CI.
+- A86, порча «у `data` снят `internal`»: на Docker Desktop соединение — `connected` за 0,013 с,
+  а не тайм-аут спеки. На раннере исход соединения под порчей — вывод; порчу держит проверка
+  флагов сетей на любой платформе (`network_problems`, тест
+  `test_a86_only_web_has_an_ordinary_network`, случай `s_data: False`).
 - A82, третья строка: «кандидат занят» в двух прогонах разом не встретился — первые кандидаты
   двух имён соседние. Держит тест без Docker.
 - A81: живой шаг не судит «`resolver` без `valid`» — держит тест без Docker.
