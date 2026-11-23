@@ -118,7 +118,7 @@ def cleanup(run: Run) -> list[str]:
     """Уборка своего имени: стек с томами, контейнеры и образы; остаток — по меткам compose."""
     if (run.copy / COMPOSE).is_file():
         with contextlib.suppress(StepError):
-            compose(run, "down", "--volumes", "--remove-orphans", limit="up", check=False)
+            compose(run, "down", "-v", "--remove-orphans", limit="up", check=False)
     left = run.docker.cleanup()
     mark = f"label=com.docker.compose.project={run.name}"
     for kind, flags in (("container", ["-a"]), ("volume", []), ("network", [])):
@@ -170,12 +170,24 @@ def step_rules_on_file(run: Run) -> str:
     return f"{lines[-1]}; config --services — {len(services)}"
 
 
+def migrate_log(run: Run) -> str:
+    """Хвост журнала migrate для причины отказа: alembic пишет «FAILED: …» в вывод контейнера,
+    а не в вывод `up`. Пароль и секрет стека заменены звёздочками (A67: пароля нет в выводе)."""
+    log = compose(run, "logs", "--no-color", "--tail", "20", "migrate", limit="docker", check=False)
+    tail = " | ".join(log.strip().splitlines()[-6:])
+    for secret in (run.password, run.jwt):
+        tail = tail.replace(secret, "***")
+    return f"журнал migrate: {tail}"
+
+
 def step_up(run: Run) -> str:
     """A65, A63: стек одной командой — migrate вышел 0 до старта api, api healthy; ревизия в базе
     равна голове, обе — из образа; migrate и процессы api — от uid 10001."""
     done = compose_result(run, "up", "--detach", "--wait", "--wait-timeout", "240", limit="up")
     if done.returncode:
-        raise StepError(f"up --wait — код {done.returncode}: {output(done)[-500:]}")
+        raise StepError(
+            f"up --wait — код {done.returncode}: {output(done)[-500:]}; {migrate_log(run)}"
+        )
     migrate, api = inspect(run, "migrate"), inspect(run, "api")
     finished, started = (
         parse_time(migrate["State"]["FinishedAt"]),
