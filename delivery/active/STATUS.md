@@ -9,7 +9,10 @@
 - **phase:** verify
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
-- **human_ok_spec:** deferred (reason=мини-спека в tasks.md; правку назначил проверяющий 2026-11-23T09:56Z, слово владельца на публикацию просит он, at=2026-11-23T10:06Z)
+- **human_ok_spec:** yes (by=human:owner at=2026-11-23T10:15Z)
+  <!-- Слово владельца «да на всё, подписываю оракул» 2026-11-23T10:15Z на список ведущей,
+       п. 1: правка тестов ядра выката — опубликовать по готовности. Мини-спека — в tasks.md,
+       тест-повтор — `test_mutants_layout.py`. Вносит проверяющий. -->
 - **human_ok_plan:** n/a
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present — pytest; тест-повтор кладёт копию помощников тестов выката в раскладку mutmut и грузит скрипт выката в подпроцессе
