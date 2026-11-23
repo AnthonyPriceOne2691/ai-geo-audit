@@ -6,7 +6,7 @@
 - **kind:** bugfix
 - **repro_test:** backend/tests/test_mutants_layout.py::test_deploy_fakes_load_script_from_mutants_layout
 - **diagnosis:** active/diagnosis.md
-- **phase:** implement
+- **phase:** verify
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** deferred (reason=мини-спека в tasks.md; правку назначил проверяющий 2026-11-23T09:56Z, слово владельца на публикацию просит он, at=2026-11-23T10:06Z)
