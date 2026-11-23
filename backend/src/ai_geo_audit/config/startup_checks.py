@@ -155,3 +155,6 @@ def check_startup(process: Process, found: list[Problem] | None = None) -> None:
     if found:
         lines = "\n".join(f"  {p.env_name} — {p.why}" for p in found)
         raise ConfigError(f"Процесс «{process}» не стартует в боевом режиме:\n{lines}")
+
+
+# Проба A288 «Скорости CI»: метка области гейта мутаций, в main не идёт.

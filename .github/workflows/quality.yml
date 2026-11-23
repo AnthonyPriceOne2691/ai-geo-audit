@@ -349,3 +349,13 @@ jobs:
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
+
+      # Проба A288 «Скорости CI», только в ветке-пробе: исходы порч поимённо — для сверки «до» и
+      # «после» по одной области.
+      - name: Probe A288 — mutant outcomes
+        if: always() && github.event_name == 'pull_request'
+        working-directory: backend
+        run: |
+          uv run --no-sync mutmut results --all true | sort > /tmp/a288.txt
+          cut -d: -f2 /tmp/a288.txt | sort | uniq -c
+          cat /tmp/a288.txt
