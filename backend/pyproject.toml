@@ -237,8 +237,9 @@ asyncio_default_fixture_loop_scope = "function"
 # `-W error…` в командной строке сильнее её. Ключ знает плагин от 0.24, со старым — капкан.
 addopts = "-q --strict-markers --strict-config -p run_sentinels"   # стражи — §2.7c
 xfail_strict = true        # xfail, который вдруг прошёл, = сигнал, а не тишина
-# Адаптация (scripts/lint/adapted.json): узел с кириллицей в параметре печатается как есть. В
-# экранированном виде (`[\u043f…]`) его не выбрать обратно — код 4, и гейт мутаций не судит.
+# Узел теста с не-ASCII в `ids` pytest печатает экранированным, и второй `pytest.main` в том же
+# процессе — так зовёт mutmut — по этому имени его не находит (код 4; pytest 8.4–9.2, свежий
+# процесс находит): гейт мутаций не судил ничего (§3.7, `cqg@3.18`). Ключ печатает узел как есть.
 disable_test_id_escaping_and_forfeit_all_rights_to_community_support = true
 
 # --- mypy (чистый strict; НЕ копируй сюда легаси [[overrides]] чужого проекта) -
@@ -252,9 +253,12 @@ explicit_package_bases = true
 namespace_packages = true
 implicit_reexport = true                            # facade-модули с re-export
 exclude = ["migrations/", "tests/", ".venv/", "venv/", "scripts/"]
-# Адаптация (scripts/lint/adapted.json): в SQLAlchemy 2.1 модуля `sqlalchemy.ext.mypy` нет, и
-# mypy с ним не стартует; без `mypy_path` модули раскладки src/ зовутся `src.ai_geo_audit.*`.
+# Плагина SQLAlchemy здесь нет: в 2.1 модуля `sqlalchemy.ext.mypy` нет, и mypy с ним выходит кодом 2,
+# не проверив ни строки (замер 2.1.9, `cqg@3.19`). SQLAlchemy до 2.1 и плагин нужен — допиши его.
 plugins = ["pydantic.mypy"]
+# Раскладка `src/`: без корня модули зовутся `src.<пакет>.*`, импорт пакета не находится и под
+# `ignore_missing_imports` молча становится `Any`. На плоской раскладке каталога нет — ключ
+# ничего не меняет (замер mypy 2.4.1).
 mypy_path = "src"
 ignore_missing_imports = true
 follow_imports = "silent"

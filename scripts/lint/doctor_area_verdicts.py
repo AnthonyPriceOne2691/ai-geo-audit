@@ -90,6 +90,25 @@ def _area_of(files: list[str], env: dict, files_re) -> list[str]:
             and (files_re is None or files_re.search(f))]
 
 
+def _tree(area: list[str]) -> str:
+    """Состав области — четыре частых расширения: улика, по которой находку №1 нашли глазами."""
+    hist: dict[str, int] = {}
+    for f in area:
+        ext = "." + f.rsplit(".", 1)[-1]
+        hist[ext] = hist.get(ext, 0) + 1
+    return ", ".join(f"{e} ×{c}" for e, c in sorted(hist.items(), key=lambda kv: -kv[1])[:4])
+
+
+def zero_seen(unit: str, area: list[str]) -> str:
+    """Ноль — тем же видом, что «N из M» (`cqg@3.23`): знаменатель и состав дерева. Голое
+    «просмотрено 0» не отличало «смотреть не на что» от «из 23 не увидел ни одного», и строку
+    спеки первого проекта на `cqg@3.14` сверяли с намерением, а не с выводом."""
+    if not unit.startswith("файл"):
+        return f"просмотрено 0 — сверить с деревом нечем (единица: {unit or '?'})"
+    return (f"просмотрено 0 из {len(area)} файл(ов) области"
+            + (f" (в дереве {_tree(area)})" if area else ""))
+
+
 class AreaVerdicts:
     """Вердикты о площади: методы примешиваются к `Doctor` (`cqg@1.98`)."""
 
@@ -135,12 +154,7 @@ class AreaVerdicts:
             self.add(AUTO, point, f"просмотрено {n} из {len(area)} файл(ов) области"
                                   + (", маска покрывает область" if mask else ""))
             return
-        hist: dict[str, int] = {}
-        for f in area:
-            ext = "." + f.rsplit(".", 1)[-1]
-            hist[ext] = hist.get(ext, 0) + 1
-        top = ", ".join(f"{e} ×{c}" for e, c in
-                        sorted(hist.items(), key=lambda kv: -kv[1])[:4])
+        top = _tree(area)
         if multi_rule:
             self.add(AUTO, point, f"просмотрено {n} из {len(area)} — у правила свой "
                                   f"FILTER, частичная область законна ({top})")
@@ -222,8 +236,8 @@ class AreaVerdicts:
         self._blind_pending.append((point, blind, list(mask)))
         return True
 
-    def _judge_zero(self, point: str, out: str, env: dict, *,
-                    multi_rule: bool) -> None:
+    def _judge_zero(self, point: str, out: str, env: dict, *, multi_rule: bool,
+                    unit: str, files: list[str], files_re) -> None:
         """Просмотрено 0 — бедность окружения или ложь объявленной роли.
 
         Шов по данным: ветка нуля не отдаёт наружу НИ ОДНОГО имени, только
@@ -241,9 +255,10 @@ class AreaVerdicts:
         БЬЁТ названный пропуск (гейт может шепнуть «пропущено» в теле и
         напечатать «: OK» в итоге, а читают итог — это форма F10 и она DEAD).
         """
+        seen = zero_seen(unit, _area_of(files, env, files_re))
         named = next((w for w in SKIP_WORDS if w in out), None)
         if named and not any(w in out for w in SUCCESS_WORDS):
-            self.add(WEAK, point, f"просмотрено 0 — но пропуск НАЗВАН самим "
+            self.add(WEAK, point, f"{seen} — но пропуск НАЗВАН самим "
                                   f"гейтом ({named}): бедность окружения, не ложь")
             return
 
@@ -262,16 +277,16 @@ class AreaVerdicts:
         missing = self._missing_roots(env)
         if missing:
             self.add(DEAD, point,
-                     "настроен на НЕСУЩЕСТВУЮЩИЙ путь "
+                     f"{seen}: настроен на НЕСУЩЕСТВУЮЩИЙ путь "
                      f"({', '.join(missing)}) — смотреть некуда, а роль "
                      "объявлена закрытой (§6: значения живут в `entry:`)")
         elif multi_rule:
             self.add(WEAK, point,
-                     "просмотрено 0 файлов. У правила свой FILTER, поэтому "
+                     f"{seen}. У правила свой FILTER, поэтому "
                      "ноль может честно значить «предмета нет» — но может и "
                      "«маска шаблонная». Отсюда не различить: сверь §6")
         else:
             self.add(DEAD, point,
-                     "подключён и смотрит в ПУСТОТУ: просмотрено 0 файлов. "
+                     f"подключён и смотрит в ПУСТОТУ: {seen}. "
                      "Роль объявлена закрытой, а гейт не видит кода — маска "
                      "или путь остались шаблонными (§6: значения в `entry:`)")

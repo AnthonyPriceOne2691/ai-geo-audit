@@ -21,6 +21,13 @@ STAGES = ("commit-msg", "post-checkout", "post-commit", "post-merge", "post-rewr
           "manual")
 OLD_STAGES = {"commit": "pre-commit", "merge-commit": "pre-merge-commit", "push": "pre-push"}
 
+#: Значение `LINT_*` — слово shell (`cqg@3.22`): кавычки снимаются, `;` `&` `|` `<` `>` и пробел
+#: вне кавычек его кончают. `\S+` брал форму шапки самого канона `export LINT_PY_SRC=backend/app;
+#: cd …` вместе с «;» — гейт гонялся в `backend/app;`, и доктор писал DEAD «настроен на
+#: НЕСУЩЕСТВУЮЩИЙ путь» (первый проект на `cqg@3.14` обходил это кавычками).
+LINT_WORD = re.compile(r"\b(LINT_[A-Z_]+)=((?:\"[^\"]*\"|'[^']*'|[^\s;&|<>\"'])+)")
+QUOTED = re.compile(r"\"([^\"]*)\"|'([^']*)'")
+
 
 def _value_of(lines: list[str], at: int) -> list[str]:
     """Строки значения ключа из строки `at` без комментариев: её остаток, строки глубже ключа
@@ -76,9 +83,15 @@ class HookReaders:
             # живёт `extract.code_only()` (cqg@1.59).
             if line.lstrip().startswith("#") or name not in line:
                 continue
-            for m in re.finditer(r"\b(LINT_[A-Z_]+)=(\"[^\"]*\"|'[^']*'|\S+)", line):
-                env[m.group(1)] = m.group(2).strip("\"'")
+            for m in LINT_WORD.finditer(line):
+                env[m.group(1)] = QUOTED.sub(r"\1\2", m.group(2))
         return env
+
+    def hook_env_of(self, name: str) -> dict:
+        """`LINT_*` хука гейта `name` из конфига — им же пробуется своя канарейка (`cqg@3.22`)."""
+        cfg = self.root / ".pre-commit-config.yaml"
+        return self._hook_env(cfg.read_text("utf-8", errors="replace"), name) \
+            if cfg.is_file() else {}
 
     #: Расширения, по которым видно, что в репозитории вообще есть исходники.
     SOURCE_EXT = (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".astro",

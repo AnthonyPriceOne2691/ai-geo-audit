@@ -5,8 +5,9 @@
 # падает, если число дублей ВЫРОСЛО (добавили копипаст). После консолидации дублей
 # число падает — пере-снять baseline вниз через --generate. Порог jscpd: min-tokens 50.
 #
-# Бинарь jscpd ищется в node_modules фронта, затем в PATH. Нет бинаря — гейт не
-# блокирует, только предупреждает (свежий clone без npm ci).
+# Бинарь jscpd ищется в node_modules фронта, затем в PATH. Нет бинаря при коде, который
+# есть чем судить, — «не просудил», красное (`cqg@3.29`): jscpd — пакет npm, и без него
+# не судится и Python-половина. Выход — роль в not-applicable.json или STRICT=0.
 #
 # Настройка (env):
 #   LINT_PY_SRC  — каталог прод-Python для анализа, от repo-root (дефолт: backend/features)
@@ -49,8 +50,7 @@ elif [[ -x "node_modules/.bin/jscpd" ]]; then
 elif command -v jscpd >/dev/null 2>&1; then
   JSCPD="jscpd"
 else
-  printf '%s⚠ jscpd не найден — DRY-гейт пропущен. Установка: npm i -D jscpd%s\n' "$yellow" "$reset"
-  exit 0
+  JSCPD=""
 fi
 
 # ⚠ ДВЕ ПОЛОВИНЫ, как у complexity и layers (`cqg@1.66`) — и появились они позже
@@ -93,6 +93,22 @@ _clones_of() { _plain "$1" | grep -oE 'Found [0-9]+ clones' | grep -oE '[0-9]+' 
 # Разделитель таблицы — рамочный `│` (U+2502), а НЕ ASCII-пайп: подмена дала
 # ноль просмотренных, то есть ложную слепоту вместо верного числа.
 _files_of()  { _plain "$1" | awk -F'│' '!n && /Total:/ { gsub(/[^0-9]/,"",$3); print $3; n = 1 }'; }
+
+# Без jscpd не судится НИ ОДНА половина. Первый проект на `cqg@3.14`: без npm в CI
+# Python-половина выходила нулём с «пропущен» — зелёное без суждения (`cqg@2.96`).
+# Судить нечего (ни одного каталога) — прежний пропуск ниже, инструмент там не нужен.
+NA="scripts/lint/not-applicable.json"
+if [[ -z "$JSCPD" ]] && { [[ -d "$PY_SRC" ]] || [[ -d "$TS_SRC" ]]; }; then
+  if [[ -f "$NA" ]] && grep -q '"check_jscpd_gate.sh"' "$NA"; then
+    printf '%s⚠ jscpd не найден; DRY-гейт объявлен неприменимым в %s — пропуск НАЗВАН.%s\n' "$yellow" "$NA" "$reset"
+    exit 0
+  fi
+  printf '%s✗ jscpd не найден — DRY-гейт не просудил НИЧЕГО: это НЕ «дублей нет».\n' "$red"
+  printf 'jscpd — пакет npm, без него не судится и Python-половина: npm i -D jscpd либо\n'
+  printf 'объяви роль неприменимой в %s с причиной ("check_jscpd_gate.sh").%s\n' "$NA" "$reset"
+  [[ "$STRICT" == "0" ]] && { printf '%sWARNING (STRICT=0)%s\n' "$yellow" "$reset"; exit 0; }
+  exit 1
+fi
 
 # Маска строки OK — только прошедших половин (`cqg@2.86`): доктор читает её как покрытие.
 count=0; scanned=0; halves=""; mask=""

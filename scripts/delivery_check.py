@@ -17,9 +17,15 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# Части — с места входа, а не из пути поиска (`delivery@2.24`): `python3 -I` убирает каталог
+# скрипта из `sys.path`, `-P` — тоже, оставляя `PYTHONPATH`, и части приходили из чужого дерева.
+PARTS_DIR = str(Path(__file__).absolute().parent)
+if sys.path[:1] != [PARTS_DIR]:
+    sys.path.insert(0, PARTS_DIR)
+
 from delivery_base import (ACTIVE, ARCHIVE, DELIVERY, ROOT,
                            field, git,
-                           is_placeholder, merge_base_of, read)
+                           is_placeholder, merge_base_of, read, window_refusal)
 from delivery_decisions import check_permissions
 from delivery_diff import archived_in_diff
 from delivery_evidence import check_evidence
@@ -102,21 +108,21 @@ def check_preconditions(args, errors: list[str], warnings: list[str]) -> bool:
     # §2.3a: поставку, которую архивирует ЭТОТ дифф, судят те же разделы.
     base = getattr(args, "diff_base", None)
     archived = archived_in_diff(base)
-    check_window(base, archived, not status, args, errors, warnings)
+    check_window(base, archived, not status, errors)
     for home in ([ACTIVE] if status else []) + archived:
         judge_delivery(home, args, errors, warnings)
     return True
 
 
-def check_window(base: str | None, archived: list[Path], idle: bool, args,
-                 errors: list[str], warnings: list[str]) -> None:
-    """Окно ветки: простой называет, какое судил; CI пустоту не судит (`delivery@2.09`).
+def check_window(base: str | None, archived: list[Path], idle: bool,
+                 errors: list[str]) -> None:
+    """Окно ветки: простой называет, какое судил; база без окна — отказ (`delivery@2.23`).
 
     «idle, 0 ошибок» печаталось одинаково — смотрел гейт в окно или не смог его
-    построить (базы нет в клоне, нет общей истории, пустая строка вместо `$BASE`):
-    архивируемую поставку не судил никто, у активной пустая строка молча снимала
-    breaker'ы. С `--require-ci` это ошибка — базу в CI даёт шаг «Diff base» (CQG
-    §8.3); вне CI предупреждение в простое: стенд без `origin` законен.
+    построить (`delivery@2.09`). Отказ стоял только под `--require-ci` и в простое, а у
+    активной поставки база без окна молча снимала проверки по диффу: первый проект на
+    `cqg@3.14` (18.11) — в свежем клоне `--diff-base main` дал 2 предупреждения вместо 4,
+    о базе ни слова. Не судить по диффу — значит не передавать базу.
     """
     if base is None:
         if idle:
@@ -125,28 +131,35 @@ def check_window(base: str | None, archived: list[Path], idle: bool, args,
         return
     start = merge_base_of(base)
     if not start:
-        msg = (f"окно диффа не определено: база '{base}' не разрешается или не имеет "
-               "общей истории с HEAD — поставку, которую архивирует этот дифф, судить "
-               "нечем (§2.3a; в CI базу даёт шаг «Diff base», CQG §8.3)")
-        if getattr(args, "require_ci", False):
-            errors.append(msg)
-        elif idle:
-            warnings.append(msg)
+        errors.append(f"окно диффа не определено: {window_refusal(base)} — проверки по "
+                      "диффу (breakers §3.4, рисковый дифф §12.5, цена решений §12.2a, "
+                      "порядок §3.1d) и поставку, которую архивирует дифф (§2.3a), судить "
+                      "нечем: это не «нарушений нет» (в CI базу даёт шаг «Diff base», CQG §8.3)")
         return
     if idle:
         print(f"простой: окно {start[:12]}..HEAD (база {base}) — "
               f"поставок, которые архивирует этот дифф: {len(archived)}")
 
 
+#: Архив в окне, где уже идёт другая поставка (`delivery@2.26`; первый проект на `delivery@2.21`:
+#: архив bootstrap первым коммитом ветки следующей получил 2 ошибки по её конфигу и логам).
+FOREIGN_ARCHIVE = (
+    "архив судится по всему окну, а в нём уже идёт другая поставка (active/STATUS.md): её код "
+    "поднимает классы риска §12.5 этому архиву. Архивируй на handoff в ветке самой поставки "
+    "(§2.3a); архив bootstrap — отдельным коммитом с отдельной приёмкой (§7.2 п.6)")
+
+
 def judge_delivery(home: Path, args, errors: list[str], warnings: list[str]) -> None:
     """Все разделы гейта над ОДНОЙ поставкой — на её фазе; у архивной путь в каждой строке."""
     status = read(home / "STATUS.md")
     tag = "" if home == ACTIVE else f"{home.relative_to(ROOT).as_posix()}: "
+    errs: list[str] = []
+    warns: list[str] = []
     if tag:
         print(f"судится поставка, которую архивирует этот дифф: {tag[:-2]} "
               f"(phase={field(status, 'phase') or '?'})")
-    errs: list[str] = []
-    warns: list[str] = []
+        if read(ACTIVE / "STATUS.md"):
+            warns.append(FOREIGN_ARCHIVE)
     ctx = check_status_shape(status, args, errs, warns, home)
     check_evidence(status, args, errs, warns, ctx)
     check_journals(status, args, errs, warns, ctx)
@@ -216,6 +229,28 @@ def check_layer_pointers(warnings: list[str]) -> None:
             warnings.append("OKF/knowledge present but CONSTITUTION.md has no pointer")
 
 
+def check_smoke_table(warnings: list[str]) -> None:
+    """Таблица сквозных проверок после первой поставки кода (§6.1, `delivery@2.23`).
+
+    Первый проект на `cqg@3.14`, 20.11: README с bootstrap обещал сценарии «с первой
+    поставкой каркаса», каркас ушёл в архив, таблица пуста, `run.sh` нет, а `merge_guard`
+    шаг пропускал — обещание без исполнителя. Первая поставка кода — в архиве есть
+    поставка не `kind: bootstrap`. Строки шаблона A.9 от принятых гейт не отличает.
+    """
+    homes = [d for d in ARCHIVE.iterdir() if (d / "STATUS.md").is_file()
+             and not d.name.startswith("<")] if ARCHIVE.is_dir() else []
+    if all(field(read(d / "STATUS.md"), "kind").lower().startswith("bootstrap") for d in homes):
+        return
+    readme = read(DELIVERY / "evals" / "smoke" / "README.md")
+    rows = len(re.findall(r"(?m)^\s*\|\s*[A-Za-z]+\d+\s*\|", readme))
+    print(f"сквозные проверки §6.1: сценариев в таблице {rows} (delivery/evals/smoke/README.md)")
+    if not rows:
+        warnings.append("delivery/evals/smoke/README.md: таблица сценариев пуста, а код уже "
+                        "поставлен — в архиве есть поставка не kind: bootstrap (§6.1: минимум — "
+                        "здоровье, тесты, миграции). Обещание строкой README не исполняет никто: "
+                        "merge_guard и CI без run.sh шаг пропускают")
+
+
 def main() -> int:
     args = parse_args()
     # Вне git-репозитория дифф, база и архив не судятся, а «0 error(s)» выходило нулём
@@ -241,6 +276,7 @@ def main() -> int:
     check_permissions(errors, warnings)
 
     check_layer_pointers(warnings)
+    check_smoke_table(warnings)
 
     for w in warnings:
         print(f"WARNING: {w}")

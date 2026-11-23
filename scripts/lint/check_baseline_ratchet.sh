@@ -44,16 +44,32 @@ trap 'rm -rf "$tmp"' EXIT
 # в CI иначе как правкой workflow не задать (то есть навсегда), а локально она не
 # оставляет следа в диффе, и ревьюер обхода не видит. Строка в STATUS попадает в
 # дифф, видна в PR и умирает вместе с поставкой (Delivery §4.3a).
-status_waiver() {
-  local f="delivery/active/STATUS.md" v
-  [[ -f "$f" ]] || return 1
-  v=$(sed -n 's/^[[:space:]]*[-*]\{0,1\}[[:space:]]*\**baseline_growth_waiver\**[[:space:]]*:\**[[:space:]]*\(.*\)$/\1/p' "$f" | sed -n 1p)
+#
+# ⚠ Коммит сдачи уносит STATUS в архив, а рост снимка против базы остаётся в диффе: разрешение
+# читалось только из активного, и законный рост краснел на сдаче — в pre-push и в CI (`cqg@3.30`,
+# первый проект на `cqg@3.14`; у гейта code↔canon то же закрыто в `okf@1.20`). Разрешение даёт и
+# поставка, которую архивирует ЭТОТ дифф: STATUS архива, ДОБАВЛЕННЫЙ в окне `merge-base(BASE,
+# HEAD)..индекс`. Давний архив и строка, дописанная в него, разрешения не дают.
+waiver_in() { # $1 — STATUS; печатает значение разрешения
+  local v
+  [[ -f "$1" ]] || return 1
+  v=$(sed -n 's/^[[:space:]]*[-*]\{0,1\}[[:space:]]*\**baseline_growth_waiver\**[[:space:]]*:\**[[:space:]]*\(.*\)$/\1/p' "$1" | sed -n 1p)
   v=${v%%<!--*}
   v=$(printf '%s' "$v" | sed 's/[[:space:]]*$//')
   case "$v" in
     ''|no|none|-|…|'<'*) return 1 ;;
   esac
   printf '%s' "$v"
+}
+status_waiver() { # печатает «<STATUS>: <разрешение>» — активная поставка, затем архивируемая диффом
+  local p v mb
+  mb=$(git merge-base "$BASE" HEAD 2>/dev/null) || mb=""
+  while IFS= read -r p; do
+    [[ "$p" == delivery/active/STATUS.md || "$p" =~ ^delivery/archive/[^/]+/STATUS\.md$ ]] || continue
+    if v=$(waiver_in "$p"); then printf '%s: %s' "$p" "$v"; return 0; fi
+  done < <(echo delivery/active/STATUS.md
+           [[ -z "$mb" ]] || git diff --cached --name-only -z --diff-filter=A --no-renames "$mb" -- | tr '\0' '\n')
+  return 1
 }
 
 # Снимок -> "path<TAB>count". Global-число получает ключ __global__.
@@ -187,7 +203,7 @@ if [[ "$violations" -eq 0 ]]; then
 fi
 
 if waiver=$(status_waiver); then
-  echo "baseline-ratchet: рост разрешён waiver'ом из delivery/active/STATUS.md: $waiver" >&2
+  echo "baseline-ratchet: рост разрешён waiver'ом из $waiver" >&2
   echo "(виден в PR, умрёт вместе с поставкой)" >&2
   exit 0
 fi

@@ -209,7 +209,8 @@ class AreaChecks:
             return None
         n, unit = scanned
         if not n:
-            self._judge_zero(point, out, mine, multi_rule=multi_rule)
+            self._judge_zero(point, out, mine, multi_rule=multi_rule, unit=unit, files=files,
+                             files_re=self._hook_files_re(text, name))
             return None
         mask_m = self.MASK_RE.search(out)
         mask = mask_m.group(1).split() if mask_m else []

@@ -126,7 +126,8 @@ def out_of_blast_radius(path: str) -> bool:
     Один вход на оба принципа, потому что потребителей у списка двое — фильтр в
     `diff_stats` и печать состава в `delivery_check`. Разъехаться им нельзя:
     исключение, которого нет в печати, это ровно «исключение растворено», против
-    чего §3.4 и требует печатать число.
+    чего §3.4 и требует печатать число. Третий — метрика `delivery_metrics.py`, копией
+    (`delivery@2.25`): Приложение C разворачивается без гейта.
     """
     name = path.rsplit("/", 1)[-1]
     return (path.startswith(BREAKER_EXCLUDE) or name in GENERATED_FILENAMES
@@ -297,10 +298,33 @@ def merge_base_of(base: str | None) -> str:
     §12.5 и его цитаты: иначе половины одной проверки меряют разные окна, и это
     уже случилось (пути брались от точки ветвления, тело диффа — от базы).
     """
-    if not base or not git("-C", str(ROOT), "rev-parse", "--verify",
-                           "--quiet", base).strip():
+    if not base or not resolves(base):
         return ""
     return git("-C", str(ROOT), "merge-base", base, "HEAD").strip()
+
+
+def resolves(ref: str) -> bool:
+    """Ревизия `ref` есть в этом дереве."""
+    return bool(git("-C", str(ROOT), "rev-parse", "--verify", "--quiet", ref).strip())
+
+
+def window_refusal(base: str, flag: str = "--diff-base") -> str:
+    """Почему у НАЗВАННОЙ базы нет окна — с подсказкой, — либо "" (`delivery@2.23`).
+
+    Первый проект на `cqg@3.14`, 18.11: в свежем клоне есть `origin/main`, а `main` нет, и
+    проверки по диффу у активной поставки выпадали молча. Подсказка — только имени ветки:
+    `HEAD~3` с приставкой `origin/` разрешился бы во что-то чужое.
+    """
+    if merge_base_of(base):
+        return ""
+    if not base:
+        return "база '' пуста — переменная базы до вызова не дошла"
+    if resolves(base):
+        return f"база '{base}' не имеет общей истории с HEAD (неглубокий клон?)"
+    alt = base[len("origin/"):] if base.startswith("origin/") else f"origin/{base}"
+    hint = (f"; есть '{alt}' — передай {flag} {alt}"
+            if re.fullmatch(r"[\w./-]+", base) and resolves(alt) else "")
+    return f"база '{base}' в этом клоне не разрешается{hint}"
 
 
 
@@ -327,13 +351,19 @@ def list_entries(text: str) -> list[str]:
     `plan.md`), поэтому склейка живёт здесь одна на всех потребителей.
 
     Продолжение — строка, которая не начинает новый пункт и не пуста; отступ не
-    требуем: markdown его прощает, а люди и агенты пишут по-разному.
+    требуем: markdown его прощает, а люди и агенты пишут по-разному. Вложенный пункт
+    (маркер глубже пункта записи) — тоже продолжение: он уточняет запись, а не заводит
+    новую (`delivery@2.25`; у первого проекта на `delivery@2.21` цена решения подпунктом
+    краснела записью не по §12.2).
     """
     entries: list[str] = []
+    depth = 0
     for raw in text.splitlines():
         line = raw.strip()
-        if re.match(r"^[-*]\s+\S", line):
+        item = re.match(r"^([ \t]*)[-*]\s+\S", raw)
+        if item and (not entries or len(item.group(1).expandtabs(4)) <= depth):
             entries.append(line)
+            depth = len(item.group(1).expandtabs(4))
         elif line and entries and not line.startswith("#") and not line.startswith("```"):
             entries[-1] += " " + line
     return entries
