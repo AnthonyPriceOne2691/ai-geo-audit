@@ -12,7 +12,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
   <!-- Разрез 6а на 6а-1 (срезы 0–1) и 6а-2 (срезы 2–7) — слово владельца 2026-11-20T09:31Z,
        `split.md`; подпись под примерами и планом 2026-11-20T08:32Z — для обеих.
        Ветка `ch1-06a-deploy-core` и копия `.claude/worktrees/ch1-06a` — те же, от main
@@ -109,8 +109,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на запросе 6а-1 (`quality`, `ubuntu-24.04`): джоба `tests` — 762 passed, пропусков 0, из них тестов скрипта выката (`test_deploy_core`, `test_deploy_marks`, `test_deploy_snapshot`) — 124; джоба `gates` — длина `deploy/deploy.py` 580 строк при исключении 630; джоба `delivery` — 0 ошибок; первый запуск ядра на сервере (тимлид под пальцем владельца, с 6а-2): `python3 -I deploy/deploy.py last` от root — «журналов хода нет», «выката нет», код 0; первый снимок соседа — общих 35 (разведка), перезапусков 0, коды прежние, пропало 0, новых 0; права `.deploy` 700, журнал хода и замок 600
+- **observe_until:** 2026-11-30 — первый прогон CI на запросе 6а-1 и первый запуск ядра на сервере с 6а-2
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
   <!-- Слова владельца ведущей сессии: 2026-11-19T14:26Z «Да, согласен. Давай ускоримся» —
        предел 2500 строк вместе с тестами, поставка — тема целиком (список из шести пунктов);
