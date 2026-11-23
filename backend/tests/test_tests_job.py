@@ -67,7 +67,7 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
         ),
         (mutation.get("env", {}).get("BUDGET_SEC") == "1200", "мутации: бюджет не 1200 с"),
         (mutation.get("env", {}).get("MIN_KILLED") == "60", "мутации: цель не 60 %"),
-        (mutation.get("env", {}).get("MUTATION_WORKERS") == "1", "мутации: воркеров не один"),
+        (mutation.get("env", {}).get("MUTATION_WORKERS") == "4", "мутации: воркеров не 4"),
         (
             mutation.get("env", {}).get("LINT_PY_SRC") == "backend/src",
             "мутации: область не backend/src",
@@ -112,6 +112,7 @@ COPIES = [
     ("A108-diff-area", r"LINT_PY_SRC: backend\n", "LINT_PY_SRC: backend/src\n", "LINT_PY_SRC"),
     ("A99-timeout-25", r"timeout-minutes: 30\n", "timeout-minutes: 25\n", "в спеке 30"),
     ("lock-not-checked", r"run: uv lock --check\n", "run: uv lock\n", "замок"),
+    ("A281-workers-1", r'MUTATION_WORKERS: "4"', 'MUTATION_WORKERS: "1"', "воркеров не 4"),
     (
         "A100-service-by-tag",
         r"postgres:16-alpine@sha256:[0-9a-f]{64}",
@@ -123,7 +124,7 @@ COPIES = [
 
 @pytest.mark.parametrize(("case", "old", "new", "named"), COPIES, ids=[c[0] for c in COPIES])
 def test_tests_job_copies_are_red_and_named(case: str, old: str, new: str, named: str) -> None:
-    """A100, A108, A109, копии: порча джобы tests — красный, названо правило."""
+    """A100, A108, A109, A281, копии: порча джобы tests — красный, названо правило."""
     text = QUALITY.read_text(encoding="utf-8")
     spoiled, count = re.subn(old, lambda _: new, text, count=1)
     assert count == 1, f"{case}: в quality.yml нет места порчи {old!r}"
