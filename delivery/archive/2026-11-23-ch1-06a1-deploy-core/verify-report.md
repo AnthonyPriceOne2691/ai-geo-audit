@@ -109,6 +109,67 @@ pytest exit=0
   вместо CI этот прогон, по разрешению владельца.
 - После прогона — только коммит документов сверки: этот отчёт, фаза, задачи. Код тот же.
 
+### На вершине после сдачи `5c0ead6`
+
+Один прогон после коммита сдачи `ca35f7b`, слияния наката `79d0830` (main `77b143b`, `cqg@3.30` ·
+`delivery@2.30`) и записи в «Разбор» `5c0ead6`, с 2026-11-23T09:20:23Z по 09:22:05Z. Клон свежий
+(`--no-local`), база диффа — `origin/main` клона, `77b143b`. Код скрипта и его тесты — те же, что
+на `e79b286`. Вывод дословный, длинные строки обрезаны знаком «…»:
+
+```
+$ git clone -q --no-local -b ch1-06a-deploy-core <репозиторий> <клон> && cd <клон>
+$ git checkout -q 5c0ead6e3e02f93b198f9ade7f472cfa29a35173
+$ git log --format="%h %p %s" -4 && git rev-parse --short origin/main \
+    && git merge-base HEAD origin/main
+5c0ead6 79d0830 docs(delivery): STACK-ACCEPTANCE — разбор: ratchet снимков после сдачи, закрыто в c…
+79d0830 ca35f7b 77b143b merge: main 77b143b (накат cqg@3.30 · delivery@2.30, запрос №10) поверх сда…
+77b143b 9ba7d93 chore(contour): обновление контура до cqg@3.30 · delivery@2.30 (CQG §5.5) (#10)
+ca35f7b 9c27dd8 chore(delivery): handoff Ч1.6а-1 — фаза, метрики, наблюдение, уроки L76–L81, перено…
+77b143b
+77b143bde9831dedbd2906343ae8e28d1ff5b872
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно 77b143bde983..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-23-ch1-06a1-deploy-core (p…
+debt: каталогов в archive/ 14, ревизий закрытия найдено 14, окно 5, в долге 2 записей весом 581
+debt: на начале окна (bbba9f2) снимков долга не прочитано — мерить нечего. Если снимки на той ревиз…
+§3.1d: номера примеров сверены с архивом — спек 12, новых 8, уже встречались 1: A23 (delivery/archi…
+breakers: files=9 net_loc=1749 (+1749/-0), excluded=15 (delivery/|knowledge/|scripts/lint/|scripts/…
+наблюдение §13.1: поставок в архиве 14, окон со сроком 14, истекших без observed.md 0
+сквозные проверки §6.1: сценариев в таблице 0 (delivery/evals/smoke/README.md)
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Соз…
+WARNING: delivery/archive/2026-11-23-ch1-06a1-deploy-core: acceptance-примеры без ссылки в тестах/e…
+WARNING: delivery/evals/smoke/README.md: таблица сценариев пуста, а код уже поставлен — в архиве ес…
+delivery_check: 0 error(s), 3 warning(s)
+exit=0
+$ (cd backend && uv sync --frozen -q); echo "uv sync exit=$?"
+uv sync exit=0
+$ backend/.venv/bin/pre-commit run --all-files > hooks.txt; echo "exit=$?"; \
+    grep -c 'Passed$' hooks.txt; grep -c 'Skipped$' hooks.txt; grep 'Failed$' hooks.txt
+exit=0
+27
+1
+$ backend/.venv/bin/pre-commit run --all-files --hook-stage pre-push; echo "exit=$?"
+check for added large files.......................................................Passed
+dead code — объявлено и никем не зовётся (ратчет, pre-push).......................Passed
+delivery phase gate + breakers (pre-push).........................................Passed
+baseline only melts (pre-push)....................................................Passed
+новая зависимость объявлена в STATUS (pre-push)...................................Passed
+exit=0
+$ cd backend && uv run --frozen pytest -q -p no:cacheprovider -W error | tail -1; \
+    echo "pytest exit=${PIPESTATUS[0]}"
+собрано 762, прошло 762, пропущено 0
+pytest exit=0
+```
+
+- Счёт — 1749 строк в 9 файлах при пределах 2500 и 50; судится архив поставки, фаза handoff.
+  WARNING «idle» — после переноса активной поставки нет; A181, A182, A189, A192 — примеры 6а-2
+  (`split.md`); пустая таблица сквозных проверок — предупреждение контура (`delivery@2.23`) о
+  `delivery/evals/smoke/`, не код этой поставки. A23 «уже встречался» — общий пример сканера слов
+  и поясов РФ и РБ, тот же пример.
+- Ратчет снимков на стадии pre-push зелёный: разрешение роста взято из STATUS архива
+  (`cqg@3.30`). До наката тот же шаг краснел — разбор 2026-11-23 в `delivery/STACK-ACCEPTANCE.md`.
+- Тестовая база клона `audit_test_8a47da87c1` снята после прогона, клон удалён.
+
 ## Пробный прогон под гейтами В1а
 
 Правило проверяющего: до сдачи — хуки В1а на вершине ветки, слитой с вершиной `contour-b1a`.
