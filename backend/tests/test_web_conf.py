@@ -1,8 +1,8 @@
 """Разбор `deploy/web/nginx.conf` и сниппета заголовков без Docker (A79, вторая строка; A80; A83,
 статическая часть): сниппет в каждом location со своим `add_header`, `always` у заголовков
 сниппета, `server_tokens off`, директивы CSP по одной, поля журнала доступа и уровень журнала
-ошибок. Разбор nginx — свой, без пакета. Заголовки и CSP сверяются с ожиданием оракула: две
-записи спеки держат друг друга. `/api/` и `proxy_hide_header` — срез 3.
+ошибок. Разбор nginx — свой, без пакета. Заголовки и CSP сверяются с литералами спеки в этом
+тесте, и с ними же — ожидание оракула (L36). `/api/` и `proxy_hide_header` — срез 3.
 """
 
 from __future__ import annotations
@@ -27,6 +27,20 @@ SNIPPET = "/etc/nginx/snippets/security-headers.conf"
 MASK = "time_iso8601 request_method sent_path status request_time http_x_forwarded_for"
 FORBIDDEN = "request request_uri args query_string http_authorization http_x_access_token"
 PATH_MAP = [["~^(?<sent>[^?]*)", "$sent"]]
+#: Пять заголовков защиты (A79) и CSP страницы (A80) — литералами спеки, а не константами
+#: оракула: одинаковая порча `nginx.conf` и оракула разом — тоже красное (L36).
+SECURITY = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; "
+    "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
 _TOKEN = re.compile(r"""#[^\n]*|"([^"]*)"|'([^']*)'|([{};])|([^\s{};"'#]+)""")
 Found = list[tuple[str, list[str]]]
 
@@ -72,7 +86,7 @@ def snippet_problems(snippet: Found) -> list[str]:
     problems = [f"в сниппете {words[0]}" for _, words in snippet if words[0] != "add_header"]
     problems += [f"{name} — без always" for name, rest in heads.items() if rest[1:] != ["always"]]
     values = {name: rest[0] for name, rest in heads.items()}
-    return problems + [f"заголовки сниппета — {values}"] * (values != web.SECURITY)
+    return problems + [f"заголовки сниппета — {values}"] * (values != SECURITY)
 
 
 def page_problems(conf: Found) -> list[str]:
@@ -80,7 +94,7 @@ def page_problems(conf: Found) -> list[str]:
     heads = [args for block, args in pick(conf, "add_header") if block == "server / location /"]
     csp = [value for name, value, *_ in heads if name == "Content-Security-Policy"]
     coop = [value for name, value, *_ in heads if name == "Cross-Origin-Opener-Policy"]
-    return web.csp_problems(csp) + [f"Cross-Origin-Opener-Policy — {coop}"] * (
+    return web.csp_problems(csp, CSP) + [f"Cross-Origin-Opener-Policy — {coop}"] * (
         coop != ["same-origin"]
     )
 
@@ -130,16 +144,19 @@ def test_a79_snippet_is_included_at_server_level_and_in_each_location_with_add_h
 
 def test_a79_every_snippet_header_is_always_and_server_tokens_is_off() -> None:
     """A79, вторая строка: каждый `add_header` сниппета — с `always`, заголовков ровно пять, со
-    значениями спеки; `server_tokens off` — на уровне server, `on` нет нигде."""
+    значениями спеки; `server_tokens off` — на уровне server, `on` нет нигде; оракул ждёт те же
+    пять (L36)."""
     assert snippet_problems(read("security-headers.conf")) == []
     assert pick(read("nginx.conf"), "server_tokens") == [("server", ["off"])]
+    assert web.SECURITY == SECURITY
 
 
 def test_a80_page_csp_has_exactly_the_ten_spec_directives_and_coop() -> None:
     """A80: CSP страницы — ровно десять директив спеки, каждая со своими источниками; у страницы
-    `Cross-Origin-Opener-Policy: same-origin`."""
+    `Cross-Origin-Opener-Policy: same-origin`; оракул ждёт ту же CSP (L36)."""
     assert page_problems(read("nginx.conf")) == []
-    assert len(web.CSP.split(";")) == 10
+    assert len(CSP.split(";")) == 10
+    assert web.csp_problems([web.CSP], CSP) == []
 
 
 def test_a83_access_log_fields_and_error_log_level() -> None:
