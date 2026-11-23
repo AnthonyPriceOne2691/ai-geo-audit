@@ -1,10 +1,10 @@
 # Active delivery status
 
 - **slug:** ci-speed
-- **stack:** delivery@2.21, cqg@3.14, okf@absent
-  <!-- Ветка — от main `9ba7d93` (В1а). Накат контура cqg@3.29 · delivery@2.29 вливается по
-       команде ведущей; запись о версии меняется тем же слиянием. -->
-- **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 5d82ab1)
+- **stack:** delivery@2.30, cqg@3.30, okf@absent
+  <!-- Ветка — от main `9ba7d93` (В1а). Накат контура `cqg@3.30` · `delivery@2.30` — слиянием main
+       `77b143b` (запрос №10) — `85ff452`, по команде ведущей 2026-11-23T09:16Z. -->
+- **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 212443d)
 - **class:** M
   <!-- Класс — решение ведущей 2026-11-23: CI и обвязка тестов, кода сервиса нет. -->
 - **kind:** feature
