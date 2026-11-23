@@ -27,8 +27,9 @@ from pathlib import Path
 from typing import IO, Any
 
 from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, start_cleanup
-from stack_oracle_compose import APP_UID, STACK_STEPS, StepError
+from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError
 from stack_oracle_compose import cleanup as stack_cleanup
+from stack_oracle_web import WEB_BUILD_STEPS, WEB_STACK_STEPS
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKERFILE = "deploy/backend/Dockerfile"
@@ -404,7 +405,10 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A62", "файлы пакета и рабочего каталога", step_package, False),
     ("A63", "пользователь образа", step_user, False),
     ("A64", "секреты сборки", step_secrets, False),
+    *WEB_BUILD_STEPS,
     *STACK_STEPS,
+    *WEB_STACK_STEPS,
+    *BREAKING_STEPS,
 ]
 
 

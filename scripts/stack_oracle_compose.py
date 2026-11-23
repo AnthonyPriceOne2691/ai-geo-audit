@@ -1,4 +1,5 @@
-"""Шаги оракула стека Ч1.5а на поднятом compose (A63, A65–A67, A69, A73).
+"""Шаги оракула стека Ч1.5а на поднятом compose (A63, A65–A67, A69, A73) и порт web с подсетью
+`front` от имени стека (A82).
 
 Модуль ничего не знает о сборке: стек — по образу, который собрал `stack_oracle.py`. Команды —
 через исполнителя прогона: своё имя стека, файл compose назван явно, переменные — окружением
@@ -8,10 +9,13 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import ipaddress
 import json
 import os
 import re
 import secrets
+import socket
 import subprocess
 import time
 from collections.abc import Callable
@@ -32,6 +36,12 @@ DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
 
 
 APP_UID = "10001"
+
+
+#: Порт web и подсеть `front` (A82): ряд из SLOTS кандидатов, начало — от sha256 имени стека.
+#: Подсети — /28 из 172.16.0.0/16: вне пулов, из которых докер даёт подсеть сетям без своей.
+WEB_PORTS, FRONT_NET, SLOTS, TRIES = 18100, ipaddress.ip_address("172.16.0.0"), 256, 5
+SUBNETS = "{{range .IPAM.Config}}{{.Subnet}} {{end}}"
 
 
 #: Запрос здоровья из разового контейнера в сети стека тем же образом: слышит ли api сеть.
@@ -75,12 +85,59 @@ def top_uids(text: str) -> set[str]:
     return uids
 
 
+def tag(run: Run, kind: str) -> str:
+    """Свой образ прогона: имя стека, вид образа, метка `oracle`."""
+    return f"{run.name}-{kind}:oracle"
+
+
+def web_slot(name: str, busy: Callable[[int, str], bool]) -> tuple[int, str]:
+    """A82: порт web и подсеть `front` — из ряда от имени стека; занятый кандидат — следующий,
+    пять занятых — отказ словами."""
+    start = int(hashlib.sha256(name.encode()).hexdigest()[:8], 16)
+    for index in ((start + step) % SLOTS for step in range(TRIES)):
+        port, subnet = WEB_PORTS + index, f"{FRONT_NET + 16 * index}/28"
+        if not busy(port, subnet):
+            return port, subnet
+    raise StepError(f"порт web и подсеть front: заняты все {TRIES} кандидатов от имени {name}")
+
+
+def busy_on(nets: list[str]) -> Callable[[int, str], bool]:
+    """A82: кандидат занят, если порт на петле держит другой (проба bind) или подсеть пересекает
+    сеть докера из `nets`."""
+
+    def busy(port: int, subnet: str) -> bool:
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError:
+                return True
+        net = ipaddress.ip_network(subnet)
+        return any(net.overlaps(ipaddress.ip_network(other)) for other in nets)
+
+    return busy
+
+
+def slot(run: Run) -> tuple[int, str]:
+    """Порт web и подсеть `front` прогона — выбираются один раз, по сетям докера на машине."""
+    if "slot" not in run.facts:
+        ids = run.docker("network", "ls", "-q", limit="docker").split()
+        show = ["network", "inspect", "--format", SUBNETS, *ids]
+        nets = run.docker(*show, limit="docker").split() if ids else []
+        run.facts["slot"] = web_slot(run.name, busy_on(nets))
+    found: tuple[int, str] = run.facts["slot"]
+    return found
+
+
 def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
     """Окружение compose: переменные сервера стека без чужих `COMPOSE_*`; `wrong` — неверный
-    пароль у migrate (A67)."""
+    пароль у migrate (A67); образ web, его порт и подсеть `front` — свои у прогона (A82)."""
     clean = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
+    port, subnet = slot(run)
     return clean | {
         "BACKEND_IMAGE": run.image,
+        "WEB_IMAGE": tag(run, "web"),
+        "WEB_PORT": str(port),
+        "FRONT_SUBNET": subnet,
         "DB_PASSWORD": run.password,
         "MIGRATE_DATABASE_URL": DB_URL.format(wrong or run.password),
         "API_DATABASE_URL": DB_URL.format(run.password),
@@ -284,12 +341,15 @@ def step_bad_migrate(run: Run) -> str:
     return f"up --wait — код {done.returncode}; migrate — код выхода {code}; api — created"
 
 
-#: Шаги стека: примеры, название, функция, нужен ли он следующим шагам.
+#: Шаги стека: примеры, название, функция, нужен ли он следующим шагам. A67 ломает стек — он
+#: отдельно и последним: шаги на живом стеке встают до него.
 STACK_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A73", "правила на настоящем docker-compose.yml", step_rules_on_file, False),
     ("A65 A63", "подъём стека и migrate", step_up, True),
     ("A69", "здоровье api после старта", step_health, False),
     ("A66", "повтор migrate", step_repeat, False),
     ("A69", "остановка и старт db", step_outage, False),
+]
+BREAKING_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A67", "неверный пароль у migrate", step_bad_migrate, False),
 ]
