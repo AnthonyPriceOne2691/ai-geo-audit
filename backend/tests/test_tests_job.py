@@ -38,7 +38,8 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
     diff = step(job, "Diff coverage").get("env", {})
     mutation = step(job, "Mutation testing")
     checks = [
-        (job.get("timeout-minutes") == 30, f"таймаут {job.get('timeout-minutes')!r}, в спеке 30"),
+        # Проба A288 «до», только в ветке-пробе: таймаут 60 и бюджет 3600.
+        (job.get("timeout-minutes") == 60, f"таймаут {job.get('timeout-minutes')!r}, в пробе 60"),
         (
             "uv lock --check" in str(step(job, "Замок свежий").get("run", "")),
             "замок: свежесть не сверяется (`uv sync --frozen` её не видит)",
@@ -65,7 +66,7 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
             mutation.get("if") == "github.event_name == 'pull_request'",
             "мутации: не только на запросе",
         ),
-        (mutation.get("env", {}).get("BUDGET_SEC") == "1200", "мутации: бюджет не 1200 с"),
+        (mutation.get("env", {}).get("BUDGET_SEC") == "3600", "мутации: бюджет не 3600 с"),
         (mutation.get("env", {}).get("MIN_KILLED") == "60", "мутации: цель не 60 %"),
         (mutation.get("env", {}).get("MUTATION_WORKERS") == "1", "мутации: воркеров не один"),
         (
@@ -110,7 +111,7 @@ COPIES = [
         "только на запросе",
     ),
     ("A108-diff-area", r"LINT_PY_SRC: backend\n", "LINT_PY_SRC: backend/src\n", "LINT_PY_SRC"),
-    ("A99-timeout-25", r"timeout-minutes: 30\n", "timeout-minutes: 25\n", "в спеке 30"),
+    ("A99-timeout-25", r"timeout-minutes: 60\n", "timeout-minutes: 25\n", "в пробе 60"),
     ("lock-not-checked", r"run: uv lock --check\n", "run: uv lock\n", "замок"),
     (
         "A100-service-by-tag",

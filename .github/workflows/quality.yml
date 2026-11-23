@@ -258,7 +258,8 @@ jobs:
     # §8.7: установка, набор с покрытием и потолок мутаций на запросе — минуты; 30 (спека, A99;
     # слово владельца 2026-11-20T10:59Z): 99 с прочего + 1200 с мутаций + ~5 с замка ≈ 1304 с, запас
     # ~8 мин — гейт успевает сказать «бюджет исчерпан» раньше таймаута. Число держит тест контракта.
-    timeout-minutes: 30
+    # Проба A288 «до», только в ветке-пробе: 60 мин и бюджет 3600 с — старая обвязка на 1117 порчах.
+    timeout-minutes: 60
     services:
       # Как служба db в docker-compose.dev.yml: база живёт только в прогоне, пароль — публичный
       # пароль стенда. Образ — строкой стека «линия@дайджест» (A100). Готовность — `pg_isready` по
@@ -347,5 +348,15 @@ jobs:
           LINT_PY_SRC: backend/src
           MUTATION_WORKERS: "1"
           MIN_KILLED: "60"
-          BUDGET_SEC: "1200"
+          BUDGET_SEC: "3600"
         run: bash scripts/lint/check_mutation_gate.sh
+
+      # Проба A288 «Скорости CI», только в ветке-пробе: исходы порч поимённо — для сверки «до» и
+      # «после» по одной области.
+      - name: Probe A288 — mutant outcomes
+        if: always() && github.event_name == 'pull_request'
+        working-directory: backend
+        run: |
+          uv run --no-sync mutmut results --all true | sort > /tmp/a288.txt
+          cut -d: -f2 /tmp/a288.txt | sort | uniq -c
+          cat /tmp/a288.txt
