@@ -1,0 +1,32 @@
+# Active delivery status
+- **slug:** ch1-05b-web-hardening
+- **stack:** delivery@2.30, cqg@3.30, okf@absent
+- **stack-selftest:** external (тексты канона в корне рабочей копии, вне git; ревизия 212443d)
+- **class:** L
+- **kind:** feature
+- **repro_test:** n/a reason=не bugfix
+- **diagnosis:** n/a reason=не bugfix
+- **phase:** tasks
+- **builder:** agent:hands-session
+- **verifier:** agent:lead-session
+- **human_ok_spec:** deferred (reason=примеры подписаны владельцем 2026-11-19T11:32Z — спека 58292d3bc1cf; вносит проверяющий своим коммитом)
+- **human_ok_plan:** deferred (reason=план на подписи 2026-11-19T11:32Z — 4c486405e298; вносит проверяющий своим коммитом)
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present — pytest без Docker: разбор nginx.conf, правила стека, разбор остановки, выбор порта и подсети; оракул стека на машине и в CI — живые шаги A77–A89
+- **artifact_oracle:** scripts/stack_oracle.py — сборка образа web и живые шаги оракула стека
+- **ci-oracles:** deployed
+- **worktree:** .claude/worktrees/ch1-05b
+- **parallel_sessions:** manual-deploy
+- **hooks:** not-deployed
+- **blockers:** none
+- **waivers:** none
+- **runtime_paths:** deploy/web/
+- **irreversible_surfaces:** публикация репозитория (публичный GitHub — создание и push), выкат на общий сервер, трата на платных сервисах выше $5 за одно действие, выпуск отчёта клиенту
+- **model_surface:** n/a reason=модель продукт не вызывает; поверхность объявляется с первым вызовом модели — волна В3 (§14)
+- **rule_enforcers:** n/a reason=model_surface не объявлена
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** <заполняется на handoff>
+- **observe_until:** <заполняется на handoff>
+- **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
