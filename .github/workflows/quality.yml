@@ -349,3 +349,28 @@ jobs:
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh
+
+      # Проба A282 «Скорости CI», только в ветке-пробе: тот же коммит в 4 потока (шаг выше) и в 1
+      # поток; исходы порч сверяются поимённо, расхождение — красное с именем порчи.
+      - name: Probe A282 — outcomes, 4 workers
+        if: always() && github.event_name == 'pull_request'
+        working-directory: backend
+        run: uv run --no-sync mutmut results --all true | sort > /tmp/a282-4.txt; wc -l < /tmp/a282-4.txt
+
+      - name: Probe A282 — mutation gate, 1 worker
+        if: always() && github.event_name == 'pull_request'
+        env:
+          LINT_PY_SRC: backend/src
+          MUTATION_WORKERS: "1"
+          MIN_KILLED: "60"
+          BUDGET_SEC: "1200"
+        run: bash scripts/lint/check_mutation_gate.sh
+
+      - name: Probe A282 — outcomes, 1 worker, compare
+        if: always() && github.event_name == 'pull_request'
+        working-directory: backend
+        run: |
+          uv run --no-sync mutmut results --all true | sort > /tmp/a282-1.txt
+          for w in 1 4; do echo "потоков $w:"; cut -d: -f2 "/tmp/a282-$w.txt" | sort | uniq -c; done
+          diff /tmp/a282-1.txt /tmp/a282-4.txt
+          echo "A282: исходы совпали поимённо — порч $(wc -l < /tmp/a282-1.txt)"

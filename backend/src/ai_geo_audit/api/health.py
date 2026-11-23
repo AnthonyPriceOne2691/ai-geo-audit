@@ -94,3 +94,6 @@ class _Cut:
             driver = sync.connection.driver_connection
             if driver is not None:
                 driver.terminate()
+
+
+# Проба A282 «Скорости CI»: метка области гейта мутаций, в main не идёт.
