@@ -152,7 +152,7 @@ asserts_without_example: 24
 - Шаг покрытия изменённого в джобе `tests` (прогон 45148543406 на `50fd995`) просит отметить
   непокрытость трёх файлов не на Python. Их судит каждый своя джоба: `deploy/backend/Dockerfile`
   — `stack` (A60–A64) и `image-scan`; `.trivyignore` — `image-scan` (A128) и тесты разбора
-  строк; `delivery/active/irreversible.sig` — `check_irreversible_signature.sh` в `gates`
+  строк; `delivery/active/irreversible.sig` — `check_irreversible_signature.sh` в `delivery`
   («подпись сходится с объявлением»).
 
 ## Порча M2 — находка полного круга
