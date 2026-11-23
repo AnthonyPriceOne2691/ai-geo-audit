@@ -1,12 +1,14 @@
-"""Чистые части оракула стека без Docker (A61, A62): поиск метки по выгрузке образа, разбор
-контекста сборки, сверка списков файлов, имя стека. Модуль грузится по пути файла: оракул лежит
-вне пакета и пакет не импортирует.
+"""Чистые части оракула стека без Docker (A61, A62, A82): поиск метки по выгрузке образа, разбор
+контекста сборки, сверка списков файлов, имя стека, порт web и подсеть `front`. Модуль грузится по
+пути файла: оракул лежит вне пакета и пакет не импортирует.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import io
+import ipaddress
+import socket
 import subprocess
 import sys
 import tarfile
@@ -173,8 +175,9 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
     assert oracle.verdict(0, []) == (0, f"итог: шагов {len(oracle.STEPS)}, красных 0")
 
 
-#: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера.
-STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
+#: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
+#: срез 1 — A77 и A82.
+STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73", "A77", "A82"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -186,9 +189,9 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_and_a73() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_a82() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
-    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73."""
+    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77 и A82."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -213,6 +216,47 @@ def test_a76_step_without_a_number_or_an_example_without_a_step_is_red(
     else:
         steps.append(("A68", "лишний шаг", steps[0][2], False))
     assert problem in steps_problems(steps)
+
+
+#: Пулы докера по умолчанию для сетей без своей подсети: 172.17–172.31 и 192.168.
+POOLS = ("172.17.0.0/16", "172.18.0.0/15", "172.20.0.0/14", "172.24.0.0/13", "192.168.0.0/16")
+
+
+def free(port: int, subnet: str) -> bool:
+    return False
+
+
+def test_a82_web_port_and_front_subnet_come_from_the_stack_name() -> None:
+    """A82, третья строка: у двух имён стека — разные порт web и подсеть `front`, оба из ряда от
+    имени; занятый кандидат — следующий; пять занятых — отказ словами, шестой не пробуется.
+    Подсети — частные и вне пулов докера: чужая сеть без своей подсети их не займёт."""
+    names = ("ai-geo-audit-oracle-0123456789", "ai-geo-audit-oracle-9876543210")
+    (port_a, net_a), (port_b, net_b) = (compose.web_slot(name, free) for name in names)
+    assert port_a != port_b and net_a != net_b
+    assert compose.web_slot(names[0], free) == (port_a, net_a)
+    tried: list[tuple[int, str]] = []
+    third = compose.web_slot(names[0], lambda *slot: tried.append(slot) or len(tried) < 3)
+    assert third == tried[2] and tried[0] == (port_a, net_a) and len(set(tried)) == 3
+    tried.clear()
+    with pytest.raises(compose.StepError, match="заняты все 5 кандидатов"):
+        compose.web_slot(names[0], lambda *slot: tried.append(slot) or True)
+    assert len(set(tried)) == len(tried) == 5
+    pools = [ipaddress.ip_network(pool) for pool in POOLS]
+    for port, net in tried:
+        subnet = ipaddress.ip_network(net)
+        assert port > 1024 and subnet.is_private and not any(map(subnet.overlaps, pools)), net
+
+
+def test_a82_candidate_is_taken_by_a_bound_port_or_an_overlapping_docker_net() -> None:
+    """A82, третья строка: кандидат занят, если его порт на петле держит другой процесс или его
+    подсеть пересекает сеть докера на машине; иначе свободен."""
+    busy = compose.busy_on(["172.16.0.0/24", "fd00::/64"])
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        port = holder.getsockname()[1]
+        assert busy(port, "172.16.9.0/28")
+    assert busy(port, "172.16.0.16/28")
+    assert not busy(port, "172.16.9.0/28")
 
 
 class Clean(oracle.Docker):
