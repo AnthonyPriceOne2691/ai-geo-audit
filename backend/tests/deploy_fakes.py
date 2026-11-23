@@ -18,9 +18,12 @@ from types import ModuleType
 from typing import Any
 
 import deploy_records as rec
+import envguard
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+#: Корень копии — по меткам (`envguard.repo_root`), а не по глубине: под mutmut тесты лежат в
+#: `backend/mutants/tests`, и счёт от этого файла давал `backend/`.
+ROOT = envguard.ROOT
 
 SCRIPT = ROOT / "deploy" / "deploy.py"
 
