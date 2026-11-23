@@ -36,8 +36,36 @@ changed=$(git diff --name-only -z "$BASE"...HEAD -- "$PY_SRC/*.py" 2>/dev/null \
 if [[ -z "$changed" ]]; then
   printf '%smutation: изменённых prod-файлов нет (BASE=%s, смотрел в %s)%s\n' \
     "$green" "$BASE" "$PY_SRC" "$reset"
+  ts_counts 0 0
   exit 0
 fi
+
+# Адаптация (scripts/lint/adapted.json, A289): доля — каждый N-й файл списка (`ts_shard`
+# канона), до проверок инструментов: доле, на которую файлов не пришлось, mutmut не нужен —
+# счёт «0 0», судит сумма. Иной код решения — сбой, а не «нечего» (`cqg@2.75`).
+# Маска `пакет/__init__.py` — `пакет.*` (канон, ниже) — выбирает и порчи модулей пакета, поэтому
+# доле отдаётся группа: изменённый `__init__.py` верхнего из изменённых пакетов и файлы под ним —
+# строкой через таб. Иначе одну порчу выбрали бы две доли, и сумма сочла бы её дважды (находка
+# проверяющей 2026-11-23T12:16Z).
+if [[ -n "${MUTATION_SHARD:-}" ]]; then
+  changed=$(printf '%s\n' "$changed" | awk '
+    { file[NR] = $0 }
+    /\/__init__\.py$/ { p = $0; sub(/\/__init__\.py$/, "", p); pkg[p] = 1 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        owner = file[i]
+        for (p in pkg)
+          if (index(file[i], p "/") == 1 && (owner == file[i] || length(p) < length(owner))) owner = p
+        group[owner] = (owner in group) ? group[owner] "\t" file[i] : file[i]
+      }
+      for (o in group) print group[o]
+    }')
+fi
+ts_shard; shard_rc=$?
+changed=$(printf '%s\n' "$changed" | tr '\t' '\n')
+(( shard_rc == 1 )) && { ts_counts 0 0; exit 0; }
+(( shard_rc == 0 )) || { printf '%s⚠ mutation: доля не выбрана — ts_shard вышел с кодом %s%s\n' \
+  "$yellow" "$shard_rc" "$reset"; not_judged; }
 
 # Дальше — проверки инструментов, и они СПЕЦИАЛЬНО тут, а не выше: пока не известно,
 # что мутировать, требовать mutmut и coreutils незачем. Порядок «сначала есть ли работа,
@@ -72,7 +100,8 @@ if [[ -z "$TIMEOUT_BIN" ]]; then
 fi
 
 n=$(printf '%s\n' "$changed" | wc -l | tr -d ' ')
-printf 'mutation: %s файл(ов), бюджет %ss, цель ≥%s%% убитых\n' "$n" "$BUDGET_SEC" "$MIN_KILLED"
+printf 'mutation: %s файл(ов)%s, бюджет %ss, цель ≥%s%% убитых\n' \
+  "$n" "${MUTATION_SHARD:+, доля $MUTATION_SHARD}" "$BUDGET_SEC" "$MIN_KILLED"
 
 # ⚠ ГДЕ ЗАПУСКАТЬ — условие работоспособности, а не деталь, и оно определяется ДО
 # любого вызова mutmut: конфиг `[mutmut]` он читает из своего cwd, поэтому даже
@@ -199,6 +228,25 @@ if (( rc == 124 )); then
   printf 'узкий дифф сокращает только мутантов.\n' >&2
   not_judged
 fi
+
+# Адаптация (scripts/lint/adapted.json): у каждой сессии pytest под mutmut — своя копия шаблона
+# тестовой базы (backend/tests/mutation_db.py). Сбой клона или сноса копии ребёнок кодом выхода
+# не скажет — mutmut засчитал бы порчу убитой; он кладёт метку с именем порчи, и гейт не судит
+# (A285). Итог уборки баз прогона — строкой (A281).
+db_run="$mut_dir/db-copies"
+# Метки читаются после прогона и после самопроверки (`py_recheck`): её сессии пишут в тот же
+# каталог, а код 3 упавшего начала сессии mutmut засчитал бы «убит снова» (A285, A287).
+db_marks() {
+  compgen -G "$db_run/failed/*.txt" > /dev/null || return 0
+  printf '%s⚠ mutation: база сессии не создана или не снесена — гейт не судит:%s\n' \
+    "$yellow" "$reset" >&2
+  for db_mark in "$db_run"/failed/*.txt; do
+    printf '  %s — %s\n' "$(basename "$db_mark" .txt)" "$(head -n 1 "$db_mark")" >&2
+  done
+  not_judged
+}
+[[ -s "$db_run/report.txt" ]] && cat "$db_run/report.txt"
+db_marks
 
 # Счётчики. Три источника, по убыванию надёжности — потому что формат менялся, и
 # «не распарсилось» обязано отличаться от «мутантов нет» (иначе гейт зелен на

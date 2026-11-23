@@ -148,13 +148,10 @@ if [[ ! -d "$REPO_ROOT/$PY_SRC" ]]; then
   not_judged
 fi
 
-# Доли умеет только TS-половина: без этой ветки матрица из N долей на fullstack-репо
-# N раз гнала бы ПОЛНЫЙ python-прогон, и каждая доля выдавала бы его за свою.
-if [[ -n "${MUTATION_SHARD:-}" ]]; then
-  printf '%s⚠ mutation: MUTATION_SHARD задан, а судится python — доли есть только у TS-половины%s\n' \
-    "$yellow" "$reset"
-  not_judged
-fi
+# Адаптация (scripts/lint/adapted.json, «Скорость CI», A289): доли умеет и python-половина —
+# `mutation_py.sh` выбирает файлы доли тем же `ts_shard`, доля только считает
+# (`mutation_verdict.sh`), порог судит сумма. Отказ канона «доли есть только у TS-половины»
+# снят: N долей больше не гонят N полных python-прогонов.
 
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/mutation_py.sh"

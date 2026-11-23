@@ -63,7 +63,10 @@ async def test_a9_sent_but_not_committed_is_not_saved(committed: AsyncEngine) ->
 async def test_a9_killed_pool_connection_is_replaced(engine: AsyncEngine) -> None:
     """A9: соединение пула убито со стороны базы — следующий session_scope работает."""
     pooled = storage.build_engine("a9-ping", url=dbtools.own_url(), pool_size=1)
-    kill = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = :n"
+    kill = (
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = :n"
+        " AND datname = current_database()"
+    )
     try:
         async with session_scope(pooled) as s:
             await s.execute(select(1))
@@ -275,7 +278,10 @@ async def _task(key: str) -> int:
 
 async def _left(name: str) -> int:
     """Соединения с подписью `name`; закрытие соединения доходит до базы не мгновенно."""
-    count = "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1"
+    count = (
+        "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1"
+        " AND datname = current_database()"
+    )
     conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
     try:
         async with asyncio.timeout(3):
@@ -306,12 +312,19 @@ def test_a11_process_engine_refuses_a_foreign_loop() -> None:
         asyncio.run(take())
 
 
-KILL = "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = :n"
+#: Своя база: в 4 потока гейта мутаций поток не убивает соединения соседней копии (A283).
+KILL = (
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = :n"
+    " AND datname = current_database()"
+)
 
 
 async def _connections(name: str, expect: int) -> int:
     """Соединения с подписью `name`; ждать появления `expect` не дольше 5 с."""
-    count = "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1"
+    count = (
+        "SELECT count(*) FROM pg_stat_activity WHERE application_name = $1"
+        " AND datname = current_database()"
+    )
     conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
     try:
         with contextlib.suppress(TimeoutError):

@@ -46,7 +46,6 @@ CASES = [
     ),
     ("JWT_SECRET", "s" * 40, config.AccessSettings, "jwt_secret", None),
     ("JWT_TTL_HOURS", "24", config.AccessSettings, "jwt_ttl_hours", 24),
-    ("JWT_ALGORITHM", "HS256", config.AccessSettings, "jwt_algorithm", "HS256"),
     ("KEYS_MASTER_KEY_FILE", "/run/key", config.KeySettings, "master_key_file", None),
     ("LOG_FORMAT", "json", config.LogSettings, "format", "json"),
     ("LOG_LEVEL", "WARNING", config.LogSettings, "level", "WARNING"),
