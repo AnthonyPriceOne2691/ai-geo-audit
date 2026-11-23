@@ -345,7 +345,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           LINT_PY_SRC: backend/src
-          MUTATION_WORKERS: "1"
+          MUTATION_WORKERS: "4"
           MIN_KILLED: "60"
           BUDGET_SEC: "1200"
         run: bash scripts/lint/check_mutation_gate.sh

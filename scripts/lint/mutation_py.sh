@@ -200,6 +200,21 @@ if (( rc == 124 )); then
   not_judged
 fi
 
+# Адаптация (scripts/lint/adapted.json): у каждой сессии pytest под mutmut — своя копия шаблона
+# тестовой базы (backend/tests/mutation_db.py). Сбой клона или сноса копии ребёнок кодом выхода
+# не скажет — mutmut засчитал бы порчу убитой; он кладёт метку с именем порчи, и гейт не судит
+# (A285). Итог уборки баз прогона — строкой (A281).
+db_run="$mut_dir/db-copies"
+[[ -s "$db_run/report.txt" ]] && cat "$db_run/report.txt"
+if compgen -G "$db_run/failed/*.txt" > /dev/null; then
+  printf '%s⚠ mutation: база сессии не создана или не снесена — гейт не судит:%s\n' \
+    "$yellow" "$reset" >&2
+  for db_mark in "$db_run"/failed/*.txt; do
+    printf '  %s — %s\n' "$(basename "$db_mark" .txt)" "$(head -n 1 "$db_mark")" >&2
+  done
+  not_judged
+fi
+
 # Счётчики. Три источника, по убыванию надёжности — потому что формат менялся, и
 # «не распарсилось» обязано отличаться от «мутантов нет» (иначе гейт зелен на
 # непроверенном — тот же класс, что deps-audit с py_total=0):

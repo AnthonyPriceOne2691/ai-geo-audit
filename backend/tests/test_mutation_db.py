@@ -10,6 +10,7 @@ import fcntl
 import hashlib
 import os
 import re
+import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +28,9 @@ from sqlalchemy.engine import make_url
 NAME = r"audit_test_[0-9a-f]{10}"
 TESTS = Path(__file__).parent
 MUTANT = "ai_geo_audit.config.domains.x_parse__mutmut_3"
+GATE = dbtools.ROOT / "scripts" / "lint" / "mutation_py.sh"
+#: Представление соединений сервера: запрос к нему в тестах судит только свою базу.
+VIEW = "pg_stat_activity"
 
 
 @pytest.fixture(autouse=True)
@@ -287,7 +291,7 @@ def test_a281_a286_run_of_sessions_leaves_no_databases_and_reports(tmp_path: Pat
 
     for label in (mutation_db.STATS, "", "fail", MUTANT):
         environ = {"MUTANT_UNDER_TEST": label}
-        mutation_db.session_start(environ, tmp_path, run, at_exit)
+        mutation_db.session_start(environ, tmp_path, run, at_exit, main=True)
         seen.append(dbtools.own_name())
         mutation_db.session_end(environ, tmp_path, run)
     killed = asyncio.run(mutation_db.clone(tmp_path, pid=4242))
@@ -304,6 +308,78 @@ def test_a281_a286_run_of_sessions_leaves_no_databases_and_reports(tmp_path: Pat
     assert {killed, mutation_db.template_name(tmp_path), *seen} & after.keys() == set()
     assert "копий разом — наибольшее 1, и шаблон; без сноса в своей сессии — 1" in report
     assert "после прогона копий 0, шаблон снят" in report
+
+
+def test_a287_self_check_run_builds_its_own_template(tmp_path: Path) -> None:
+    """A287: прогон самопроверки — новый `mutmut run` со статистикой из кэша, первая сессия
+    главного процесса — список тестов: она строит шаблон (шаблон прогона гейта уже снят его
+    уборкой) и ставит свою уборку; копия ребёнка без шаблона — сбой, а не постройка."""
+    run, exits = tmp_path / "run", []
+
+    def at_exit(func: Callable[..., object], *args: Any) -> None:
+        exits.append((func, args))
+
+    for label in ("list_all_tests", "", MUTANT):
+        environ = {"MUTANT_UNDER_TEST": label}
+        mutation_db.session_start(environ, tmp_path, run, at_exit, main=True)
+        mutation_db.session_end(environ, tmp_path, run)
+    template = mutation_db.template_name(tmp_path)
+    built = template in asyncio.run(labels())
+    [(func, args)] = exits
+    func(*args)
+    assert (built, template in asyncio.run(labels())) == (True, False)
+    assert not (run / "failed").exists()
+
+
+def gate_block(mutants: Path) -> str:
+    """Блок адаптации `mutation_py.sh` (метки и итог баз прогона) с заглушками тела гейта."""
+    text = GATE.read_text(encoding="utf-8")
+    start = text.index("# Адаптация (scripts/lint/adapted.json): у каждой сессии pytest")
+    end = text.index("\nfi\n", start) + len("\nfi\n")
+    stubs = f'mut_dir="{mutants}"; yellow=""; reset=""\n'
+    stubs += 'not_judged() { echo "не судил"; exit 7; }\n'
+    return stubs + text[start:end] + 'echo "дальше"\n'
+
+
+@pytest.mark.parametrize("failed", [True, False], ids=["mark", "no-mark"])
+def test_a285_a281_gate_reads_the_marks_and_prints_the_report(tmp_path: Path, failed: bool) -> None:
+    """A285, A281: адаптация `mutation_py.sh` после прогона mutmut печатает итог уборки баз
+    строкой; метка сбоя копии — «гейт не судит» с именем порчи и причиной и `not_judged`, а не
+    убитая порча; без меток гейт идёт дальше."""
+    runs = tmp_path / "mutants" / "db-copies"
+    runs.mkdir(parents=True)
+    (runs / "report.txt").write_text("базы гейта: копий разом — наибольшее 4, и шаблон\n", "utf-8")
+    if failed:
+        mutation_db.mark(runs, MUTANT, "копия базы не создана: OSError: нет сервера")
+    script = gate_block(tmp_path / "mutants")
+    done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=False)
+    assert "базы гейта: копий разом — наибольшее 4, и шаблон" in done.stdout
+    if failed:
+        assert (done.returncode, done.stdout.splitlines()[-1]) == (7, "не судил")
+        assert "гейт не судит" in done.stderr
+        assert f"{MUTANT} — копия базы не создана: OSError: нет сервера" in done.stderr
+    else:
+        assert (done.returncode, done.stdout.splitlines()[-1], done.stderr) == (0, "дальше", "")
+
+
+def test_a286_nested_pytest_neither_builds_nor_sweeps(tmp_path: Path) -> None:
+    """A286, A283: вложенный pytest, унаследовавший `MUTANT_UNDER_TEST=stats` от теста, — не процесс
+    mutmut: шаблон не строит, уборку не ставит и копию родителя не сносит, а берёт свою копию."""
+    run, exits = tmp_path / "run", []
+    asyncio.run(mutation_db.build_template(tmp_path))
+    parent = asyncio.run(mutation_db.clone(tmp_path, pid=1))
+    environ = {"MUTANT_UNDER_TEST": mutation_db.STATS}
+    try:
+        mutation_db.session_start(environ, tmp_path, run, lambda *a: exits.append(a), main=False)
+        own = dbtools.own_name()
+        seen = asyncio.run(labels())
+        mutation_db.session_end(environ, tmp_path, run)
+        after = asyncio.run(labels())
+    finally:
+        asyncio.run(mutation_db.sweep(tmp_path))
+    assert (own, exits) == (mutation_db.copy_name(None, tmp_path), [])
+    assert {parent, own} <= seen.keys()
+    assert parent in after and own not in after
 
 
 def test_a281_most_copies_at_once_come_from_the_journal() -> None:
@@ -365,23 +441,25 @@ def test_a9_a11_connection_checks_judge_only_their_own_database() -> None:
     found, loose = [], []
     for path in sorted(TESTS.glob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(node, ast.Constant) and "FROM pg_stat_activity" in str(node.value):
+            query = node.value if isinstance(node, ast.Constant) else None
+            if isinstance(query, str) and query.startswith("SELECT ") and VIEW in query:
                 found.append(f"{path.name}:{node.lineno}")
-                if not re.search(r"datname|pg_backend_pid\(\)", node.value):
+                if not re.search(r"datname|pg_backend_pid\(\)", query):
                     loose.append(found[-1])
     assert len(found) >= 7, found
     assert loose == []
 
 
-def test_a106_session_end_is_chained_with_the_summary_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A106 (L63): итоговый хук сессии сцеплен — пропуск по-прежнему красит прогон, затем копия
-    сессии под mutmut снесена."""
+def test_a106_a281_summary_hook_stays_and_the_copy_ends_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A106 (L63), A281: хук итога подключён списком импорта, как был, — пропуск красит прогон;
+    копию сессии под mutmut сносит `pytest_unconfigure`, после итога и развязки фикстур."""
     ended: list[bool] = []
     monkeypatch.setattr(mutation_db, "session_end", lambda: ended.append(True))
-    monkeypatch.setitem(run_summary.OUTCOME, "skipped", ["tests/test_x.py::test_y"])
-    session = cast("pytest.Session", SimpleNamespace(exitstatus=pytest.ExitCode.OK))
-    conftest.pytest_sessionfinish(session, pytest.ExitCode.OK)
-    assert (session.exitstatus, ended) == (pytest.ExitCode.TESTS_FAILED, [True])
+    conftest.pytest_unconfigure(cast("pytest.Config", SimpleNamespace()))
+    assert ended == [True]
+    assert conftest.pytest_sessionfinish is run_summary.pytest_sessionfinish
 
 
 def test_a281_session_start_takes_the_copy_path(monkeypatch: pytest.MonkeyPatch) -> None:

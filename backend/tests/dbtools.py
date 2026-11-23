@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import fcntl
 import hashlib
 import os
 import subprocess
 import sys
+import tempfile
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -39,6 +41,9 @@ DB_TIMEZONE = "Asia/Tokyo"
 
 #: Схема проб: сверка моделей сервиса с базой идёт по `public` и её не видит.
 PROBE_SCHEMA = "probe"
+#: База сессии вместо базы рабочей копии: копия шаблона под mutmut (`mutation_db`) или шаблон на
+#: время постройки. Первая — действующая; пусто — база рабочей копии.
+ACTIVE: list[str] = []
 
 
 class ProbeBase(DeclarativeBase):
@@ -86,9 +91,44 @@ class RefusedError(RuntimeError):
     """Обвязка отказалась трогать базу без тестового префикса."""
 
 
-def own_name(root: Path = ROOT) -> str:
-    """Имя базы рабочей копии: префикс и 10 знаков sha256 пути её корня."""
-    return PREFIX + hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:10]
+def named(key: str) -> str:
+    """Имя тестовой базы: префикс и 10 знаков sha256 строки `key`."""
+    return PREFIX + hashlib.sha256(key.encode()).hexdigest()[:10]
+
+
+def own_name(root: Path | None = None) -> str:
+    """Имя базы рабочей копии: префикс и 10 знаков sha256 пути её корня. Без корня в сессии с
+    базой сессии (`ACTIVE`) — она: так копию шаблона видят alembic, живой сервер, фильтры
+    `datname` и отказ A18."""
+    if root is None and ACTIVE:
+        return ACTIVE[0]
+    return named(str((root or ROOT).resolve()))
+
+
+@contextlib.contextmanager
+def active(name: str) -> Iterator[None]:
+    """`own_name()` внутри блока — `name`; после — как до него."""
+    ACTIVE.insert(0, name)
+    try:
+        yield
+    finally:
+        ACTIVE.pop(0)
+
+
+def lock_file(name: str) -> Path:
+    return Path(tempfile.gettempdir()) / f"{name}.lock"
+
+
+@contextlib.contextmanager
+def locked(name: str) -> Iterator[None]:
+    """Замок ОС на подготовку базы `name`: вложенные сессии A31 и `prepare()` внутри теста из
+    четырёх потоков гейта мутаций не готовят одну базу разом (A283)."""
+    with lock_file(name).open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def server_url() -> URL:
@@ -132,8 +172,14 @@ async def empty_schema(url: str) -> None:
 
 async def prepare() -> None:
     """База рабочей копии: создать, если нет; пояс по умолчанию; пустая схема; цепочка
-    ревизий `alembic upgrade head` — той же командой, что в бою; пробы — в схеме `probe`."""
+    ревизий `alembic upgrade head` — той же командой, что в бою; пробы — в схеме `probe`. База
+    рабочей копии — под замком ОС; базу сессии (`ACTIVE`) не готовит никто другой."""
     name = own_name()
+    with contextlib.nullcontext() if ACTIVE else locked(name):
+        await _prepare(name)
+
+
+async def _prepare(name: str) -> None:
     server = await asyncpg.connect(_raw(server_url()))
     try:
         if not await server.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", name):
