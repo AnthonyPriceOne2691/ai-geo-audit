@@ -14,7 +14,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
+- **phase:** verify
+  <!-- Код — `0175ff1`, слияние main `77b143b` — `77baaa2`; отчёт сверки — исполнитель, вердикт
+       — вторая проверяющая с полной процедурой (ведущая, 2026-11-23T09:16Z). -->
 - **builder:** agent:front-session
 - **verifier:** agent:reviewer2-session
   <!-- С 2026-11-20T09:49Z по слову владельца приёмку полосы третьей сессии ведёт вторая
@@ -37,7 +39,8 @@
        обвязка оракула отдельным модулем `scripts/oracle_guard.py`, оракул Ч1.5а на два файла;
        поведение и строки примеров те же. Поправка названа владельцу в просьбах 10:03Z, 10:33Z и
        10:38Z; слово — «подписываю» на список, где план — второй пункт. -->
-- **shape-oracles:** weak
+- **shape-oracles:** cqg-deployed
+  <!-- Гейты формы пришли слиянием main с В1а (`119c78b`), версия — `cqg@3.30` с `77baaa2`. -->
 - **behavior-oracles:** tests-present — тесты без Docker: таблица шагов оракула, скрипт сканера на подставных архивах, файлы джоб; оракул и скан образа — живыми прогонами
 - **artifact_oracle:** scripts/stack_oracle.py и scripts/image_scan.py — образ из чистой копии, скан файлом `docker save`
 - **ci-oracles:** deployed
