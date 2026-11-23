@@ -18,6 +18,7 @@ import pytest
 from sentinels_taps import (
     MIN_SECRET,
     WATCH,
+    as_text,
     watch_pool,
     watch_secrets,
     wrap_httpx,
@@ -29,13 +30,14 @@ TOKEN = "cnry" + secrets.token_hex(5)
 
 
 def record_text(entry) -> str:
-    """Всё, что вызов способен вынести наружу: текст, аргументы, extra, исключение."""
+    """Всё, что вызов способен вынести наружу: текст, аргументы, extra, исключение.
+    Значение, которое не печатается, — заглушкой с именем типа (`as_text`)."""
     _who, _method, args, extra, exc = entry
-    parts = [str(a) for a in args]
+    parts = [as_text(a) for a in args]
     if isinstance(extra, dict):
-        parts += [str(v) for v in extra.values()]
+        parts += [as_text(v) for v in extra.values()]
     if exc is not None:
-        parts.append(str(exc))
+        parts.append(as_text(exc))
     return "\n".join(parts)
 
 
@@ -43,11 +45,12 @@ def excerpt(entry) -> str:
     """Строка записи для отчёта — с ЗАМАСКИРОВАННЫМИ секретами: отчёт уходит в лог CI,
     и показать в нём значение значило бы совершить ту самую утечку."""
     _who, method, args, _extra, _exc = entry
-    msg, rest = (args[1], args[2:]) if method == "log" and len(args) > 1 else (args[0], args[1:])
+    args = args[1:] if method == "log" else args
+    msg, rest = (args[0], args[1:]) if args else ("", ())   # `msg=` ключом — args пусты
     try:
-        text = str(msg) % rest if rest else str(msg)
-    except (TypeError, ValueError):
-        text = str(msg)
+        text = as_text(msg) % rest if rest else as_text(msg)
+    except Exception:  # silent-ok: шаблон не сошёлся с аргументами — в отчёт идёт шаблон
+        text = as_text(msg)
     return mask(text)[:120]
 
 
@@ -78,8 +81,8 @@ class Sentinels:
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_protocol(self, item):
+        wrap_websocket()            # тест-клиент загружен проектом; сбой установки — не тестов
         WATCH.nodeid = item.nodeid
-        wrap_websocket()            # тест-клиент к этому моменту загружен проектом
         yield
         WATCH.nodeid = ""
 
@@ -93,10 +96,15 @@ class Sentinels:
     def pytest_runtest_makereport(self, item, call):
         outcome = yield
         rep = outcome.get_result()
-        found = self.leaks(item, call.when, rep)
+        try:
+            found = self.leaks(item, call.when, rep)
+        except Exception as exc:
+            WATCH.record_fault("вердикт", exc)
+            found = []
         rep.sections = [(title, mask(text)) for title, text in rep.sections]
+        WATCH.leaks += found
+        found += self.refusals(item.nodeid)
         if found:
-            WATCH.leaks += found
             rep.outcome = "failed"
             rep.longrepr = "стражи исполнения (§2.7, §2 пул):\n  " + "\n  ".join(found)
 
@@ -115,10 +123,18 @@ class Sentinels:
     @staticmethod
     def sources(entry, allow: bool) -> list[str]:
         """Метки в записи. Строка клиента теста о СВОЁМ запросе — не утечка приложения."""
-        if entry[0] == "httpx" and any(str(a) in WATCH.local_urls for a in entry[2]):
+        if entry[0] == "httpx" and any(as_text(a) in WATCH.local_urls for a in entry[2]):
             return []
         return [src for src in WATCH.found(record_text(entry))
                 if not allow or src.startswith("секрет")]
+
+    @staticmethod
+    def refusals(nodeid: str) -> list[str]:
+        """Сбой стража на этом тесте: тест не просужен — отказ словами, код ни при чём."""
+        mine = sorted({mask(m) for n, m in WATCH.faults if n == nodeid})
+        WATCH.faults = [f for f in WATCH.faults if f[0] != nodeid]
+        WATCH.refused += len(mine)
+        return [f"не просудил ({m}) — сбой стража, а не кода под тестом" for m in mine]
 
     @staticmethod
     def lost_connections(item) -> list[str]:
@@ -129,15 +145,28 @@ class Sentinels:
         return [f"{len(lost)} соединени(й) не вернулось в пул: взято кодом под тестом "
                 "мимо контекст-менеджера"] if lost else []
 
+    def pytest_sessionfinish(self, session) -> None:
+        """Сбой вне теста (установка, сбор) отказать некому — красный весь прогон."""
+        if WATCH.faults and session.exitstatus == pytest.ExitCode.OK:
+            session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
     def pytest_terminal_summary(self, terminalreporter) -> None:
         names = sorted(s.split()[1] for s in WATCH.marks.values() if s.startswith("секрет"))
         texts = sum(1 for s in WATCH.marks.values() if not s.startswith("секрет"))
+        faults = sorted({mask(m) for _, m in WATCH.faults})
         tr = terminalreporter
         tr.write_line(
             f"стражи исполнения: записей прочитано {WATCH.seen} · секретов под меткой "
             f"{len(names)} ({', '.join(names) or '—'}) · текстов под меткой {texts} "
             f"(canary_text в {WATCH.text_tests} тест(ах)) · пул: взято {WATCH.pool}, "
-            f"не вернулось {WATCH.lost} · утечек {len(WATCH.leaks)}")
+            f"не вернулось {WATCH.lost} · утечек {len(WATCH.leaks)} · сбоев стража "
+            f"{WATCH.refused + len(faults)}")
+        if faults:
+            tr.write_line("✗ стражи сбоили вне теста — судилось не всё, прогон красный: "
+                          + "; ".join(faults), red=True)
+        if WATCH.streams:
+            tr.write_line(f"⚠ тело {WATCH.streams} запрос(ов) теста шло потоком: свободный "
+                          "текст в нём НЕ судился — чтение съело бы поток (§2.7c)", yellow=True)
         # «Ноль утечек» без меток — не чистота, а непросмотренное: печатается вслух.
         if not texts:
             tr.write_line("⚠ текст пользователя НЕ судился: ни один тест не отправил "

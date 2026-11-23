@@ -1,5 +1,5 @@
 # .github/workflows/main-guard.yml
-# Шаблон канона cqg@3.14: условие и тело тревоги — дословно; права и раннер — адаптация
+# Шаблон канона cqg@3.30: условие и тело тревоги — дословно; права и раннер — адаптация
 # (scripts/lint/adapted.json). Правила держит backend/tests/test_ci_contract.py (A100, A117).
 name: main-guard
 

@@ -151,13 +151,13 @@ def load_baseline(baseline_path: Path) -> dict[str, int]:
 
 
 
-def scan(repo_root: Path, rule: dict) -> tuple[dict[str, int], int]:
-    """→ ({путь: сколько находок}, сколько файлов ПРОСМОТРЕНО).
+def scan(repo_root: Path, rule: dict) -> tuple[dict[str, list[int]], int]:
+    """→ ({путь: строки находок}, сколько файлов ПРОСМОТРЕНО).
 
     `scanned` считается после успешного разбора: файл, который не прочитался или
     не распарсился, гейт не смотрел, и записывать его в доказательство нельзя.
     """
-    counts: dict[str, int] = {}
+    found: dict[str, list[int]] = {}
     scanned = 0
     for path in iter_target_files(repo_root):
         try:
@@ -168,8 +168,8 @@ def scan(repo_root: Path, rule: dict) -> tuple[dict[str, int], int]:
         scanned += 1
         hits = rule["find"](tree, src.splitlines())
         if hits:
-            counts[repo_rel(path, repo_root)] = len(hits)
-    return counts, scanned
+            found[repo_rel(path, repo_root)] = sorted(hits)
+    return found, scanned
 
 
 def write_baseline(baseline_path: Path, rule: dict, counts: dict[str, int],
@@ -189,7 +189,7 @@ def write_baseline(baseline_path: Path, rule: dict, counts: dict[str, int],
     return 0
 
 
-def judge(rule_name: str, rule: dict, counts: dict[str, int], snap: dict[str, int],
+def judge(rule_name: str, rule: dict, found: dict[str, list[int]], snap: dict[str, int],
           scanned: int, strict: bool) -> int:
     """Сверка со снимком и печать. Успех обязан назвать число просмотренного.
 
@@ -197,13 +197,16 @@ def judge(rule_name: str, rule: dict, counts: dict[str, int], snap: dict[str, in
     именно этого числа. Класс закрывался трижды (grep-гейт 1.19, complexity
     1.20/1.22) и трижды не переносился сюда: пятое развёртывание нашло его тремя
     арками сразу — этот скрипт единственный не печатал НИЧЕГО ни на одном пути.
+    Красное называет место каждой находки (`путь:строка`, первый проект на `cqg@3.14`):
+    снимок помнит число на файл, а не строки, поэтому печатаются все находки файла.
     """
-    violations = [(p, c, snap.get(p, 0)) for p, c in sorted(counts.items())
-                  if c > snap.get(p, 0)]
+    violations = [(p, lines, snap.get(p, 0)) for p, lines in sorted(found.items())
+                  if len(lines) > snap.get(p, 0)]
     if violations:
         mark = "✗" if strict else "⚠"
-        for p, c, allowed in violations:
-            print(f"  {mark}  {p}: {c} нарушений (разрешено {allowed})")
+        for p, lines, allowed in violations:
+            print(f"  {mark}  {p}: {len(lines)} нарушений (разрешено {allowed})")
+            print("\n".join(f"       {p}:{n}" for n in lines))
         print(f"\n{'ERROR' if strict else 'WARNING'}: {len(violations)} файл(ов) нарушают правило {rule_name}.")
         print(rule["hint"])
         print("Легаси из baseline — ок до чистки; новый код держим на нуле. Пересъём вниз: --generate.")
@@ -240,10 +243,11 @@ def main() -> int:
     repo_root = script_dir.parent.parent  # <repo-root>/scripts/lint/ -> repo-root
     baseline_path = script_dir / rule["baseline"]
 
-    counts, scanned = scan(repo_root, rule)
+    found, scanned = scan(repo_root, rule)
     if args.generate:
-        return write_baseline(baseline_path, rule, counts, scanned)
-    return judge(args.rule, rule, counts, load_baseline(baseline_path), scanned,
+        return write_baseline(baseline_path, rule, {p: len(v) for p, v in found.items()},
+                              scanned)
+    return judge(args.rule, rule, found, load_baseline(baseline_path), scanned,
                  os.environ.get("STRICT", "1") == "1")
 
 

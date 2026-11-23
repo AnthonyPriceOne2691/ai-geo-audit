@@ -13,7 +13,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from delivery_base import (ROOT, ActiveCtx, field, is_placeholder,
+from delivery_base import (ARCHIVE, ROOT, ActiveCtx, field, is_placeholder,
                            read)
 from delivery_base import example_ref_pattern, test_files
 from delivery_decisions import signature_verdict
@@ -21,6 +21,27 @@ from delivery_history import debt_is_not_frozen, expectation_predates_tests
 
 DIGEST = ROOT / "scripts" / "lint" / "assert_digest.sh"
 DIGEST_MARK = re.compile(r"(?im)^\s*asserts_without_example:\s*(\d+|unknown)\s*$")
+#: Неотмеченная галка списка — `- [ ]`, `- [~]`: выбор, которого не сделали.
+UNMARKED = re.compile(r"^\s*[-*+]\s+\[(?![xX]\])[^\]]{0,2}\]")
+
+
+def verdict_gap(report: str) -> str:
+    """Чего не хватает вердикту handoff в отчёте verify, либо "" (`delivery@2.23`).
+
+    Вердикт — строка с READY FOR HANDOFF, кроме неотмеченной галки. Первый проект на
+    `cqg@3.14` (урок L3): A.8 несёт `- [ ] READY FOR HANDOFF`, и гейт находил вердикт в
+    строке, которую никто не отметил. Строка без галки (`**READY FOR HANDOFF** — …`) —
+    заявление и вердиктом остаётся: так написаны 34 отчёта флота из 333 (перепись 22.11).
+    """
+    lines = [ln for ln in report.splitlines() if re.search(r"READY FOR HANDOFF", ln, re.I)]
+    if any(not UNMARKED.match(ln) for ln in lines):
+        return ""
+    return ("phase=handoff: verify-report.md lacks 'READY FOR HANDOFF' verdict"
+            + (" — строка есть, но не отмечена (`- [ ]` шаблона A.8 — выбор, которого не "
+               "сделали): отметь `- [x]` либо закрой NEED CONVERGE / BLOCKED" if lines else ""))
+
+#: id примера — первая колонка строки таблицы спеки (§3.1d): одна грамматика на свою спеку и архив.
+EXAMPLE_ID = re.compile(r"(?m)^\s*\|\s*([A-Z]\d+)\s*\|")
 
 def check_archive_obligation(status: str, ctx: ActiveCtx, phase: str,
                              errors: list[str]) -> None:
@@ -53,10 +74,9 @@ def check_archive_obligation(status: str, ctx: ActiveCtx, phase: str,
 
     if phase == "handoff" and verify.is_file():
         vr = read(verify)
-        if not re.search(r"READY FOR HANDOFF", vr, re.I):
-            errors.append(
-                "phase=handoff: verify-report.md lacks 'READY FOR HANDOFF' verdict"
-            )
+        gap = verdict_gap(vr)
+        if gap:
+            errors.append(gap)
         # §9.2: метрики снимаются на handoff. Без гейта ритуал не выполняется.
         if "Harness metrics" not in vr:
             errors.append(
@@ -215,7 +235,7 @@ def check_expectation_and_oracle(status: str, ctx: ActiveCtx, klass: str,
     # код, и все гейты ниже проверяют его согласие с самим собой.
     if klass in {"M", "L"} and phase in implement_like and spec.is_file():
         spec_text = read(spec)
-        ex_ids = re.findall(r"(?m)^\s*\|\s*([A-Z]\d+)\s*\|", spec_text)
+        ex_ids = EXAMPLE_ID.findall(spec_text)
 
         # Корпуса «где искать». Строятся БЕЗУСЛОВНО, потому что их читают ДВЕ
         # независимые проверки — ссылки на id ниже и реляционный оракул §6.5.
@@ -273,6 +293,41 @@ RELATIONAL_MARKERS = {
     **dict.fromkeys((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"),
                     (r"fc\.assert|fc\.property", "`fc.property` (fast-check)")),
 }
+
+
+def _taken_by_archive(home: Path) -> tuple[dict[str, str], int]:
+    """{id примера: спека архива, где он встречен первым} и число спек — своя (`home`) не в счёт."""
+    specs = [s for s in sorted(ARCHIVE.glob("*/spec.md")) if s.parent != home]
+    taken: dict[str, str] = {}
+    for s in specs:
+        for i in EXAMPLE_ID.findall(read(s)):
+            taken.setdefault(i, s.relative_to(ROOT).as_posix())
+    return taken, len(specs)
+
+
+def name_example_ids_met_in_archive(ctx: ActiveCtx) -> None:
+    """Номера спеки, уже встречавшиеся в архиве, названы с адресом (§3.1d, `delivery@2.30`).
+
+    Ссылку на пример ищут по тестам всего дерева, и новый пример под старым номером засчитал
+    бы тест прошлой поставки. Отказом (`delivery@2.26`) это не судится: номер — имя примера,
+    общий и перенесённый из прошлой части несут прежний. У первого проекта на `delivery@2.21`
+    72 номера архива из 125 стоят в нескольких спеках — отказ закрыл обе поставки в работе.
+    """
+    if not ctx.spec.is_file():
+        return
+    taken, n_specs = _taken_by_archive(ctx.home)
+    own = list(dict.fromkeys(EXAMPLE_ID.findall(read(ctx.spec))))
+    met = [i for i in own if i in taken]
+    line = (f"§3.1d: номера примеров сверены с архивом — спек {n_specs}, новых "
+            f"{len(own) - len(met)}, уже встречались {len(met)}")
+    if met:
+        used = [*taken, *own]
+        free = sorted({f"{c[0]}{max(int(i[1:]) for i in used if i[0] == c[0]) + 1}" for c in met})
+        line += (": " + "; ".join(f"{i} ({taken[i]})" for i in met[:5])
+                 + (f" и ещё {len(met) - 5}" if len(met) > 5 else "")
+                 + " — тот же пример или новый под старым номером, судит читающий; "
+                 f"следующий свободный — {', '.join(free)}")
+    print(line)
 
 
 def check_relational_oracle(tests: dict[str, str], klass: str,
@@ -422,6 +477,8 @@ def check_evidence(status: str, args, errors: list[str], warnings: list[str], ct
         errors.extend(debt_is_not_frozen())
 
     check_archive_obligation(status, ctx, phase, errors)
+
+    name_example_ids_met_in_archive(ctx)
 
     check_builder_verifier(status, ctx, klass, phase, errors)
 

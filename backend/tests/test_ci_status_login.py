@@ -1,9 +1,10 @@
-"""Гейт статуса CI и прибор срабатываний — без вывода токена (адаптация проекта, `adapted.json`).
+"""Гейт статуса CI и прибор срабатываний — без вывода токена (с `cqg@3.26` — тела канона).
 
-Канон проверял вход командой `gh auth token`: она выводит токен (у канона — в /dev/null), а на
-машинах проекта токен не выводится. Адаптация: проверки входа нет, вход проверяет сам вызов
-`gh run list`; его отказ (нет входа, сеть) — «статус CI не проверен: причина» с кодом ветки
-«нет входа» канона, у прибора срабатываний — «данных о срабатываниях нет: причина», код 0.
+До `cqg@3.26` канон проверял вход командой `gh auth token`: она выводит токен (у канона — в
+/dev/null), а на машинах проекта токен не выводится, и проект держал адаптацию. Теперь так
+устроен сам канон: проверки входа нет, вход проверяет вызов `gh run list`; его отказ (нет
+входа, сеть) — «статус CI не проверен: причина» с кодом ветки «нет входа», у прибора
+срабатываний — «данных о срабатываниях нет: причина», код 0. Тесты держат это у проекта.
 
 Подставной `gh` стоит первым в PATH и пишет каждый вызов в журнал: настоящий `gh` тесты не
 зовут, а вызова `auth` нет ни на одном пути.
@@ -113,12 +114,13 @@ def no_auth(calls: list[str]) -> bool:
 
 
 def test_ci_status_without_login_is_not_checked_and_never_reads_the_token(tmp_path: Path) -> None:
-    """Нет входа: «статус CI не проверен: gh run list — код 4: …», при `ci-oracles: weak` —
-    код 0; `gh auth` не вызывался, вызов один — `run list`."""
+    """Нет входа: «статус CI не проверен: нет входа в gh, gh run list — код 4: …», при
+    `ci-oracles: weak` — код 0; `gh auth` не вызывался, вызов один — `run list`."""
     done, calls = run(tmp_path, "check_ci_status.sh", GH_FAIL=NO_LOGIN)
     assert done.returncode == 0, done.stderr
-    assert f"статус CI не проверен: gh run list — код 4: {NO_LOGIN}" in done.stderr
-    assert "`ci-oracles: weak` в STATUS соответствует факту" in done.stdout
+    why = f"нет входа в gh, gh run list — код 4: {NO_LOGIN}"
+    assert f"статус CI не проверен: {why}" in done.stderr
+    assert "`ci-oracles: weak` в delivery/active/STATUS.md соответствует факту" in done.stdout
     assert no_auth(calls), calls
     assert [call.split()[:2] for call in calls] == [["run", "list"]]
 
@@ -128,7 +130,7 @@ def test_ci_status_without_login_and_deployed_status_is_red(tmp_path: Path) -> N
     «нет входа»; `gh auth` не вызывался."""
     done, calls = run(tmp_path, "check_ci_status.sh", "deployed", GH_FAIL=NO_LOGIN)
     assert done.returncode == 1
-    assert "а CI не подтверждён: gh run list — код 4" in done.stderr
+    assert "а CI не подтверждён: нет входа в gh, gh run list — код 4" in done.stderr
     assert no_auth(calls), calls
 
 

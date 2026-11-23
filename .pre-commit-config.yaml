@@ -1,5 +1,6 @@
-# pre-commit hooks. Установка: pip install pre-commit && pre-commit install.
-# Прогон по всему дереву: pre-commit run --all-files.
+# pre-commit hooks. Установка: pre-commit по манифесту, хуки — заглушкой CQG §5 шаг 5
+# (не `pre-commit install`: каталог хуков один на все связанные копии).
+# Прогон по всему дереву: pre-commit run --all-files, и ещё раз с --hook-stage pre-push.
 #
 # Пути ниже — под backend/-и-frontend/-layout (git-root = корень проекта).
 # Поправь files:/exclude:/entry: и путь к venv (.venv) под свою структуру.
@@ -97,6 +98,9 @@ repos:
       # backend) и получил четыре ошибки ruff на `scripts/delivery_status.py`
       # плюс переписанные косметическими хуками файлы снимка.
       # Судит payload его владелец — сьют канона (`test_payload_passes_own_gates`).
+      # ⚠ `files:` шире `backend/` не делай: у файла вне каталога своего конфига ruff молча
+      # судит умолчаниями (первый проект на `cqg@3.14`: `os.system` в `deploy/` прошёл) —
+      # python вне backend судит хук-близнец с `--config` (CQG §5 шаг 2).
       - id: ruff
         name: ruff check (версия из lock проекта)
         language: system

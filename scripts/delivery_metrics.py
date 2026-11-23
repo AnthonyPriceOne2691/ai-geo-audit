@@ -8,7 +8,8 @@ Usage:
 --write вставляет/обновляет блок "## Harness metrics" в
 delivery/active/verify-report.md. Exit 0 всегда: это отчёт, не гейт
 (гейт на наличие блока — в delivery_check.py на фазе handoff). Кроме дерева вне
-git-репозитория: отчёта там нет, и это отказ, а не ноль (`delivery@2.20`).
+git-репозитория и базы без окна: отчёта там нет, и это отказ, а не ноль (`delivery@2.20`,
+`delivery@2.23`).
 """
 
 from __future__ import annotations
@@ -61,7 +62,29 @@ HARDENING_PATHS = (
 TEST_PATH_RE = re.compile(
     r"(^|/)(test|tests|Tests|__tests__|spec|specs)/|(^|/)conftest\.py$|(^|/)test[_-]"
     r"|[_-](test|spec)\.|(Test|Tests|Spec|Specs)\.|\.(test|spec)\.")
-DOC_PREFIXES = ("delivery/", "knowledge/")
+# «code» метрики — то, что меряют breaker'ы §3.4 (`delivery@2.25`): исключения — копия
+# `delivery_base.py` (Приложение C разворачивается без гейта), согласие держит
+# `tests/test_breaker_scope.py`. Метрика брала одни документы поставки, и у первого
+# проекта на `delivery@2.21` `backend/uv.lock` дал ей +86/−2 сверх числа гейта.
+BREAKER_EXCLUDE = (
+    "delivery/", "knowledge/", "scripts/lint/", "scripts/merge_guard.sh", "scripts/delivery_",
+    "scripts/okf_", ".claude/", "docs/canon/", ".pre-commit-config.yaml", ".github/workflows/",
+    ".gitlab-ci.yml", "scripts/check_irreversible_signature.sh", "scripts/sign_irreversible.sh",
+    "stack_selftest.py", "selftest_sizes.py", "extract_payload.py",
+    "scripts/stack_selftest.py", "scripts/selftest_sizes.py", "scripts/extract_payload.py")
+GENERATED_FILENAMES = (
+    "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
+    "poetry.lock", "uv.lock", "Pipfile.lock", "Cargo.lock", "go.sum", "Gemfile.lock",
+    "composer.lock", "Podfile.lock")
+CONTOUR_CONFIGS = (".dependency-cruiser.cjs", "eslint.config.js", "eslint.config.mjs",
+                   "eslint.config.cjs")
+
+
+def out_of_blast_radius(path: str) -> bool:
+    """Путь вне breaker'ов §3.4 — тот же ответ, что у гейта."""
+    name = path.rsplit("/", 1)[-1]
+    return (path.startswith(BREAKER_EXCLUDE) or name in GENERATED_FILENAMES
+            or name in CONTOUR_CONFIGS)
 
 
 def tree_env(root: Path) -> dict[str, str]:
@@ -91,6 +114,27 @@ def git(*args: str) -> str:
     except FileNotFoundError:
         return ""
     return out.stdout if out.returncode == 0 else ""
+
+
+def resolves(ref: str) -> bool:
+    return bool(ref) and bool(git("rev-parse", "--verify", "--quiet", ref).strip())
+
+
+def window_refusal(base: str) -> str:
+    """Почему у базы нет окна, с подсказкой, либо "" — как `delivery_base.window_refusal`
+    (`delivery@2.23`): части гейта отчёт не импортирует, согласие держит прогон.
+
+    Без окна в verify-report уходил блок «(collection failed)», и handoff его принимал."""
+    if resolves(base) and git("merge-base", base, "HEAD").strip():
+        return ""
+    if not base:
+        return "база '' пуста — переменная базы до вызова не дошла"
+    if resolves(base):
+        return f"база '{base}' не имеет общей истории с HEAD (неглубокий клон?)"
+    alt = base[len("origin/"):] if base.startswith("origin/") else f"origin/{base}"
+    hint = (f"; есть '{alt}' — передай --base {alt}"
+            if re.fullmatch(r"[\w./-]+", base) and resolves(alt) else "")
+    return f"база '{base}' в этом клоне не разрешается{hint}"
 
 
 def numstat(span: str, *flags: str) -> list[tuple[str, str, str]]:
@@ -173,19 +217,19 @@ def _diff_stats(span: str) -> tuple[str, list[str]]:
     и список путей усиления; четыре счётчика за границей мертвы. Здесь же треть
     ветвлений `collect` (было 69/20).
     """
-    code_files = doc_files = added = deleted = 0
+    code_files = excluded = added = deleted = 0
     hardened: list[str] = []
     for path, a, d in numstat(span):
         if path.startswith(HARDENING_PATHS):
             hardened.append(path)
-        if path.startswith(DOC_PREFIXES):
-            doc_files += 1
+        if out_of_blast_radius(path):
+            excluded += 1
             continue
         code_files += 1
         added += int(a) if a.isdigit() else 0
         deleted += int(d) if d.isdigit() else 0
     return (
-        f"{code_files} code (+{doc_files} process docs) / "
+        f"{code_files} code (+{excluded} outside breakers §3.4) / "
         f"+{added}/-{deleted} (net {added - deleted:+d})",
         hardened,
     )
@@ -236,11 +280,7 @@ def _hardened_line(span: str, hardened: list[str]) -> str:
 
 def collect(base: str) -> dict[str, str]:
     m: dict[str, str] = {}
-
-    if not git("rev-parse", "--verify", "--quiet", base).strip():
-        m["_error"] = f"ref '{base}' unavailable (shallow clone?)"
-        return m
-    merge_base = git("merge-base", base, "HEAD").strip() or base
+    merge_base = git("merge-base", base, "HEAD").strip()
 
     # Область — ТЕКУЩАЯ поставка, а не вся история: пути в `delivery/active/`
     # переиспользуются, и «первый в истории» отвечает про чужую работу (см.
@@ -259,10 +299,7 @@ def collect(base: str) -> dict[str, str]:
 
 
 def render(m: dict[str, str], base: str) -> str:
-    if "_error" in m:
-        rows = f"| (collection failed) | {m['_error']} |"
-    else:
-        rows = "\n".join(f"| {k} | {v} |" for k, v in m.items())
+    rows = "\n".join(f"| {k} | {v} |" for k, v in m.items())
     return (
         "## Harness metrics (this shipment)\n\n"
         f"<!-- generated by scripts/delivery_metrics.py --base {base} -->\n\n"
@@ -285,6 +322,11 @@ def main() -> int:
     if not git("rev-parse", "--git-dir").strip():
         print("delivery_metrics: вне git-репозитория — судить нечего: это не «нарушений нет» "
               f"(дерево {ROOT})", file=sys.stderr)
+        return 1
+    why = window_refusal(args.base)
+    if why:
+        print(f"delivery_metrics: окно не определено: {why} — отчёта нет: это не «поставка "
+              "пустая»", file=sys.stderr)
         return 1
     block = render(collect(args.base), args.base)
 
