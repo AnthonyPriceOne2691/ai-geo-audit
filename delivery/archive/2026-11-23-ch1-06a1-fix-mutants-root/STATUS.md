@@ -6,7 +6,7 @@
 - **kind:** bugfix
 - **repro_test:** backend/tests/test_mutants_layout.py::test_deploy_fakes_load_script_from_mutants_layout
 - **diagnosis:** active/diagnosis.md
-- **phase:** verify
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-23T10:15Z)
@@ -30,6 +30,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый запрос с правкой в `backend/src` после слияния: шаг статистики mutmut проходит, в его журнале нет `FileNotFoundError` и «failed to collect stats», гейт порч пишет «mutation: судил файлов N из N» и «убито K из M»; набор в джобе `tests` — без пропусков, тест-повтор в нём зелёный
+- **observe_until:** 2026-11-30 — первые запросы с кодом в `backend/src` после правки (5б, «Учётки хранилищ»)
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
