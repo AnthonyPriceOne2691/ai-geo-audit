@@ -301,29 +301,38 @@ def test_a76_docker_down_is_code_2_not_a_green_run(
 
 
 class MigrateFails(oracle.Docker):
-    """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — ошибка
-    alembic и строка с паролем стека."""
+    """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — строки с
+    паролем и секретом стека, ошибка alembic и две строки после неё."""
 
-    secret = ""
+    secrets: tuple[str, str] = ("", "")
+    logs_args: tuple[str, ...] = ()
 
     def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
         if "up" in args:
             stderr = b'service "migrate" didn\'t complete successfully: exit 255\n'
             return subprocess.CompletedProcess(["docker", *args], 1, b"", stderr)
         if "logs" in args:
-            log = f"migrate-1  | url={self.secret}\nmigrate-1  | FAILED: Path doesn't exist: 'x'.\n"
+            self.logs_args = args
+            password, jwt = self.secrets
+            log = (
+                f"migrate-1  | url={password}\nmigrate-1  | jwt={jwt}\n"
+                "migrate-1  | FAILED: Path doesn't exist: 'x'.\n"
+                "migrate-1  | exit code 255\nmigrate-1  | done\n"
+            )
             return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
         return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
 
 
 def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
-    """A76, третья строка: подъём упал на migrate — в причине шага хвост журнала migrate с
-    причиной от alembic («FAILED: …»); пароля стека в причине нет."""
+    """A76, третья строка: подъём упал на migrate — в причине шага хвост журнала migrate
+    (`--tail 20`, шесть последних строк) с причиной от alembic («FAILED: …»); пароля и секрета
+    стека в причине нет."""
     docker = MigrateFails()
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
-    docker.secret = run.password
+    docker.secrets = (run.password, run.jwt)
     with pytest.raises(oracle.StepError) as failure:
         compose.step_up(run)
     reason = str(failure.value)
     assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
-    assert run.password not in reason
+    assert run.password not in reason and run.jwt not in reason
+    assert docker.logs_args[-4:] == ("--no-color", "--tail", "20", "migrate")
