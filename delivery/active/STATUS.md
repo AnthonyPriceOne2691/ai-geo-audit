@@ -76,7 +76,7 @@
        ведущей 2026-11-23); оценка по мере ×2 — около 1894 вместо 821 и шва «Боевое
        наложение». -->
 - **shape-oracles:** cqg-deployed
-- **behavior-oracles:** tests-present — pytest без Docker: разбор nginx.conf, правила стека, разбор остановки, выбор порта и подсети; оракул стека на машине и в CI — живые шаги A77–A89
+- **behavior-oracles:** tests-present — pytest без Docker: разбор nginx.conf, правила стека, разбор остановки, выбор порта и подсети; оракул стека на машине и в CI — живые шаги A77–A87
 - **artifact_oracle:** scripts/stack_oracle.py — сборка образа web и живые шаги оракула стека
 - **ci-oracles:** deployed
 - **worktree:** .claude/worktrees/ch1-05b
