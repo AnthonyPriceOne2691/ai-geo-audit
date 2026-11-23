@@ -22,6 +22,11 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 
 # Итог: окружение, alembic.ini и migrations/; процессы — от uid 10001, в USER — числом.
 FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS backend
+# zlib1g — исправление CVE-2026-85091 из Debian (deb13u1): официальный образ python ещё не
+# пересобран (decisions «Оракула», 2026-11-23). Строка уходит вместе с новым дайджестом базы.
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --gid 10001 app \
     && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent \
         --shell /usr/sbin/nologin app
