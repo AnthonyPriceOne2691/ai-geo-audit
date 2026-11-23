@@ -298,3 +298,32 @@ def test_a76_docker_down_is_code_2_not_a_green_run(
     """A76: Docker не отвечает — код 2 и подсказка, а не зелёный прогон без единого шага."""
     assert oracle.run_oracle("ai-geo-audit-oracle-test", DockerDown(missing)) == 2
     assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
+
+
+class MigrateFails(oracle.Docker):
+    """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — ошибка
+    alembic и строка с паролем стека."""
+
+    secret = ""
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        if "up" in args:
+            stderr = b'service "migrate" didn\'t complete successfully: exit 255\n'
+            return subprocess.CompletedProcess(["docker", *args], 1, b"", stderr)
+        if "logs" in args:
+            log = f"migrate-1  | url={self.secret}\nmigrate-1  | FAILED: Path doesn't exist: 'x'.\n"
+            return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
+        return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
+
+
+def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
+    """A76, третья строка: подъём упал на migrate — в причине шага хвост журнала migrate с
+    причиной от alembic («FAILED: …»); пароля стека в причине нет."""
+    docker = MigrateFails()
+    run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    docker.secret = run.password
+    with pytest.raises(oracle.StepError) as failure:
+        compose.step_up(run)
+    reason = str(failure.value)
+    assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
+    assert run.password not in reason
