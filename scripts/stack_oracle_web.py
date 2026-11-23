@@ -1,5 +1,6 @@
-"""Шаги оракула стека Ч1.5б: образ web (A77) и сервис web на поднятом compose (A82). Импорт в
-одну сторону: `stack_oracle.py` ставит шаги образа до подъёма стека, шаги сервиса — до A67.
+"""Шаги оракула стека Ч1.5б: образ web (A77) и сервис web на поднятом compose (A78–A80, A82).
+Импорт в одну сторону: `stack_oracle.py` ставит шаги образа до подъёма стека, шаги сервиса — до
+A67.
 """
 
 from __future__ import annotations
@@ -7,11 +8,22 @@ from __future__ import annotations
 import re
 import shutil
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
+from email.message import Message
 from typing import TYPE_CHECKING
 
-from stack_oracle_compose import StepError, compose, health, inspect, tag, top_uids, wait_health
+from stack_oracle_compose import (
+    StepError,
+    compose,
+    health,
+    inspect,
+    slot,
+    tag,
+    top_uids,
+    wait_health,
+)
 
 if TYPE_CHECKING:
     from stack_oracle import Run, Scan
@@ -27,6 +39,23 @@ SITE, CONFD, CONF = "usr/share/nginx/html/", "etc/nginx/conf.d/", "web.conf"
 LEFTOVERS = re.compile(r"(^|/)(node_modules|src)/|\.map$")
 BUILD = ("npm ci", "npm run build", "npm run check:dist")
 WEB_UID = "101"
+#: Заголовки защиты у каждого ответа web (A79): значения — строкой, как в сниппете.
+SECURITY = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    "Cross-Origin-Resource-Policy": "same-origin",
+}
+#: CSP страницы (A80): ровно десять директив спеки.
+CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; "
+    "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+#: Кэш (A78): страница — только со сверкой, файлы сборки — год и immutable; любой путь экрана —
+#: страница.
+PAGE_CACHE, ASSET_CACHE, PAGES = "no-cache", "public, max-age=31536000, immutable", ("/", "/x/y")
 
 
 def context_problems(names: set[str]) -> list[str]:
@@ -64,6 +93,73 @@ def page(url: str) -> int | str:
             return int(response.status)
     except OSError as error:
         return f"{type(error).__name__}: {error}"
+
+
+def fetch(url: str) -> tuple[int, Message, bytes]:
+    """Ответ web с машины мимо прокси окружения: код, все значения заголовков, тело. Ответ 4xx и
+    5xx — тоже ответ; сбой соединения — красное шага с именем сбоя (A78–A80)."""
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(url, timeout=5) as response:
+            return int(response.status), response.headers, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.headers, error.read()
+    except OSError as error:
+        raise StepError(f"{url}: {type(error).__name__}: {error}") from None
+
+
+def header_problems(where: str, headers: Message, wanted: dict[str, str]) -> list[str]:
+    """Каждый заголовок `wanted` — ровно один и со своим значением; иначе — имя и что пришло."""
+    found = {name: headers.get_all(name) or [] for name in wanted}
+    return [f"{where}: {name} — {got}" for name, got in found.items() if got != [wanted[name]]]
+
+
+def csp_rules(value: str) -> list[tuple[str, list[str]]]:
+    """Директивы CSP по порядку: имя и источники без учёта их порядка."""
+    return [
+        (rule[0].lower(), sorted(rule[1:])) for rule in map(str.split, value.split(";")) if rule
+    ]
+
+
+def csp_problems(found: list[str], wanted: str = CSP) -> list[str]:
+    """A80: CSP — один заголовок, директивы — ровно директивы `wanted`: лишняя, пропавшая,
+    повторённая или с другими источниками — красное с её именем. Из повторённых действует первая,
+    как в браузере."""
+    if len(found) != 1:
+        return [f"заголовков CSP {len(found)}, а не один"]
+    rules, spec = csp_rules(found[0]), dict(csp_rules(wanted))
+    names, got = [name for name, _ in rules], dict(reversed(rules))
+    problems = [
+        f"директива {name} повторена" for name in sorted(set(names)) if names.count(name) > 1
+    ]
+    problems += [f"лишняя директива {name}" for name in sorted(got.keys() - spec.keys())]
+    problems += [f"нет директивы {name}" for name in sorted(spec.keys() - got.keys())]
+    return problems + [
+        f"{name} — {' '.join(got[name])}, а не {' '.join(sources)}"
+        for name, sources in spec.items()
+        if name in got and got[name] != sources
+    ]
+
+
+def web_url(run: Run, path: str) -> str:
+    """Адрес web с машины: петля и порт прогона (A82)."""
+    return f"http://127.0.0.1:{slot(run)[0]}{path}"
+
+
+def dist_page(run: Run) -> str:
+    """A78: `index.html` из `dist/` стадии сборки — с ним сверяется страница web."""
+    container = f"{run.name}-web-dist"
+    run.docker.containers.append(container)
+    flags = ["--rm", "--name", container, "--network", "none", "--entrypoint", "cat"]
+    return run.docker("run", *flags, tag(run, "web-build"), "dist/index.html")
+
+
+def asset(run: Run) -> str:
+    """Путь файла сборки для проверок — первый по имени в `assets/` стадии сборки."""
+    found = sorted(name for name in run.facts["dist"] if name.startswith("assets/"))
+    if not found:
+        raise StepError("в dist/ стадии сборки нет файлов assets/ — судить кэш сборки не по чему")
+    return f"/{found[0]}"
 
 
 def step_web_build(run: Run) -> str:
@@ -143,6 +239,51 @@ def step_web_without_api(run: Run) -> str:
     return "web healthy все 40 с без api; api снова healthy"
 
 
+def step_web_cache(run: Run) -> str:
+    """A78: `/` и `/x/y` — 200 и тот же `index.html`, что в `dist/` стадии сборки, с
+    `Cache-Control: no-cache`; файл из `/assets/` — 200 и ровно один `Cache-Control` на год с
+    `immutable`."""
+    html, file = dist_page(run), asset(run)
+    problems = []
+    for path in (*PAGES, file):
+        code, headers, body = fetch(web_url(run, path))
+        cache = ASSET_CACHE if path == file else PAGE_CACHE
+        problems += [f"{path}: код {code}"] * (code != 200)
+        same = path == file or body.decode("utf-8", "replace") == html
+        problems += [f"{path}: не index.html из dist/"] * (not same)
+        problems += header_problems(path, headers, {"Cache-Control": cache})
+    if problems:
+        raise StepError("; ".join(problems))
+    return f"{', '.join(PAGES)} — 200, index.html из dist/, {PAGE_CACHE}; {file} — {ASSET_CACHE}"
+
+
+def step_web_headers(run: Run) -> str:
+    """A79, первая строка: у страницы и файла сборки — ровно по одному каждому из пяти заголовков
+    защиты; `Server` — `nginx` без версии. Ответы `/api/` — срез 3."""
+    problems = []
+    for path in (*PAGES, asset(run)):
+        code, headers, _ = fetch(web_url(run, path))
+        problems += [f"{path}: код {code}"] * (code != 200)
+        problems += header_problems(path, headers, SECURITY | {"Server": "nginx"})
+    if problems:
+        raise StepError("; ".join(problems))
+    return f"страница и файл сборки — по одному: {', '.join(SECURITY)}; Server — nginx"
+
+
+def step_web_csp(run: Run) -> str:
+    """A80: CSP страницы — ровно десять директив спеки; у страницы
+    `Cross-Origin-Opener-Policy: same-origin`."""
+    problems = []
+    for path in PAGES:
+        _, headers, _ = fetch(web_url(run, path))
+        found = headers.get_all("Content-Security-Policy") or []
+        problems += [f"{path}: {problem}" for problem in csp_problems(found)]
+        problems += header_problems(path, headers, {"Cross-Origin-Opener-Policy": "same-origin"})
+    if problems:
+        raise StepError("; ".join(problems))
+    return f"{', '.join(PAGES)}: CSP — ровно десять директив спеки; COOP — same-origin"
+
+
 #: Шаги образа web — до подъёма стека; сборка нужна подъёму.
 WEB_BUILD_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A77", "сборка образа web с канарейками", step_web_build, True),
@@ -151,5 +292,8 @@ WEB_BUILD_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
 #: Шаги сервиса web — на живом стеке, до шага A67.
 WEB_STACK_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A82", "процессы, порт и корень web", step_web_process, False),
+    ("A78", "страница и кэш web", step_web_cache, False),
+    ("A79", "заголовки защиты web", step_web_headers, False),
+    ("A80", "CSP страницы web", step_web_csp, False),
     ("A82", "web без api 40 с", step_web_without_api, False),
 ]

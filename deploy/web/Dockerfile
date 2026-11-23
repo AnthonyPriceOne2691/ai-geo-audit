@@ -19,6 +19,7 @@ RUN sed -i -e '/^user /d' -e 's,^pid .*,pid /tmp/nginx.pid;,' /etc/nginx/nginx.c
     && grep -qx 'pid /tmp/nginx.pid;' /etc/nginx/nginx.conf \
     && rm -rf /usr/share/nginx/html/* /etc/nginx/conf.d/*
 COPY deploy/web/nginx.conf /etc/nginx/conf.d/web.conf
+COPY deploy/web/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /build/dist/ /usr/share/nginx/html/
 USER 101
 EXPOSE 8080
