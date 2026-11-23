@@ -5,3 +5,4 @@
 # Вне обоих списков (в т.ч. любой новый файл) — hard 500/1000.
 [baseline]
 [exemption]
+580:deploy/deploy.py
