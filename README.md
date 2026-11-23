@@ -20,7 +20,7 @@ React с Vite и Mantine, pytest, docker compose.
 
 ## Гейты качества кода
 
-- Гейты формы — канон CQG `cqg@3.14`, половина Python; фронтовые половины — следующей поставкой.
+- Гейты формы — канон CQG `cqg@3.30`, половина Python; фронтовые половины — следующей поставкой.
   Хуки — `.pre-commit-config.yaml`, скрипты гейтов — `scripts/lint/`, настройки ruff, mypy,
   pytest и покрытия — `backend/pyproject.toml`, слои — `backend/.importlinter`.
 - Инструменты — dev-группа uv: `cd backend && uv sync --frozen`. Версия uv — 0.11.26, другая отказывает.

@@ -118,6 +118,14 @@ def _changed_tokens(body: str, pat: str) -> set[str]:
     return found
 
 
+#: Проза — не код (`delivery@2.25`): маячок спрашивает, что правка меняет в поведении,
+#: а у документа поведения нет. Первый проект на `delivery@2.21`: `git commit` в правиле
+#: агентам (`AGENTS.md`) поднял «транзакцию БД» в поставке без кода с базой. Отбор — по
+#: форматам прозы, а не по списку языков: SQL, YAML, shell и конфиги — код, маячок на
+#: них обязан срабатывать; `.txt` не проза (`requirements.txt`).
+PROSE_SUFFIXES = (".md", ".markdown", ".mdc", ".rst", ".adoc")
+
+
 def risky_classes(paths: list[str], base: str) -> dict[str, set[str]]:
     """Классы риска, которые дифф ИЗМЕНИЛ → чем именно они подняты.
 
@@ -127,6 +135,7 @@ def risky_classes(paths: list[str], base: str) -> dict[str, set[str]]:
     честнее, потому что показывает, что читатель видел конкретное место.
     Окно — от точки ветвления (`merge_base_of`), как у путей из `diff_stats`.
     """
+    paths = [p for p in paths if not p.lower().endswith(PROSE_SUFFIXES)]
     if not paths:
         return {}
     body = git("diff", "--unified=0", f"{merge_base_of(base) or base}..HEAD",

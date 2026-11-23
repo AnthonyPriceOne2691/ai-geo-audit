@@ -48,8 +48,8 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
   exit 1
 fi
 
-# `gh auth token` — локальная проверка учёток; `gh auth status` ходит в СЕТЬ и
-# на порванном канале объявляет отсутствие логина (`cqg@1.89`, пришло полем).
+# Вход отдельно не проверяется (`cqg@3.26`): `gh auth token` печатает токен, а `gh auth
+# status` ходит в СЕТЬ (`cqg@1.89`) — вход судит сам `gh run list` ниже, своим кодом.
 # Хостинг спрашивается ПЕРЕД `gh` (`cqg@2.01`). Иначе на GitLab-машине с
 # установленным и авторизованным `gh` (обычное дело у разработчика) скрипт шёл
 # дальше, `gh run list` отдавал пусто, и печаталось «нет прогонов workflow
@@ -63,8 +63,6 @@ if grep -qi 'gitlab' <<< "$ORIGIN" || [[ -z "$ORIGIN" && -f .gitlab-ci.yml ]]; t
   printf 'своим скриптом на `glab ci list` либо объяви её в `not-applicable.json`.\n' >&2
   exit 0
 fi
-# АДАПТАЦИЯ проекта (adapted.json): проверки `gh auth token` нет — она выводит токен, а на
-# машинах проекта токен не выводится; вход проверяет сам `gh run list` ниже.
 if ! command -v gh >/dev/null 2>&1; then
   printf '%s⚠ gate-value: нужен авторизованный gh — без него данных о срабатываниях нет.%s\n' \
     "$yellow" "$reset" >&2
@@ -95,12 +93,15 @@ if (( ${#gates[@]} == 0 )); then
   echo "gate-value: гейтов не найдено" >&2; exit 0
 fi
 
-gh_err=$(mktemp) || exit 1
+work=$(mktemp -d) || exit 1
+trap 'rm -rf "$work"' EXIT
+# Отказ вызова (нет входа — код 4, сеть) — «данных нет» с его причиной, а не «нет
+# прогонов»: stderr глушился, и пустой вывод отказа читался пустой историей (`cqg@3.26`).
 ids=$(gh run list --workflow "$CI_WORKFLOW" --limit "$RUNS" \
-        --json databaseId,conclusion --jq '.[] | "\(.databaseId) \(.conclusion)"' 2>"$gh_err")
-gh_code=$?; why="gh run list — код $gh_code: $(sed -n '1p' "$gh_err")"; rm -f "$gh_err"
-if (( gh_code != 0 )); then   # АДАПТАЦИЯ: отказ вызова (нет входа, сеть) — не «нет прогонов»
-  printf '%s⚠ gate-value: данных о срабатываниях нет: %s%s\n' "$yellow" "$why" "$reset" >&2
+        --json databaseId,conclusion --jq '.[] | "\(.databaseId) \(.conclusion)"' 2>"$work/gh.err"); gh_rc=$?
+if (( gh_rc != 0 )); then
+  printf '%s⚠ gate-value: данных о срабатываниях нет: gh run list — код %s: %s%s\n' \
+    "$yellow" "$gh_rc" "$(sed -n 1p "$work/gh.err")" "$reset" >&2
   printf 'Решение «убрать гейт» без данных принимать нельзя (§9.1a).\n' >&2
   exit 0
 fi
@@ -111,8 +112,6 @@ fi
 
 # Лог каждого красного прогона — своим файлом: пустой (хостинг лог уже не хранит)
 # обязан остаться виден в знаменателе, а в общем файле он растворялся молча.
-work=$(mktemp -d) || exit 1
-trap 'rm -rf "$work"' EXIT
 printf '%s\n' "$ids" >"$work/runs"
 while read -r id concl; do
   [[ "$concl" == "failure" && "$id" =~ ^[0-9]+$ ]] || continue
