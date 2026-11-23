@@ -1,0 +1,49 @@
+# Active delivery status
+
+- **slug:** ci-speed
+- **stack:** delivery@2.21, cqg@3.14, okf@absent
+  <!-- Ветка — от main `9ba7d93` (В1а). Накат контура cqg@3.29 · delivery@2.29 вливается по
+       команде ведущей; запись о версии меняется тем же слиянием. -->
+- **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 5d82ab1)
+- **class:** M
+  <!-- Класс — решение ведущей 2026-11-23: CI и обвязка тестов, кода сервиса нет. -->
+- **kind:** feature
+- **repro_test:** n/a reason=не bugfix
+- **diagnosis:** n/a reason=не bugfix
+- **phase:** implement
+  <!-- Спека и план — `cb83f0c`, правки ведущей `738035b`, правки по чтению второй проверяющей
+       `9da7add`. Примеры A280–A289 подписаны владельцем 2026-11-23T08:42Z. Ход 0 и код хода 1–2
+       — до наката контура (слово владельца по смыслу: что от контура не зависит — сейчас); замер
+       «до и после» (A288) — после наката; ход 3 — после наката и слова на имена проверок. -->
+- **builder:** agent:front-session
+- **verifier:** agent:reviewer2-session
+- **human_ok_spec:** deferred (reason=примеры подписаны владельцем 2026-11-23T08:42Z — спека 969b22174351, строки fccdf3d6073b; вносит проверяющий своим коммитом)
+- **human_ok_plan:** n/a reason=класс M
+- **shape-oracles:** cqg-deployed
+- **behavior-oracles:** tests-present — pytest на настоящем Postgres 16; обвязка базы порч — свои тесты; прогоны гейта мутаций на GitHub — ветки-пробы
+- **artifact_oracle:** n/a reason=поставка ничего не собирает
+- **ci-oracles:** deployed
+  <!-- CI проекта — в main с В1а (`9ba7d93`), защита main с 2026-11-20T14:02:23Z: `gates`,
+       `delivery`, `tests`. Запрос поставки судит настоящий прогон. -->
+- **worktree:** .claude/worktrees/ci-speed
+- **parallel_sessions:** manual-deploy
+- **hooks:** not-deployed
+- **blockers:** none
+- **waivers:** none
+- **new_dependency:** none reason=пакетов нет: стандартная библиотека (`fcntl`, `hashlib`, `atexit`) и asyncpg из замка by=human:owner at=2026-11-23T08:42Z
+  <!-- `by=human:owner at=2026-11-23T08:42Z` — подпись владельца под поставкой; тест контракта
+       В1а (A104) требует `by=human:` и у строки отказа `none`. -->
+- **runtime_paths:** .github/workflows/
+  <!-- Гейт мутаций в 4 потока, ход 0 и ход 3 исполняются только на раннере GitHub:
+       доказательство — прогоны веток-проб, строки eval-smoke со ссылкой на прогон. -->
+- **irreversible_surfaces:** публикация репозитория (публичный GitHub — создание и push), выкат на общий сервер, трата на платных сервисах выше $5 за одно действие, выпуск отчёта клиенту
+- **model_surface:** n/a reason=модель продукт не вызывает; поверхность объявляется с первым вызовом модели — волна В3 (§14)
+- **rule_enforcers:** n/a reason=model_surface не объявлена
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** <заполняется на handoff>
+- **observe_until:** <заполняется на handoff>
+- **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
+  <!-- Предел 2500 строк вместе с тестами и 50 файлов — слова владельца 2026-11-19T14:26Z и
+       14:36Z; порог «сказать до сдачи» — 2300. -->
