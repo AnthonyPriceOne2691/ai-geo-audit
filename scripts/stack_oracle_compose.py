@@ -276,6 +276,15 @@ def step_up(run: Run) -> str:
     return f"migrate — код 0 до старта api; alembic current = heads {current}; uid {APP_UID}"
 
 
+def net_health(run: Run) -> tuple[str, subprocess.CompletedProcess[bytes]]:
+    """Запрос здоровья api из разового контейнера в сети стека тем же образом (A69, A88; L50):
+    слышит ли api сеть, а не только петлю; порт — из окружения контейнера api."""
+    env = inspect(run, "api")["Config"]["Env"]
+    port: str = dict(e.split("=", 1) for e in env).get("API_PORT", "8107")
+    once = ["run", "--rm", "-T", "--no-deps", "--entrypoint", "python", "migrate", "-c"]
+    return port, compose_result(run, *once, NET_PROBE.format(port=port))
+
+
 def step_health(run: Run) -> str:
     """A69: api healthy не позже 50 с от старта (20 с + 3 × 10 с); проба внутри — код 0; запрос
     здоровья из разового контейнера в сети стека — 200: api слышит сеть, а не только петлю."""
@@ -286,9 +295,7 @@ def step_health(run: Run) -> str:
         raise StepError("api не стартовал или ни одной удачной проверки здоровья")
     seconds = (min(t for t in oks if t) - started).total_seconds()
     probe = compose_result(run, "exec", "-T", "api", "python", "-m", "ai_geo_audit.api.probe")
-    port = dict(e.split("=", 1) for e in api["Config"]["Env"]).get("API_PORT", "8107")
-    once = ["run", "--rm", "-T", "--no-deps", "--entrypoint", "python", "migrate", "-c"]
-    net = compose_result(run, *once, NET_PROBE.format(port=port))
+    port, net = net_health(run)
     if seconds > 50 or probe.returncode or net.returncode:
         raise StepError(
             f"healthy через {seconds:.1f} с; проба внутри — код {probe.returncode}; из сети "
