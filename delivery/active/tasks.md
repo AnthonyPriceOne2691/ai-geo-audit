@@ -12,22 +12,22 @@
       `stop-grace` у api — 10 с, оценка с причиной. Строк кода нет.
 
 ## Slice 1 — предел мягкой остановки и `stop-grace` (A88, третья строка; A87 — счёт 24)
-- [ ] T1: `stop_grace_period` — api 30 с, db 60 с; правило `stop-grace` в `CHECKS`: порог api —
+- [x] T1: `stop_grace_period` — api 30 с, db 60 с; правило `stop-grace` в `CHECKS`: порог api —
       `server_settings()` плюс запас 10 с, db — 60 с; пробы — api 30/29/15 с, db 60/59/30 с, без
       ключа; итог «правил 24» в тесте и в шаге A73; докстрока `ops/__init__.py`, проба слоёв
       import-linter. Сначала красное. Уроки по путям: L52, L53, L98, L111.
 
 ## Slice 2 — разбор остановки (A88, вторая строка)
-- [ ] T2: `backend/src/ai_geo_audit/ops/stop_verdict.py` и тест: случаи строки примера и свойство
+- [x] T2: `backend/src/ai_geo_audit/ops/stop_verdict.py` и тест: случаи строки примера и свойство
       с генератором — ровно один вердикт из трёх. Сначала красное. Уроки по путям: L6, L12, L95.
 
 ## Slice 3 — шаги оракула A88 (первая и четвёртая строки)
-- [ ] T3: `scripts/stack_oracle_stop.py` — остановка api и падение uvicorn изнутри контейнера;
+- [x] T3: `scripts/stack_oracle_stop.py` — остановка api и падение uvicorn изнутри контейнера;
       таблица шагов и её тест; тест на каждую ветку новых функций шага без Docker. Сначала
       красное. Уроки по путям: L50, L87, L88, L89, L113.
 
 ## Slice 4 — боевое наложение и боевые правила (A89)
-- [ ] T4: `docker-compose.prod.yml`; `ops/stack_prod.py` — `limits`, `journald`, `redis-memory`
+- [x] T4: `docker-compose.prod.yml`; `ops/stack_prod.py` — `limits`, `journald`, `redis-memory`
       с пробой на каждое условие; флаг `--prod`; шаг оракула A89; таблица шагов и её тест.
       Сначала красное. Уроки по путям: L52, L53.
 
