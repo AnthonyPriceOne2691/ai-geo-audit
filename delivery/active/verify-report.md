@@ -199,6 +199,47 @@ smoke шаги гейта пакет не исполняли» — вывод п
 `runtime_paths: .github/workflows/` — шаг «Smoke (S3, S1)» джобы `tests` и адаптированный «Smoke
 evals» джобы `delivery` исполнены на раннере GitHub: 45361514961 на `b3a3612`.
 
+## Прогон в чистом клоне
+
+Клон свежий, с ветки `smoke-run` на `7986636` (verify-report) поверх `058fb8c`; база диффа —
+`origin/main` клона, `fe0f367`. 2026-11-24T09:21:55Z–09:24:22Z, нагрузка 3,70. Команды — от корня
+клона; у хуков печатался счёт строк, кроме «Passed» и «Skipped»:
+
+```
+$ git log --format="%h %p %s" -1 && git rev-parse --short origin/main
+7986636 058fb8c docs(delivery): smoke run.sh — verify-report и фаза verify (T5, T6)
+fe0f367
+$ cd backend && uv sync --frozen -q
+exit=0
+$ python3 scripts/delivery_check.py --require-spec --require-verify --diff-base origin/main
+сквозные проверки §6.1: сценариев в таблице 3 (delivery/evals/smoke/README.md)
+delivery_check: 0 error(s), 0 warning(s)
+exit=0
+$ cd backend && uv run --no-sync pytest -q -p no:cacheprovider -W error
+собрано 957, прошло 957, пропущено 0
+exit=0 (70 с)
+$ uv run --project backend --no-sync pre-commit run --all-files
+не Passed/Skipped строк: 0
+exit=0
+$ uv run --project backend --no-sync pre-commit run --hook-stage pre-push --all-files
+не Passed/Skipped строк: 0
+exit=0
+$ BASE=origin/main bash scripts/lint/assert_digest.sh | tail -1
+asserts_without_example: 0
+$ git diff --name-only --diff-filter=AM origin/main...HEAD | xargs python3 -I rfrb_scan.py
+--- просмотрено файлов: 20; совпадений: 0
+$ bash delivery/evals/smoke/run.sh
+пакет: …/clean-7986636/backend/src/ai_geo_audit
+S3: зелёный за 0 с
+S1: зелёный за 1 с
+S2: зелёный за 62 с
+сценариев 3 из 3
+exit=0 (64 с)
+```
+
+После прогона баз клона (smoke, набор и шаблон порч его корня) нет, клон снят. Код после прогона не
+менялся.
+
 ## Verdict
 
 За второй проверяющей.
