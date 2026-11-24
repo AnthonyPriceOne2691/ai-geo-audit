@@ -15,7 +15,14 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from stack_oracle_compose import StepError, compose, inspect, net_health, wait_health
+from stack_oracle_compose import (
+    StepError,
+    compose,
+    inspect,
+    net_health,
+    service_log,
+    wait_health,
+)
 
 if TYPE_CHECKING:
     from stack_oracle import Run
@@ -77,12 +84,14 @@ def stop_problems(state: dict[str, Any], seconds: float, said: str, later: str) 
     return problems + [f"после остановки — {later}"] * (later != "exited")
 
 
-def crash_problems(restarts: tuple[int, int], seconds: float, net: int) -> list[str]:
+def crash_problems(restarts: tuple[int, int], seconds: float, net: int, soft: bool) -> list[str]:
     """A88, четвёртая строка: перезапусков ровно +1, снова healthy не позже 50 с, здоровье из сети
-    стека — код 0 (L50)."""
+    стека — код 0 (L50); новой записи «Finished server process» после сигнала нет — убит, а не
+    вышел мягко: SIGTERM даёт тот же код 143 и перезапуск, но с записью (проба проверяющей)."""
     before, after = restarts
     problems = [f"перезапусков {before} → {after}"] * (after != before + 1)
     problems += [f"healthy через {seconds:.1f} с"] * (seconds > CRASH_LIMIT)
+    problems += ["после сигнала — запись мягкой остановки: процесс не убит"] * soft
     return problems + [f"из сети стека — код {net}"] * bool(net)
 
 
@@ -111,24 +120,37 @@ def api_log(run: Run) -> str:
     return compose(run, "logs", "--no-color", "--no-log-prefix", "api", limit="docker")
 
 
+def with_api_back(run: Run, measure: Callable[[], str]) -> str:
+    """Шаг A88 под обвязкой: красное — с хвостом журнала api, снятым до возврата api, иначе он
+    показал бы новый запуск; пароль и секрет стека в нём — звёздочками (L89). api возвращается
+    запущенным и healthy и при красном."""
+    try:
+        return measure()
+    except StepError as failure:
+        raise StepError(f"{failure}; {service_log(run, 'api')}") from None
+    finally:
+        restore(run)
+
+
+def stopped(run: Run) -> str:
+    before = finished_count(api_log(run))
+    start = time.monotonic()
+    compose(run, "stop", "api", limit="up")
+    seconds = time.monotonic() - start
+    state = inspect(run, "api")
+    said = judge(run, state["State"]["ExitCode"], finished_count(api_log(run)) > before)
+    time.sleep(STILL)
+    later = inspect(run, "api")["State"]["Status"]
+    if problems := stop_problems(state, seconds, said, later):
+        raise StepError("; ".join(problems))
+    return f"exited с кодом 143 за {seconds:.1f} с; новая запись uvicorn; разбор — «{said}»"
+
+
 def step_stop(run: Run) -> str:
     """A88, первая строка: `docker compose stop api` — `exited` с кодом 143 быстрее 10 с; после
     команды в журнале новая запись uvicorn «Finished server process» — старые от прежних
     остановок не в счёт; разбор — «остановлен», перезапусков 0, сам контейнер не поднимается."""
-    try:
-        before = finished_count(api_log(run))
-        start = time.monotonic()
-        compose(run, "stop", "api", limit="up")
-        seconds = time.monotonic() - start
-        state = inspect(run, "api")
-        said = judge(run, state["State"]["ExitCode"], finished_count(api_log(run)) > before)
-        time.sleep(STILL)
-        later = inspect(run, "api")["State"]["Status"]
-    finally:
-        restore(run)
-    if problems := stop_problems(state, seconds, said, later):
-        raise StepError("; ".join(problems))
-    return f"exited с кодом 143 за {seconds:.1f} с; новая запись uvicorn; разбор — «{said}»"
+    return with_api_back(run, lambda: stopped(run))
 
 
 def wait_restart(run: Run, before: int, limit: float) -> int:
@@ -142,27 +164,31 @@ def wait_restart(run: Run, before: int, limit: float) -> int:
     raise StepError(f"api не перезапущен за {limit:g} с")
 
 
-def step_crash(run: Run) -> str:
-    """A88, четвёртая строка: uvicorn — дочерний процесс init с командой `python -m
-    ai_geo_audit.api` — убит SIGKILL изнутри контейнера процессом того же uid, а не `docker
-    kill`: перезапусков ровно +1, снова healthy не позже 50 с, здоровье из сети стека — 200."""
+def crashed(run: Run) -> str:
     before: int = inspect(run, "api")["RestartCount"]
     found = compose(run, "exec", "-T", "api", "python", "-c", FIND, limit="docker").split()
     if not child_of_init(found):
         raise StepError(f"uvicorn — не дочерний процесс init: {found}")
-    try:
-        start = time.monotonic()
-        kill = f"import os, signal; os.kill({found[0]}, signal.SIGKILL)"
-        compose(run, "exec", "-T", "api", "python", "-c", kill, limit="docker", check=False)
-        after = wait_restart(run, before, CRASH_LIMIT)
-        seconds = wait_health(run, "api", "healthy", 90) - start
-        net = net_health(run)[1].returncode
-    finally:
-        restore(run)
-    if problems := crash_problems((before, after), seconds, net):
+    records = finished_count(api_log(run))
+    start = time.monotonic()
+    kill = f"import os, signal; os.kill({found[0]}, signal.SIGKILL)"
+    compose(run, "exec", "-T", "api", "python", "-c", kill, limit="docker", check=False)
+    after = wait_restart(run, before, CRASH_LIMIT)
+    seconds = wait_health(run, "api", "healthy", 90) - start
+    soft = finished_count(api_log(run)) > records
+    net = net_health(run)[1].returncode
+    if problems := crash_problems((before, after), seconds, net, soft):
         raise StepError("; ".join(problems))
     healthy = f"healthy через {seconds:.1f} с"
     return f"убит pid {found[0]} — дочерний процесс init; перезапусков +1; {healthy}; сеть — 200"
+
+
+def step_crash(run: Run) -> str:
+    """A88, четвёртая строка: uvicorn — дочерний процесс init с командой `python -m
+    ai_geo_audit.api` — убит SIGKILL изнутри контейнера процессом того же uid, а не `docker
+    kill`: перезапусков ровно +1, новой записи мягкой остановки нет, снова healthy не позже 50 с,
+    здоровье из сети стека — 200."""
+    return with_api_back(run, lambda: crashed(run))
 
 
 #: Шаги остановки и падения api: после шагов защиты стека, до A67; остановка — до падения.
