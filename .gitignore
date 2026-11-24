@@ -25,6 +25,8 @@ frontend/dist/
 !.env.example
 # Журнал хода и замок скрипта выката на сервере (A183)
 .deploy/
+# Замок копии, файл группы сервера и вывод сценариев smoke (delivery/evals/smoke/run.sh)
+.smoke/
 .claude/settings.local.json
 .claude/worktrees/
 
