@@ -549,8 +549,23 @@ def test_a370_head_revision_without_schema_tables_is_red(
 
 def test_a370_s3_judges_the_settings_tables_too() -> None:
     """A370, L121: S3 судит все таблицы `models.Base.metadata`, и среди них — таблицы ключей и
-    настроек: `smoke_run` импортирует `schema.py`, иначе метаданные остались бы пусты."""
-    assert {"service_keys", "setting_versions"} <= set(smoke_run.models.Base.metadata.tables)
+    настроек. Проверка — в свежем процессе, как в `run.sh` (`PYTHONPATH` на `backend/src`): в
+    процессе pytest `schema` уже импортирован модулями тестов, и тест здесь не держал бы ничего
+    (находка 6 проверяющей)."""
+    tables_of = "sorted(smoke_run.models.Base.metadata.tables)"
+    code = f"import json, smoke_run; print(json.dumps({tables_of}))"
+    run = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=TESTS,
+        env={**os.environ, "PYTHONPATH": str(SRC)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr[-1500:]
+    tables = json.loads(run.stdout.strip().splitlines()[-1])
+    assert {"service_keys", "setting_versions"} <= set(tables)
 
 
 def test_a370_a371_real_s3_then_s1_on_a_fresh_base(tmp_path: Path) -> None:
