@@ -13,7 +13,7 @@
 - **diagnosis:** n/a reason=не bugfix
 - **phase:** implement
 - **builder:** agent:hands-session
-- **verifier:** agent:lead-session
+- **verifier:** agent:reviewer3-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-24T10:18Z)
   <!-- Слово владельца 2026-11-24T10:18:08Z — «Подписываю 5в»: спека `9d4067682200` и план
        `a741b94c8c37` на `9f950ac`. Примеры A87, A88 (четыре строки), A89 (две) и A23 — побайтно
