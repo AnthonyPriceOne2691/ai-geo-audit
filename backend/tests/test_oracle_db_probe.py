@@ -10,6 +10,7 @@ import ast
 import importlib
 import json
 import os
+import runpy
 import secrets
 import subprocess
 import sys
@@ -195,3 +196,32 @@ def test_a85_probe_file_is_self_contained() -> None:
         n for n in names if n not in allowed and not n.startswith(("sqlalchemy", "ai_geo_audit"))
     }
     assert outside == set()
+
+
+def test_a85_main_in_process_prints_one_json_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A85 (L113): `main()` в процессе — неизвестный набор: код 2 и одна строка JSON с `error`;
+    известный: код 0 и одна строка — ответ пробы как есть. Подпроцесс `python -` замер покрытия
+    к файлу не привязывает."""
+    assert dbprobe.main(["-", "no-such-set"]) == 2
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1 and "error" in json.loads(out)
+
+    async def answer(name: str, url: str | None = None) -> dict[str, object]:
+        return {"current_user": "u", "results": {name: "ok"}}
+
+    monkeypatch.setattr(dbprobe, "probe", answer)
+    assert dbprobe.main(["-", "login"]) == 0
+    assert capsys.readouterr().out == '{"current_user": "u", "results": {"login": "ok"}}\n'
+
+
+def test_a85_probe_file_as_main_exits_with_the_code_of_main(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A85 (L113): файл как `__main__` выходит с кодом `main()` — неизвестный набор: 2."""
+    monkeypatch.setattr(sys, "argv", ["-", "no-such-set"])
+    with pytest.raises(SystemExit) as stop:
+        runpy.run_path(str(SCRIPT), run_name="__main__")
+    assert stop.value.code == 2
+    assert "error" in json.loads(capsys.readouterr().out)
