@@ -466,6 +466,10 @@ def interpolated() -> str:
             '{"services": {"db": {"environment": {"A": "${B:?r}"}, "stop_grace_period": "1d"}}}',
             "db: stop_grace_period незнакомого вида",
         ),
+        (
+            '{"services": {"api": {"environment": {"A": "${B:?r}"}, "stop_grace_period": ""}}}',
+            "api: stop_grace_period незнакомого вида",
+        ),
     ],
     ids=[
         "пусто",
@@ -479,6 +483,7 @@ def interpolated() -> str:
         "подстановка",
         "срок-без-единиц",
         "срок-в-днях",
+        "срок-пустой",
     ],
 )
 def test_a73_empty_or_wrong_input_is_refused_not_clean(
