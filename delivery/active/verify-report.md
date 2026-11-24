@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-24
 **Verifier:** agent:reviewer3-session
-**asserts_reviewed_by:** deferred (reason=подпись владельца — через ведущую после приёмки; L46)
+**asserts_reviewed_by:** human:owner at=2026-11-24T12:38Z
 **CI run:** запрос №28 — прогон 45386808177 на `aa8ce6b`, 10 из 10. После — находка 4 приёмки
 (`0c5165a` → `b8bcb17`) и decisions `1801f00`: прогон 45391102208 на `1801f00`, 10 из 10.
 **Commit:** `b8bcb17` — вершина кода и тестов; `1801f00` — decisions; база диффа — main `aefde68`
