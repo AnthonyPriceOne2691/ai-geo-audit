@@ -57,7 +57,7 @@ def ok(_run: smoke_run.Run, _deadline: float) -> None:
 def noisy_failure(run: smoke_run.Run, _deadline: float) -> None:
     """Подставной отказ с длинным выводом: хвост — последние строки файла сценария."""
     run.log("S2").write_text("\n".join(f"строка {i}" for i in range(100)), encoding="utf-8")
-    raise smoke_run.Failed("подставной отказ")
+    raise smoke_run.ScenarioError("подставной отказ")
 
 
 def fake_package(root: Path) -> Path:
@@ -73,12 +73,22 @@ def closed_url() -> str:
     return f"postgresql+asyncpg://audit@127.0.0.1:{port}/postgres"
 
 
-def gone(pid: int) -> bool:
+def alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return True
-    return False
+        return False
+    return True
+
+
+def gone(pid: int, seconds: float = 5) -> bool:
+    """Процесса нет — не позже `seconds`: сироту-зомби снимает init, а не тест."""
+    deadline = time.monotonic() + seconds
+    while alive(pid):
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
 
 
 def appeared(path: Path, seconds: float = 10) -> None:
@@ -195,7 +205,7 @@ def test_a371_stop_is_green_only_on_the_end_by_sigterm(
         appeared(ready)
         smoke_run.stop_server(run, server)
         found = None
-    except smoke_run.Failed as failure:
+    except smoke_run.ScenarioError as failure:
         found = str(failure)
     finally:
         smoke_run.halt(run)
@@ -221,8 +231,11 @@ def test_a373_s1_busy_port_fails_at_once_not_by_the_deadline(tmp_path: Path) -> 
         )
         spent = time.monotonic() - began
     text = "\n".join(lines)
-    assert (code, spent < smoke_run.READY_SECONDS) == (1, True), text
-    assert "S1: сервер вышел с кодом 1 до готовности" in lines, text
+    # uvicorn 0.54 на занятом порте выходит кодом 3 (сбой старта; проба 2026-11-24): число — его.
+    exited = [
+        line for line in lines if re.fullmatch(r"S1: сервер вышел с кодом \d+ до готовности", line)
+    ]
+    assert (code, spent < smoke_run.READY_SECONDS, len(exited)) == (1, True, 1), text
     assert "address already in use" in text.lower()
 
 
@@ -375,7 +388,7 @@ def test_a379_group_left_by_kill_9_is_removed_and_the_lock_is_free(tmp_path: Pat
     run = make_run(tmp_path, [])
     pgid = kill_9_while_serving(run)
     try:
-        alive_before = not gone(pgid)
+        alive_before = alive(pgid)
         with smoke_run.copy_lock(run.state):
             notes = smoke_run.leftover_group(run.state)
         found = (alive_before, notes, gone(pgid), (run.state / smoke_run.SERVER_FILE).exists())
@@ -462,7 +475,7 @@ def test_a372_suite_base_of_the_root_is_dropped_after_s2(tmp_path: Path) -> None
         try:
             smoke_run.s2(run, time.monotonic() + 30, command)
             outcome = "зелёный"
-        except smoke_run.Failed as failure:
+        except smoke_run.ScenarioError as failure:
             outcome = str(failure)
         found[case] = (outcome, asyncio.run(smoke_run.drop(suite)))
     assert found == {"зелёный": ("зелёный", False), "красный": ("набор — код 3", False)}

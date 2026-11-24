@@ -204,15 +204,19 @@ async def _prepare(name: str) -> None:
 def alembic_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Окружение подпроцесса alembic — с нуля: адрес своей тестовой базы, без `.env`, переменные
     разработчика не доходят. `COVERAGE_*` проходят по приставке: так покрытие подпроцесса увидит
-    ревизии. `extra` — настройки, которые тест задаёт явно. Адрес не своей тестовой базы — отказ
-    до подпроцесса."""
+    ревизии. `PYTHONPATH` проходит, как у `entry` в `test_api_app.py`: под `merge_guard` его ставит
+    `run.sh`, и тесты миграций идут на пакете дерева (smoke, решение ведущей 2026-11-23T14:19Z).
+    `extra` — настройки, которые тест задаёт явно. Адрес не своей тестовой базы — отказ до
+    подпроцесса."""
     url = own_url()
     name = make_url(url).database or ""
     if not name.startswith(PREFIX):
         raise RefusedError(f"alembic в тестах идёт только по базе {PREFIX}…; «{name}» не тронута")
     env = {"PATH": os.environ.get("PATH", ""), "ENV_FILE": os.devnull, "DATABASE_URL": url}
     env["PYTHONUTF8"] = "1"  # журнал на русском при пустом окружении локали
-    env.update({k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")})
+    env.update(
+        {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_") or k == "PYTHONPATH"}
+    )
     return env | (extra or {})
 
 

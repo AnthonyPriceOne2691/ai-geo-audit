@@ -12,7 +12,6 @@ import base64
 import json
 import os
 import signal
-import socket
 import sys
 import time
 from pathlib import Path
@@ -21,6 +20,7 @@ import api_probes as probes
 import asyncpg
 import dbtools
 import httpx
+import live_server
 
 import ai_geo_audit
 
@@ -29,29 +29,6 @@ SRC = PACKAGE.parents[1]
 MARK = "query-mark-words-in-url"
 SITE_WORDS = "live-site-pass-words"
 ENCODED = base64.b64encode(f"user:{SITE_WORDS}".encode()).decode()
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return int(probe.getsockname()[1])
-
-
-def live_env(port: int) -> dict[str, str]:
-    """Окружение подпроцесса — целиком, а не «копия плюс добавки» (уроки Ч1.2в, L6, L12)."""
-    env = {
-        "PATH": os.environ.get("PATH", ""),
-        "PYTHONUTF8": "1",
-        "PYTHONDONTWRITEBYTECODE": "1",
-        "PYTHONPATH": str(SRC),
-        "ENV_FILE": os.devnull,
-        "DATABASE_URL": dbtools.own_url(),
-        "APP_ENV": "dev",
-        "API_HOST": "127.0.0.1",
-        "API_PORT": str(port),
-        "LOG_FORMAT": "json",
-    }
-    return env | {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
 
 
 async def ready(port: int, process: asyncio.subprocess.Process) -> int:
@@ -133,8 +110,8 @@ async def test_a55_live_server_answers_logs_and_stops_on_sigterm(tmp_path: Path)
     polls = 0
     async with asyncio.timeout(50):
         for _attempt in range(2):
-            port = free_port()
-            env = live_env(port)
+            port = live_server.free_port()
+            env = live_server.live_env(port, dbtools.own_url(), SRC)
             where = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-c",
