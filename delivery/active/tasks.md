@@ -12,11 +12,15 @@
       50.0.2; находка проб — текст не из ASCII даёт `ValueError`, а не `InvalidToken`.
 
 ## Slice 1 — мастер-ключ и шифр (A220 — первая строка, A221, A222, A223 — часть без базы, A237)
-- [ ] T1: `cryptography==50.0.2` в `pyproject.toml`, `uv.lock` тем же коммитом, `uv lock --check`
+- [x] T1: `cryptography==50.0.2` в `pyproject.toml`, `uv.lock` тем же коммитом, `uv lock --check`
       (L70); в замке косвенные — `cffi` 2.1.1 и `pycparser` 3.12, иначе стоп и слово владельца.
-      `settings/crypto.py`; `config/startup_checks.py` — `_master_key` по формату; тесты —
-      `test_settings_crypto.py`, строки A221 — `test_startup_checks.py`. Сначала красное. Уроки
-      по путям: L29, L30, L36, L53, L54–L56.
+      Разбор файла — `config/master_key.py` (слои, решение ведущей); `settings/crypto.py`,
+      `settings/registry.py` — ключи; `config/startup_checks.py` — `_master_key` по формату; тесты
+      — `test_settings_crypto.py`, строки A221 — `test_startup_checks.py`; общая фикстура
+      мастер-ключа — `master_file`. Сначала красное. Уроки по путям: L29, L30, L36, L53, L54–L56,
+      L123. Замок — ровно три новых пакета, как в слове. Зелёное — 1304 из 1304, пропусков 0;
+      красное — на `git archive` вершины сбор падает на импорте `config.master_key`, A221 на
+      прежней проверке старта — красных 20 из 21 (зелёный один — годный файл).
 
 ## Slice 2 — таблицы, ревизия, оснастка (A236)
 - [ ] T2: `settings/models.py`; `ai_geo_audit/schema.py`; `migrations/env.py`; ревизия

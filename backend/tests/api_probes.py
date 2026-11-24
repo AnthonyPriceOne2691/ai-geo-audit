@@ -26,6 +26,7 @@ from typing import Annotated, Any
 
 import dbtools
 import httpx
+import masterkeys
 import pytest
 from fastapi import (
     APIRouter,
@@ -260,8 +261,7 @@ def closed_port_url() -> str:
 
 def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Боевой режим с настройками из слов-заглушек, как в A32: проверка старта `api` проходит."""
-    key = tmp_path / "master.key"
-    key.write_text("master-key-from-plain-words-for-tests-only", encoding="utf-8")
+    key = masterkeys.write(tmp_path / "master.key", [masterkeys.line()])
     env = {
         "APP_ENV": "prod",
         "DATABASE_URL": f"postgresql+asyncpg://audit:{PROD_DB_WORDS}@db:5432/audit",

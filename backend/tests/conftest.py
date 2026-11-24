@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 
 import dbtools
+import masterkeys
 import mutation_db
 import pytest
 from hypothesis import settings
@@ -36,6 +37,7 @@ from run_summary import (  # noqa: F401 -- хуки итога A106 подклю
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from ai_geo_audit import config
+from ai_geo_audit.config import master_key
 from ai_geo_audit.logs import setup as log_setup
 from ai_geo_audit.storage import build_engine, dispose_engine
 
@@ -103,6 +105,23 @@ def restore_logging() -> Iterator[None]:
     root.setLevel(level)
     log_setup._secrets.clear()
     log_setup._secrets.update(secrets)
+
+
+@pytest.fixture(autouse=True)
+def forget_master_key() -> Iterator[None]:
+    """Файл мастер-ключа читается один раз за процесс — после теста кэш чтения пуст."""
+    yield
+    master_key.read.cache_clear()
+
+
+@pytest.fixture
+def master_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> masterkeys.MasterFile:
+    """Одна фикстура мастер-ключа на все тесты (b1:457): временный файл со случайной строкой,
+    конфиг процесса смотрит в него."""
+    lines = [masterkeys.line()]
+    path = masterkeys.write(tmp_path / "master.key", lines)
+    monkeypatch.setattr(config, "keys", config.KeySettings(master_key_file=str(path)))
+    return masterkeys.MasterFile(path, lines)
 
 
 @pytest.fixture(autouse=True)
