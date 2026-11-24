@@ -41,6 +41,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 import ai_geo_audit
+import ai_geo_audit.schema  # таблицы всех модулей моделей — в `models.Base.metadata` (L121)
 from ai_geo_audit.storage import models
 
 # Обвязка сигналов оракула (A74) лежит в `scripts/`, вне пакета; путь — в конец `sys.path`: модули

@@ -25,7 +25,7 @@ from hypothesis import strategies as st
 from sqlalchemy import BigInteger, Column, Index, Integer, MetaData, Table, Text, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ai_geo_audit import config
+from ai_geo_audit import config, schema
 from ai_geo_audit.storage import models, revisions
 
 VERSIONS = dbtools.BACKEND / "migrations" / "versions"
@@ -151,10 +151,10 @@ def test_a18_alembic_env_is_built_from_scratch(monkeypatch: pytest.MonkeyPatch) 
 
 
 async def test_a22_test_database_is_built_by_upgrade_head() -> None:
-    """A22: тестовая база построена `alembic upgrade head`: версия цепочки — `0001`."""
+    """A22: тестовая база построена `alembic upgrade head`: версия — голова цепочки."""
     conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
     try:
-        assert await conn.fetchval("SELECT version_num FROM alembic_version") == "0001"
+        assert await conn.fetchval("SELECT version_num FROM alembic_version") == dbtools.HEAD
     finally:
         await conn.close()
 
@@ -166,6 +166,15 @@ def test_a18_alembic_refuses_a_database_without_the_test_prefix(
     monkeypatch.setattr(dbtools, "own_name", lambda root=dbtools.ROOT: "audit")
     with pytest.raises(dbtools.RefusedError, match="«audit» не тронута"):
         dbtools.alembic("downgrade", "base")
+
+
+def with_service_tables() -> MetaData:
+    """Метаданные проб сверки поверх таблиц сервиса из `schema.py`, с тем же соглашением об
+    именах: проба меняет в сверке только свою таблицу."""
+    probe = MetaData(naming_convention=models.NAMING)
+    for table in schema.metadata.sorted_tables:
+        table.to_metadata(probe)
+    return probe
 
 
 def cmp_table(metadata: MetaData, *extra: Column | Index, name: Column | None = None) -> Table:
@@ -188,9 +197,9 @@ async def diffs(engine: AsyncEngine, metadata: MetaData) -> list[str]:
 
 
 def test_a17_one_head_and_second_upgrade_changes_nothing() -> None:
-    """A17: голова ревизий одна — `0001`; второй `upgrade head` ничего не меняет, код 0."""
+    """A17: голова ревизий одна — `dbtools.HEAD`; второй `upgrade head` ничего не меняет, код 0."""
     heads = ScriptDirectory.from_config(Config(str(dbtools.BACKEND / "alembic.ini"))).get_heads()
-    assert heads == ["0001"]
+    assert heads == [dbtools.HEAD]
     again = dbtools.alembic("upgrade", "head")
     assert (again.returncode, "Running upgrade" in again.stderr) == (0, False)
 
@@ -206,12 +215,13 @@ async def test_a17_models_match_the_database_and_the_comparison_can_go_red(
     engine: AsyncEngine,
 ) -> None:
     """A17: модели сервиса совпадают с базой; лишняя колонка, лишний индекс, другой тип, другое
-    умолчание и таблица без модели дают расхождение. Пробы схемы `probe` сверка не видит."""
-    assert await diffs(engine, models.Base.metadata) == []
+    умолчание и таблица без модели дают расхождение. Пробы схемы `probe` сверка не видит. Модели —
+    из `schema.py`: с таблицами ключей и настроек (A236)."""
+    assert await diffs(engine, schema.metadata) == []
     async with engine.begin() as conn:
         await conn.execute(text(f"CREATE TABLE {CMP} (id bigint PRIMARY KEY, name text)"))
     try:
-        exact, column, index, kind, default = (MetaData() for _ in range(5))
+        exact, column, index, kind, default = (with_service_tables() for _ in range(5))
         cmp_table(exact)
         cmp_table(column, Column("extra", Text))
         cmp_table(index, Index("ix_cmp_probe_name", "name"))
@@ -222,7 +232,8 @@ async def test_a17_models_match_the_database_and_the_comparison_can_go_red(
         assert await diffs(engine, default) == ["modify_default"]
         assert await diffs(engine, column) == ["add_column"]
         assert await diffs(engine, index) == ["add_index"]
-        assert await diffs(engine, MetaData()) == ["remove_table"]  # таблица есть, модели нет
+        # таблица есть, модели нет
+        assert await diffs(engine, with_service_tables()) == ["remove_table"]
     finally:
         async with engine.begin() as conn:
             await conn.execute(text(f"DROP TABLE {CMP}"))
@@ -268,7 +279,7 @@ async def up_down_up(ini: Path) -> list[str]:
     before = await public_tables()
     first = dbtools.alembic("upgrade", "head", config=ini)
     made = await public_tables() - before
-    down = dbtools.alembic("downgrade", "0001", config=ini)
+    down = dbtools.alembic("downgrade", dbtools.HEAD, config=ini)
     left = sorted(made & await public_tables())
     again = dbtools.alembic("upgrade", "head", config=ini)
     problems = [f"после отката осталась таблица {name}" for name in left]
@@ -283,7 +294,7 @@ async def test_a18_up_down_up_passes_with_an_honest_downgrade(tmp_path: Path) ->
         assert await up_down_up(ini) == []
     finally:
         await back_to_start(ini)
-    assert (await version(), "probe_rev" in await public_tables()) == ("0001", False)
+    assert (await version(), "probe_rev" in await public_tables()) == (dbtools.HEAD, False)
 
 
 async def test_a18_up_down_up_catches_a_forgotten_drop(tmp_path: Path) -> None:
@@ -306,8 +317,8 @@ async def test_a18_revision_failing_midway_leaves_the_previous_revision(tmp_path
     finally:
         await back_to_start(ini)
     assert run.returncode != 0
-    assert "0001 -> 0002" in run.stderr and "сбой посередине ревизии" in run.stderr
-    assert ("probe_half" in tables, current) == (False, "0001")
+    assert "0002 -> 0003" in run.stderr and "сбой посередине ревизии" in run.stderr
+    assert ("probe_half" in tables, current) == (False, dbtools.HEAD)
 
 
 async def test_a18_whole_run_is_one_transaction(tmp_path: Path) -> None:
@@ -320,4 +331,135 @@ async def test_a18_whole_run_is_one_transaction(tmp_path: Path) -> None:
     finally:
         await back_to_start(ini)
     assert run.returncode != 0
-    assert (tables & {"probe_rev", "probe_half"}, current) == (set(), "0001")
+    assert (tables & {"probe_rev", "probe_half"}, current) == (set(), dbtools.HEAD)
+
+
+SETTINGS_TABLES = {"service_keys", "setting_versions"}
+#: Имена ограничений таблиц ключей и настроек — по соглашению `storage.models.NAMING` (A236).
+SETTINGS_CONSTRAINTS = {
+    "pk_service_keys",
+    "ck_service_keys_name",
+    "ck_service_keys_master_id",
+    "ck_service_keys_fingerprint",
+    "ck_service_keys_hint",
+    "pk_setting_versions",
+    "uq_setting_versions_name_version",
+    "ck_setting_versions_version",
+}
+_CONSTRAINTS = (
+    "SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+    "JOIN pg_namespace n ON n.oid = t.relnamespace WHERE n.nspname = 'public' "
+    "AND t.relname = ANY($1::text[]) AND c.contype IN ('p', 'u', 'c')"
+)
+
+
+async def constraint_names(tables: set[str]) -> set[str]:
+    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
+    try:
+        return {row["conname"] for row in await conn.fetch(_CONSTRAINTS, sorted(tables))}
+    finally:
+        await conn.close()
+
+
+async def test_a236_tables_come_with_the_revision_and_go_with_its_downgrade(
+    engine: AsyncEngine,
+) -> None:
+    """A236: `alembic upgrade head` с пустой схемы — две таблицы, имена ограничений по соглашению;
+    сверка моделей с базой пуста, `alembic check` — код 0; откат на ревизию до поставки (`0001`)
+    убирает обе таблицы, снова `upgrade head` — они на месте."""
+    await dbtools.empty_schema(dbtools.own_url())
+    try:
+        up = dbtools.alembic("upgrade", "head")
+        made, names = await public_tables(), await constraint_names(SETTINGS_TABLES)
+        found = await diffs(engine, schema.metadata)
+        check = dbtools.alembic("check")
+        down = dbtools.alembic("downgrade", "0001")
+        after_down = await public_tables()
+        again = dbtools.alembic("upgrade", "head")
+        after_again = await public_tables()
+    finally:
+        await dbtools.prepare()
+    runs = {"вверх": up, "check": check, "вниз": down, "снова вверх": again}
+    assert {what: run.returncode for what, run in runs.items() if run.returncode} == {}
+    assert (made >= SETTINGS_TABLES, names, found) == (True, SETTINGS_CONSTRAINTS, [])
+    assert (SETTINGS_TABLES & after_down, after_again >= SETTINGS_TABLES) == (set(), True)
+
+
+async def refused_by(table: str, *rows: dict[str, object]) -> str | None:
+    """Сырые вставки строк в одной транзакции с откатом: имя нарушенного ограничения или None.
+    Таблица после вызова та же, что до."""
+    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
+    try:
+        transaction = conn.transaction()
+        await transaction.start()
+        try:
+            for row in rows:
+                marks = ", ".join(f"${n}" for n in range(1, len(row) + 1))
+                insert = f"INSERT INTO {table} ({', '.join(row)}) VALUES ({marks})"
+                await conn.execute(insert, *row.values())
+        except asyncpg.IntegrityConstraintViolationError as violation:
+            return violation.constraint_name
+        finally:
+            await transaction.rollback()
+    finally:
+        await conn.close()
+    return None
+
+
+#: Годная строка ключа: каждая проба меняет в ней одно поле.
+KEY_ROW = {
+    "name": "openai",
+    "ciphertext": "шифротекст",
+    "master_id": "0123abcd",
+    "fingerprint": "0123456789ab",
+    "hint": "wxyz",
+}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "constraint"),
+    [
+        ("name", "Open ai", "ck_service_keys_name"),
+        ("name", "o", "ck_service_keys_name"),
+        ("name", "1openai", "ck_service_keys_name"),
+        ("name", "a" * 64, "ck_service_keys_name"),
+        ("name", "ab", None),
+        ("name", "a" * 63, None),
+        ("fingerprint", "0123456789a", "ck_service_keys_fingerprint"),
+        ("fingerprint", "0123456789abc", "ck_service_keys_fingerprint"),
+        ("fingerprint", "0123456789AB", "ck_service_keys_fingerprint"),
+        ("master_id", "0123abc", "ck_service_keys_master_id"),
+        ("master_id", "0123abcd0", "ck_service_keys_master_id"),
+        ("master_id", "0123ABCD", "ck_service_keys_master_id"),
+        ("hint", "abcde", "ck_service_keys_hint"),
+        ("hint", "abc", "ck_service_keys_hint"),
+        ("hint", None, None),
+    ],
+)
+async def test_a236_raw_key_insert_is_refused_by_its_own_constraint(
+    field: str, value: object, constraint: str | None
+) -> None:
+    """A236: сырая вставка в `service_keys` с одним негодным полем — имя с заглавной и пробелом,
+    отпечаток из 11 знаков, номер мастер-ключа из 7, подсказка из 5 и соседние случаи (L53) —
+    отказ по имени своего ограничения; годная соседняя строка проходит."""
+    assert await refused_by("service_keys", KEY_ROW | {field: value}) == constraint
+
+
+@pytest.mark.parametrize(
+    ("rows", "constraint"),
+    [
+        ([{"version": 0}], "ck_setting_versions_version"),
+        ([{"version": -1}], "ck_setting_versions_version"),
+        ([{"version": 1}], None),
+        ([{"version": 1}, {"version": 1}], "uq_setting_versions_name_version"),
+        ([{"version": 1}, {"version": 2}], None),
+    ],
+    ids=["version-0", "version-minus", "version-1", "same-version", "next-version"],
+)
+async def test_a236_raw_setting_insert_is_refused_by_its_own_constraint(
+    rows: list[dict[str, object]], constraint: str | None
+) -> None:
+    """A236: сырая вставка в `setting_versions`: версия 0 — отказ по `ck_setting_versions_version`;
+    та же пара имени и версии — по `uq_setting_versions_name_version`; годные соседние проходят."""
+    base = {"name": "audits_parallel", "value": "3"}
+    assert await refused_by("setting_versions", *(base | row for row in rows)) == constraint

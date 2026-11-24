@@ -529,8 +529,8 @@ def test_a370_head_revision_without_schema_tables_is_red(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A370, копия: ревизия базы — head, а таблицы схемы нет — S3 красный «нет таблиц схемы»:
-    судятся таблицы метаданных моделей, а не одна ревизия (L28). Таблиц у сервиса пока нет
-    (`models.Base.metadata` пуста), поэтому метаданные — подставные, с одной таблицей."""
+    судятся таблицы метаданных моделей, а не одна ревизия (L28). Метаданные — подставные, с одной
+    таблицей, которой ревизия не создаёт: настоящие таблицы `alembic upgrade head` создал бы."""
     metadata = SimpleNamespace(tables={"smoke_probe": None})
     monkeypatch.setattr(
         smoke_run, "models", SimpleNamespace(Base=SimpleNamespace(metadata=metadata))
@@ -545,6 +545,12 @@ def test_a370_head_revision_without_schema_tables_is_red(
     finally:
         asyncio.run(smoke_run.drop(run.db))
     assert (code, "S3: нет таблиц схемы: smoke_probe" in lines) == (1, True), lines
+
+
+def test_a370_s3_judges_the_settings_tables_too() -> None:
+    """A370, L121: S3 судит все таблицы `models.Base.metadata`, и среди них — таблицы ключей и
+    настроек: `smoke_run` импортирует `schema.py`, иначе метаданные остались бы пусты."""
+    assert {"service_keys", "setting_versions"} <= set(smoke_run.models.Base.metadata.tables)
 
 
 def test_a370_a371_real_s3_then_s1_on_a_fresh_base(tmp_path: Path) -> None:

@@ -63,7 +63,7 @@ async def test_a19_upgrade_waits_for_the_lock_holder(tmp_path: Path) -> None:
         await conn.close()
         await back_to_start(ini)
     assert code == 0, err[-1500:]
-    assert rows == ["0002"]
+    assert rows == ["0003"]
 
 
 async def test_a19_waiter_takes_over_when_the_holder_dies(tmp_path: Path) -> None:
@@ -86,7 +86,7 @@ async def test_a19_waiter_takes_over_when_the_holder_dies(tmp_path: Path) -> Non
         conn.terminate()
         await back_to_start(ini)
     assert code == 0, err[-1500:]
-    assert rows == ["0002"]
+    assert rows == ["0003"]
 
 
 async def test_a19_four_upgrades_at_once_all_succeed() -> None:
@@ -104,7 +104,7 @@ async def test_a19_four_upgrades_at_once_all_succeed() -> None:
         await dbtools.prepare()
     assert [code for code, _ in results] == [0, 0, 0, 0], [e[-800:] for c, e in results if c]
     assert sum("Running upgrade  -> 0001" in err for _, err in results) == 1
-    assert rows == ["0001"]
+    assert rows == [dbtools.HEAD]
 
 
 async def test_a19_lock_limit_refuses_in_words() -> None:
@@ -206,7 +206,7 @@ async def test_a20_revision_gives_up_on_a_table_held_by_another_transaction(
     assert "таблицу держит другая транзакция дольше 10 с" in err, err[-1500:]
     assert "Traceback" not in err, err[-1500:]
     assert "55P03" not in err
-    assert current == "0001"
+    assert current == dbtools.HEAD
 
 
 async def test_a20_revisions_run_under_the_table_limit(tmp_path: Path) -> None:

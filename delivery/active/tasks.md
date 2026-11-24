@@ -23,10 +23,14 @@
       прежней проверке старта — красных 20 из 21 (зелёный один — годный файл).
 
 ## Slice 2 — таблицы, ревизия, оснастка (A236)
-- [ ] T2: `settings/models.py`; `ai_geo_audit/schema.py`; `migrations/env.py`; ревизия
+- [x] T2: `settings/models.py`; `ai_geo_audit/schema.py`; `migrations/env.py`; ревизия
       `0002_settings`; потребители `schema.py` — `test_models.py`, `test_migrations.py`,
       `tests/smoke_run.py` (L121); `tests/dbtools.py`; `.importlinter` — слой `settings`.
-      Сначала красное. Уроки по путям: L14–L16, L19, L28, L111, L121.
+      Сначала красное. Уроки по путям: L14–L16, L19, L28, L111, L121. Сверх плана: ревизии-пробы
+      A18–A20 перенумерованы поверх головы, `dbtools.HEAD`; пробы сверки A17 — поверх таблиц
+      сервиса. Зелёное — 1334 из 1334, пропусков 0; `lint-imports` — контракт соблюдён.
+      Красное — на `git archive` вершины сбор падает на импорте `schema`; со `schema.py` без
+      моделей настроек — A15, A236 и S3 красные, 3 из 3.
 
 ## Slice 3 — ключи (A223 — часть с базой, A224–A228, A230, A231, A237)
 - [ ] T3: `settings/registry.py` — ключи; `settings/keys.py`; `test_settings_keys.py` — гонки на
