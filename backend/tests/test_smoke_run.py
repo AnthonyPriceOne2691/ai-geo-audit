@@ -20,6 +20,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import dbtools
@@ -477,6 +478,44 @@ def test_a374_s3_exit_zero_without_a_revision_is_red(tmp_path: Path) -> None:
         asyncio.run(smoke_run.drop(run.db))
     head = smoke_run.head_revision()
     assert (code, f"S3: ревизия базы не head: нет вместо {head}" in lines) == (1, True), lines
+
+
+#: Копия S3: ставит в базе ревизию head и не создаёт ни одной таблицы схемы.
+TABLELESS = """
+import asyncio, os, sys
+import asyncpg
+url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+async def main():
+    conn = await asyncpg.connect(url)
+    try:
+        await conn.execute("CREATE TABLE alembic_version (version_num varchar(32) PRIMARY KEY)")
+        await conn.execute("INSERT INTO alembic_version VALUES ($1)", sys.argv[1])
+    finally:
+        await conn.close()
+asyncio.run(main())
+"""
+
+
+def test_a370_head_revision_without_schema_tables_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A370, копия: ревизия базы — head, а таблицы схемы нет — S3 красный «нет таблиц схемы»:
+    судятся таблицы метаданных моделей, а не одна ревизия (L28). Таблиц у сервиса пока нет
+    (`models.Base.metadata` пуста), поэтому метаданные — подставные, с одной таблицей."""
+    metadata = SimpleNamespace(tables={"smoke_probe": None})
+    monkeypatch.setattr(
+        smoke_run, "models", SimpleNamespace(Base=SimpleNamespace(metadata=metadata))
+    )
+    lines: list[str] = []
+    run = make_run(tmp_path, lines)
+    command = (sys.executable, "-c", TABLELESS, smoke_run.head_revision())
+    try:
+        code = smoke_run.runner(
+            run, (scenario("S3", lambda r, d: smoke_run.s3(r, d, command), limit=60),), {}
+        )
+    finally:
+        asyncio.run(smoke_run.drop(run.db))
+    assert (code, "S3: нет таблиц схемы: smoke_probe" in lines) == (1, True), lines
 
 
 def test_a370_a371_real_s3_then_s1_on_a_fresh_base(tmp_path: Path) -> None:
