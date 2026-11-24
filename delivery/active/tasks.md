@@ -4,21 +4,32 @@
 L97, L89, L60, L91, L69, L64, L88, L94, L95, L80, L61, L50, L47, L67, L101. Предел — 2500 строк,
 порог «сказать до сдачи» — 2300.
 
+Уроки по путям, которые задел код, сверх плана (`delivery_check`, §2.2a):
+- L6 (`backend/`) — редактируемый пакет `.venv` гоняет код своей копии: `run.sh` ставит
+  `PYTHONPATH` на `src` корня, помощник печатает путь пакета (A377); ручные порчи помощника — с
+  `PYTHONPATH` на `src` копии;
+- L12 (`backend/`) — устаревший `.pyc` после порчи той же длины: ручные порчи — с
+  `PYTHONDONTWRITEBYTECODE=1` и без `__pycache__`, контроль — до и после серии;
+- L57 (`test_api_live.py`) — не применимо: правка только переносит `free_port` и `live_env` в
+  `live_server.py`, пути текста в вывод те же.
+
 ## Slice 1 — README, `run.sh` и сценарии
-- [ ] T1: тесты красными — подставные сценарии: первый сбой, предел, ноль, окно 15 строк (A373,
-      A375); замок (A378); остатки и чужой лидер (A379); сверка пакета параметрами и путь через
-      ссылку, нет `backend/.venv`, `uv` без `--no-sync`, `PYTHONPATH` в `alembic_env` (A377); S3 с
-      кодом 0 без ревизии (A374); исход `SIGTERM` (A371); S1 при занятом порте (A373); команда S2 —
-      шаг «Тесты с покрытием» без `--cov…` (A372); таблица README и помощник (A375).
-- [ ] T2: `backend/tests/smoke_run.py`; `backend/tests/live_server.py` — общие с A55 `free_port` и
-      `live_env`; `dbtools.alembic_env` — `PYTHONPATH`; `delivery/evals/smoke/run.sh` и README;
-      `.gitignore` — `.smoke/`.
-- [ ] T3: настоящие S3 и S1 одним тестом на тестовом Postgres (A370, A371); снос базы набора после
-      S2 (A372).
+- [x] T1 (`489bf39`): тесты красными — подставные сценарии: первый сбой, предел, ноль, окно 15
+      строк (A373, A375); замок (A378); остатки и чужой лидер (A379); сверка пакета параметрами и
+      путь через ссылку, нет `backend/.venv`, `uv` без `--no-sync`, `PYTHONPATH` в `alembic_env`
+      (A377); S3 с кодом 0 без ревизии (A374); исход `SIGTERM` (A371); S1 при занятом порте
+      (A373); команда S2 — шаг «Тесты с покрытием» без `--cov…` (A372); таблица README и помощник
+      (A375).
+- [x] T2 (`74db40e`): `backend/tests/smoke_run.py`; `backend/tests/live_server.py` — общие с A55
+      `free_port` и `live_env`; `dbtools.alembic_env` — `PYTHONPATH`; `delivery/evals/smoke/run.sh`
+      и README; `.gitignore` — `.smoke/`. Набор — 944 из 944, пропущено 0.
+- [x] T3 (`489bf39`, `74db40e`): настоящие S3 и S1 одним тестом на тестовом Postgres (A370, A371);
+      снос базы набора после S2 (A372). Живой `run.sh` на `74db40e`: S3, S1, S2 зелёные, «сценариев
+      3 из 3»; базы smoke и набора после прогона нет.
 
 ## Slice 2 — CI
-- [ ] T4: `quality.yml` — шаг smoke в `tests` после тестов, адаптация шага «Smoke evals» джобы
-      `delivery`, запись в `adapted.json`; тест контракта (A376).
+- [x] T4: `quality.yml` — шаг «Smoke (S3, S1)» в `tests` после набора, адаптация шага «Smoke
+      evals» джобы `delivery`, запись в `adapted.json`; тест контракта и копии (A376).
 - [ ] T5: ветка-проба — прогон на GitHub: S3 и S1, `delivery_check` без предупреждения §6.1, доли
       mutmut с меткой в `backend/src` (L95), цена второго прогона S3 и S1; строки eval-smoke.
 
