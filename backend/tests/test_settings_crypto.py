@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import re
@@ -12,6 +14,7 @@ from pathlib import Path
 import leaks
 import masterkeys
 import pytest
+from cryptography.fernet import Fernet, InvalidToken
 
 from ai_geo_audit import config
 from ai_geo_audit.config import master_key
@@ -218,8 +221,9 @@ def test_a224_master_id_and_fingerprint_are_hex_of_fixed_length(
 def test_a224_fingerprint_is_keyed_by_name_value_and_current_master(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A224: отпечаток — HMAC имени и значения на ключе текущего мастер-ключа: то же значение —
-    тот же отпечаток; другое значение, другое имя или другая первая строка файла — другой."""
+    """A224: отпечаток — HMAC имени и значения на ключе текущего мастер-ключа, то есть первой строки
+    файла: то же значение — тот же отпечаток, и под файлом из одной первой строки тоже; другое
+    значение, другое имя или другая первая строка — другой."""
     first, second = masterkeys.line(), masterkeys.line()
     path = tmp_path / "master.key"
     value = masterkeys.marker()
@@ -228,8 +232,41 @@ def test_a224_fingerprint_is_keyed_by_name_value_and_current_master(
     assert crypto.seal("openai", value).fingerprint == same
     assert crypto.seal("openai", f"{value}x").fingerprint != same
     assert crypto.seal("ahrefs", value).fingerprint != same
+    use_file(monkeypatch, masterkeys.write(path, [first]))
+    assert crypto.seal("openai", value).fingerprint == same
     use_file(monkeypatch, masterkeys.write(path, [second, first]))
     assert crypto.seal("openai", value).fingerprint != same
+
+
+#: Строка-образец файла и её известные ответы для пары «openai» и `SAMPLE_VALUE` — формат записей
+#: в базе: смена метки назначения или вывода ключей делает нечитаемыми все записи и краснеет здесь.
+#: Ответы посчитаны прямым HMAC-SHA256, мимо `settings.crypto` (находка 1 проверяющей, срез 1).
+SAMPLE = bytes(range(32)).hex()
+SAMPLE_VALUE = "metka-0123456789"
+SAMPLE_MASTER_ID = "02533a8e"
+SAMPLE_FINGERPRINT = "f795de2554f2"
+
+
+def fernet_key(row: str) -> bytes:
+    """Ключ Fernet строки файла, как его выводит шифр: HMAC-SHA256 с меткой назначения."""
+    derived = hmac.new(bytes.fromhex(row), b"ai-geo-audit fernet v1", hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(derived)
+
+
+def test_a224_known_answers_pin_the_record_format(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A222, A224, решение среза 0: на строке-образце номер мастер-ключа и отпечаток — известные
+    константы; шифротекст открывает Fernet от HMAC строки с меткой назначения, а Fernet от самой
+    строки — нет."""
+    use_file(monkeypatch, masterkeys.write(tmp_path / "master.key", [SAMPLE]))
+    sealed = crypto.seal("openai", SAMPLE_VALUE)
+    assert (sealed.master_id, sealed.fingerprint) == (SAMPLE_MASTER_ID, SAMPLE_FINGERPRINT)
+    token = sealed.ciphertext.encode()
+    pair = json.loads(Fernet(fernet_key(SAMPLE)).decrypt(token))
+    assert pair == {"name": "openai", "value": SAMPLE_VALUE}
+    with pytest.raises(InvalidToken):
+        Fernet(base64.urlsafe_b64encode(bytes.fromhex(SAMPLE))).decrypt(token)
 
 
 @pytest.mark.parametrize(("length", "hint"), [(19, None), (20, "wxyz"), (51, "wxyz")])
@@ -239,22 +276,42 @@ def test_a224_hint_is_four_last_signs_of_a_long_value(length: int, hint: str | N
     assert crypto.hint(value) == hint
 
 
+def mixed(row: str) -> str:
+    """Строка файла в смешанном регистре: её закрывает только форма «как записана»."""
+    return "".join(sign.upper() if place % 2 else sign for place, sign in enumerate(row))
+
+
+#: Форма секрета → строка файла, как записана, и что уходит в журнал (находка 3 проверяющей).
+SECRET_FORMS = {
+    "value": (lambda row: row, lambda row, value: value),
+    "upper-of-lower-file": (lambda row: row, lambda row, value: row.upper()),
+    "lower-of-upper-file": (lambda row: row.upper(), lambda row, value: row),
+    "mixed-as-written": (mixed, lambda row, value: mixed(row)),
+    "fernet-key": (lambda row: row, lambda row, value: fernet_key(row).decode()),
+}
+
+
 @pytest.mark.parametrize("fmt", ["json", "text"])
-def test_a228_master_key_lines_are_masked_in_the_log(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fmt: str
+@pytest.mark.parametrize("form", list(SECRET_FORMS))
+def test_a228_every_secret_form_is_masked_in_the_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    form: str,
+    fmt: str,
 ) -> None:
-    """A228: после первого чтения файла мастер-ключа запись журнала со строкой файла — как
-    записана, строчными и заглавными, в тексте и в поле `extra` — выходит с маской `***`."""
-    row = masterkeys.line()
-    use_file(monkeypatch, masterkeys.write(tmp_path / "k", [row.upper()], newline="\r\n"))
-    crypto.seal("openai", masterkeys.marker())
+    """A228: после первого чтения файла мастер-ключа и записи ключа запись журнала с секретом в
+    тексте и в поле `extra` выходит с маской `***`: значение после `seal`; строка файла в другом
+    регистре, чем записана, и как записана; выведенный ключ Fernet."""
+    row, value = masterkeys.line(), masterkeys.marker()
+    written, logged = SECRET_FORMS[form]
+    use_file(monkeypatch, masterkeys.write(tmp_path / "k", [written(row)], newline="\r\n"))
+    crypto.seal("openai", value)
+    secret = logged(row, value)
     logs.setup_logging(level="INFO", fmt=fmt)
-    log = logging.getLogger("ai_geo_audit.test")
-    for form in (row.upper(), row):
-        log.info("строка файла %s", form, extra={"line": form})
+    logging.getLogger("ai_geo_audit.test").info("секрет %s", secret, extra={"secret": secret})
     out = capsys.readouterr().err
-    assert row not in out
-    assert row.upper() not in out
-    assert out.count(logs.MASK) >= 4
+    assert secret not in out
+    assert out.count(logs.MASK) >= 2
     if fmt == "json":
-        assert [json.loads(line)["line"] for line in out.splitlines()] == [logs.MASK] * 2
+        assert json.loads(out.splitlines()[-1])["secret"] == logs.MASK
