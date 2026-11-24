@@ -361,6 +361,61 @@ exit=0 (74 с)
 шаблона порч `audit_test_46cab6734f` (L105). Клон снят. Код после прогона не менялся. Прежний
 прогон, до круга находок, — на `7986636` против `fe0f367`, 957 из 957, тоже зелёный целиком.
 
+На коммите сдачи `d30ff58` — ещё один прогон. Клон свежий, `--no-local`, с ветки `smoke-run`;
+база диффа — `origin/main` клона, `b9fad13`. 2026-11-24T11:02:09Z–11:04:54Z, нагрузка 3,2–4,8.
+Вывод дословный, длинные строки обрезаны знаком «…»:
+
+```
+$ git log --format="%h %p %s" -4 && git rev-parse --short origin/main
+d30ff58 140c89b chore(delivery): smoke run.sh — сдача: архив, уроки L114–L121, наблюдение до …
+140c89b ace9a75 docs(delivery): smoke run.sh — слово владельца на публикацию: 2026-11-24T10:59:06Z
+ace9a75 aaa4c16 docs(delivery): smoke run.sh — вердикт второй проверяющей на aaa4c16: к сдаче
+aaa4c16 6484573 docs(delivery): smoke run.sh — круг находок: дайджест, A23, живые пробы и …
+b9fad13
+$ cd backend && uv sync --frozen -q
+exit=0
+$ python3 scripts/delivery_check.py --diff-base origin/main
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-24-smoke-run (phase=handoff…
+debt: снимков долга на HEAD не прочитано — таять нечему
+§3.1d: номера примеров сверены с архивом — спек 16, новых 10, уже встречались 0
+дайджест §3.1d: в отчёте 0, пересчёт от origin/main: 0
+breakers: files=8 net_loc=1615 (+1647/-32), excluded=15 (…
+наблюдение §13.1: поставок в архиве 19, окон со сроком 19, истекших без observed.md 0
+сквозные проверки §6.1: сценариев в таблице 3 (delivery/evals/smoke/README.md)
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). …
+delivery_check: 0 error(s), 1 warning(s)
+exit=0
+$ cd backend && uv run --no-sync pytest -q -p no:cacheprovider -W error
+собрано 1107, прошло 1107, пропущено 0
+exit=0 (78 с)
+$ uv run --project backend --no-sync pre-commit run --all-files
+не Passed/Skipped строк: 0
+exit=0
+$ uv run --project backend --no-sync pre-commit run --hook-stage pre-push --all-files
+не Passed/Skipped строк: 0
+exit=0
+$ BASE=origin/main bash scripts/lint/assert_digest.sh | tail -1
+asserts_without_example: unknown
+$ git diff --name-only --diff-filter=AM origin/main...HEAD | xargs python3 -I rfrb_scan.py
+--- просмотрено файлов: 23; совпадений: 0
+$ bash delivery/evals/smoke/run.sh
+пакет: …/clean-d30ff58/backend/src/ai_geo_audit
+S3: зелёный за 0 с
+S1: зелёный за 1 с
+S2: зелёный за 74 с
+сценариев 3 из 3
+exit=0 (76 с)
+```
+
+- Судится архив поставки, фаза `handoff`; 1615 строк в 8 файлах при пределах 2500 и 50.
+  WARNING «idle» ожидаем: после переноса активной поставки нет.
+- `assert_digest.sh` отдельно печатает «unknown»: после переноса нет активной спеки, к примерам
+  которой он привязывает утверждения. Пересчёт дайджеста в гейте сдачи — 0 без примера, как в
+  отчёте.
+- Повтор A23 на коммите сдачи: 23 файла против `b9fad13`, совпадений 0.
+- Баз корня клона нет: smoke `audit_test_d26ab325bc`, набора `audit_test_bbad28e3dc`, шаблона
+  порч `audit_test_46b3ee27ca` (L105). Клон снят.
+
 ## Verdict
 - [x] READY FOR HANDOFF
 - [ ] NEED CONVERGE (new tasks)
