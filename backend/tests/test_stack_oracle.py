@@ -177,9 +177,11 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
-#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87.
+#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
+#: Ч1.5в, срез 3 — A88.
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
+STEP_EXAMPLES |= {"A88"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -191,11 +193,42 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_a87() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_to_a88() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
-    A80, A81, A82, A83, A84, A86 и A87."""
+    A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88."""
     assert steps_problems(oracle.STEPS) == []
+
+
+def test_a88_stop_steps_go_after_hardening_and_before_a67() -> None:
+    """A88: остановка и падение api ломают api — шаги стоят после шагов web и защиты стека и до
+    A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков."""
+    hard = importlib.import_module("stack_oracle_hardening")
+    stop = importlib.import_module("stack_oracle_stop")
+    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *compose.BREAKING_STEPS]
+    assert oracle.STEPS[-len(tail) :] == tail
+    assert [step.__name__ for _, _, step, _ in stop.STOP_STEPS] == ["step_stop", "step_crash"]
+
+
+def test_a69_a88_network_probe_takes_the_api_port_from_its_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A69, A88 (L50): здоровье из разового контейнера в сети стека тем же образом; порт — из
+    окружения контейнера api, без `API_PORT` — 8107."""
+    sent: list[tuple[str, ...]] = []
+
+    def result(run: object, *args: str, **kw: object) -> SimpleNamespace:
+        sent.append(args)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(compose, "compose_result", result)
+    once = ("run", "--rm", "-T", "--no-deps", "--entrypoint", "python", "migrate", "-c")
+    for env, port in ((["A=b", "API_PORT=8200"], "8200"), (["A=b"], "8107")):
+        monkeypatch.setattr(
+            compose, "inspect", lambda run, service, env=env: {"Config": {"Env": env}}
+        )
+        assert compose.net_health(SimpleNamespace())[0] == port
+        assert sent[-1] == (*once, compose.NET_PROBE.format(port=port))
 
 
 @pytest.mark.parametrize(
