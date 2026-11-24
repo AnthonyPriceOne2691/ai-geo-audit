@@ -9,7 +9,7 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -92,23 +92,25 @@ def test_a88_stop_is_exited_143_fast_judged_stopped_and_stays_down(
 
 
 @pytest.mark.parametrize(
-    ("restarts", "seconds", "net", "why"),
+    ("restarts", "seconds", "net", "soft", "why"),
     [
-        ((0, 1), 12.5, 0, ""),
-        ((0, 1), 50.0, 0, ""),
-        ((0, 0), 12.5, 0, "перезапусков 0 → 0"),
-        ((0, 2), 12.5, 0, "перезапусков 0 → 2"),
-        ((0, 1), 50.1, 0, "healthy через 50.1 с"),
-        ((0, 1), 12.5, 1, "из сети стека — код 1"),
+        ((0, 1), 12.5, 0, False, ""),
+        ((0, 1), 50.0, 0, False, ""),
+        ((0, 0), 12.5, 0, False, "перезапусков 0 → 0"),
+        ((0, 2), 12.5, 0, False, "перезапусков 0 → 2"),
+        ((0, 1), 50.1, 0, False, "healthy через 50.1 с"),
+        ((0, 1), 12.5, 1, False, "из сети стека — код 1"),
+        ((0, 1), 12.5, 0, True, "после сигнала — запись мягкой остановки"),
     ],
-    ids=["ок", "ровно-50", "без-перезапуска", "два", "дольше-50", "сеть"],
+    ids=["ок", "ровно-50", "без-перезапуска", "два", "дольше-50", "сеть", "мягкий-выход"],
 )
 def test_a88_crash_is_one_restart_healthy_within_50_s_and_heard_from_the_network(
-    restarts: tuple[int, int], seconds: float, net: int, why: str
+    restarts: tuple[int, int], seconds: float, net: int, soft: bool, why: str
 ) -> None:
     """A88, четвёртая строка: перезапусков ровно +1, снова healthy не позже 50 с, здоровье из сети
-    стека — код 0 (L50); иначе — красное с причиной."""
-    found = "; ".join(stop.crash_problems(restarts, seconds, net))
+    стека — код 0 (L50), новой записи мягкой остановки нет — процесс убит, а не вышел сам; иначе —
+    красное с причиной."""
+    found = "; ".join(stop.crash_problems(restarts, seconds, net, soft))
     assert (why in found) if why else not found, found
 
 
@@ -222,97 +224,137 @@ def test_a88_restart_is_awaited_by_the_counter(monkeypatch: pytest.MonkeyPatch) 
         stop.wait_restart(SimpleNamespace(), 0, 50)
 
 
+#: Прогон шагов: пароль и секрет стека — их не должно быть в причине красного (L89).
+RUN = SimpleNamespace(password="pass-0000-0000", jwt="jwt-0000-0000-0000")
+#: Хвост журнала api для причины красного: в нём пароль и секрет стека.
+TAIL = f"api-1  | url=postgresql://audit:{RUN.password}@db/audit\napi-1  | jwt={RUN.jwt}\n"
+
+
 def stack(
     monkeypatch: pytest.MonkeyPatch, logs: list[str], fail: str = "", found: str = "7 1"
-) -> list[str]:
-    """Подставные compose, состояние api и ожидания: шаги A88 без Docker; список — что звали."""
+) -> tuple[list[str], list[str]]:
+    """Подставные compose, состояние api и ожидания: шаги A88 без Docker. Первый список — что
+    звали: `tail` — хвост журнала для причины, `logs` — журнал для счёта записей; второй —
+    сценарии `python -c` у `exec`."""
     seen: list[str] = []
+    codes: list[str] = []
     answers = iter(logs)
 
     def compose(run: object, *args: str, **kw: object) -> str:
-        seen.append(args[0] if args[0] != "exec" else f"exec {kw.get('check', True)}")
+        if args[0] == "exec":
+            seen.append(f"exec {kw.get('check', True)}")
+            codes.append(args[-1])
+        else:
+            seen.append("tail" if "--tail" in args else args[0])
         if args[0] == fail:
             raise stop.StepError(f"{fail} — код 1")
-        return next(answers) if args[0] == "logs" else found
+        if args[0] == "logs":
+            return TAIL if "--tail" in args else next(answers)
+        return found
 
     monkeypatch.setattr(stop, "compose", compose)
+    monkeypatch.setattr(importlib.import_module("stack_oracle_compose"), "compose", compose)
     monkeypatch.setattr(stop, "STILL", 0)
     monkeypatch.setattr(stop, "inspect", lambda run, service: DOWN)
     monkeypatch.setattr(stop, "judge", lambda run, code, finished: ("упал", "остановлен")[finished])
     monkeypatch.setattr(stop, "wait_health", lambda *args: seen.append("healthy") or 30.0)
     monkeypatch.setattr(stop, "wait_restart", lambda run, before, limit: before + 1)
     monkeypatch.setattr(stop, "net_health", lambda run: ("8107", SimpleNamespace(returncode=0)))
-    return seen
+    return seen, codes
+
+
+def red(step: Callable[[object], str], why: str) -> str:
+    """Шаг красный с причиной `why` и хвостом журнала api, где пароль и секрет — звёздочками."""
+    with pytest.raises(stop.StepError) as failure:
+        step(RUN)
+    reason = str(failure.value)
+    assert why in reason, reason
+    assert "журнал api: api-1  | url=postgresql://audit:***@db/audit | api-1  | jwt=***" in reason
+    assert RUN.password not in reason
+    assert RUN.jwt not in reason
+    return reason
 
 
 def test_a88_stop_step_is_green_with_a_new_record_and_returns_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A88, первая строка: новая запись uvicorn после команды — разбор «остановлен», шаг зелёный;
-    api снова запущен и ждёт healthy (L88)."""
-    seen = stack(monkeypatch, [FINISHED, f"{FINISHED}\n{FINISHED}"])
+    """A88, первая строка: новая запись uvicorn после команды — разбор «остановлен», шаг зелёный,
+    итог — строкой целиком; api снова запущен и ждёт healthy (L88)."""
+    seen, _ = stack(monkeypatch, [FINISHED, f"{FINISHED}\n{FINISHED}"])
     monkeypatch.setattr(stop, "time", clock(10.0, 11.5))
-    assert stop.step_stop(SimpleNamespace()).startswith("exited с кодом 143 за 1.5 с")
+    done = stop.step_stop(RUN)
+    assert done == "exited с кодом 143 за 1.5 с; новая запись uvicorn; разбор — «остановлен»"
     assert seen == ["logs", "stop", "logs", "start", "healthy"]
 
 
-def test_a88_stop_step_without_a_new_record_or_failed_is_red_and_returns_api(
+def test_a88_stop_step_red_names_the_api_log_taken_before_the_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A88, первая строка: записи после команды нет (старая — от прежней остановки) — разбор
-    «упал», красное; сбой команды — красное с причиной; api возвращается в обоих случаях (L88)."""
-    seen = stack(monkeypatch, [FINISHED, FINISHED])
+    «упал»; сбой команды — её причина. В обоих красных — хвост журнала api до возврата api, иначе
+    он показал бы новый запуск (L89); api возвращается (L88)."""
+    seen, _ = stack(monkeypatch, [FINISHED, FINISHED])
     monkeypatch.setattr(stop, "time", clock(10.0, 11.5))
-    with pytest.raises(stop.StepError, match="разбор — «упал»"):
-        stop.step_stop(SimpleNamespace())
-    assert seen[-2:] == ["start", "healthy"]
-    seen = stack(monkeypatch, [FINISHED], fail="stop")
+    red(stop.step_stop, "разбор — «упал»")
+    assert seen == ["logs", "stop", "logs", "tail", "start", "healthy"]
+    seen, _ = stack(monkeypatch, [FINISHED], fail="stop")
     monkeypatch.setattr(stop, "time", clock(10.0))
-    with pytest.raises(stop.StepError, match="stop — код 1"):
-        stop.step_stop(SimpleNamespace())
-    assert seen == ["logs", "stop", "start", "healthy"]
+    red(stop.step_stop, "stop — код 1")
+    assert seen == ["logs", "stop", "tail", "start", "healthy"]
 
 
-def test_a88_crash_step_kills_the_child_of_init_and_returns_api(
+def test_a88_crash_step_kills_the_child_of_init_with_sigkill_and_returns_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A88, четвёртая строка: поиск uvicorn, сигнал без проверки кода (контейнер умирает вместе с
-    процессом), перезапуск +1, healthy, сеть стека — зелёное; api возвращается (L88)."""
-    seen = stack(monkeypatch, [])
+    """A88, четвёртая строка: поиск uvicorn, сигнал — ровно SIGKILL его pid, без проверки кода
+    (контейнер умирает вместе с процессом); перезапуск +1, новой записи мягкой остановки нет,
+    healthy, сеть стека — зелёное, итог — строкой целиком; api возвращается (L88)."""
+    seen, codes = stack(monkeypatch, [FINISHED, FINISHED])
     monkeypatch.setattr(stop, "time", clock(5.0))
-    assert stop.step_crash(SimpleNamespace()).startswith("убит pid 7 — дочерний процесс init")
-    assert seen == ["exec True", "exec False", "healthy", "start", "healthy"]
+    done = stop.step_crash(RUN)
+    healthy = "перезапусков +1; healthy через 25.0 с; сеть — 200"
+    assert done == f"убит pid 7 — дочерний процесс init; {healthy}"
+    assert codes == [stop.FIND, "import os, signal; os.kill(7, signal.SIGKILL)"]
+    assert seen == ["exec True", "logs", "exec False", "healthy", "logs", "start", "healthy"]
+
+
+def test_a88_crash_step_with_a_soft_exit_is_red(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A88, четвёртая строка: после сигнала в журнале новая запись «Finished server process» —
+    uvicorn вышел мягко (SIGTERM даёт ту же картину: код 143, перезапуск +1), а не убит: красное
+    с хвостом журнала; api возвращается."""
+    seen, _ = stack(monkeypatch, [FINISHED, f"{FINISHED}\n{FINISHED}"])
+    monkeypatch.setattr(stop, "time", clock(5.0))
+    red(stop.step_crash, "после сигнала — запись мягкой остановки")
+    assert seen[-3:] == ["tail", "start", "healthy"]
 
 
 def test_a88_crash_step_without_a_child_of_init_or_a_restart_is_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A88, четвёртая строка: uvicorn не дочерний init — красное до сигнала; перезапуска нет —
-    красное, api запущен снова (L88)."""
-    seen = stack(monkeypatch, [], found="1 0")
-    with pytest.raises(stop.StepError, match="не дочерний процесс init"):
-        stop.step_crash(SimpleNamespace())
-    assert seen == ["exec True"]
+    красное; в обоих — хвост журнала api, api запущен снова (L88, L89)."""
+    seen, codes = stack(monkeypatch, [], found="1 0")
+    red(stop.step_crash, "не дочерний процесс init")
+    assert seen == ["exec True", "tail", "start", "healthy"]
+    assert codes == [stop.FIND]
 
     def never(run: object, before: int, limit: float) -> int:
         raise stop.StepError(f"api не перезапущен за {limit:g} с")
 
-    seen = stack(monkeypatch, [])
+    seen, _ = stack(monkeypatch, [FINISHED])
     monkeypatch.setattr(stop, "wait_restart", never)
     monkeypatch.setattr(stop, "time", clock(5.0))
-    with pytest.raises(stop.StepError, match="api не перезапущен за 50 с"):
-        stop.step_crash(SimpleNamespace())
-    assert seen == ["exec True", "exec False", "start", "healthy"]
+    red(stop.step_crash, "api не перезапущен за 50 с")
+    assert seen == ["exec True", "logs", "exec False", "tail", "start", "healthy"]
 
 
 def test_a88_crash_step_with_a_silent_network_is_red_and_returns_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A88, четвёртая строка: перезапуск и healthy есть, а из сети стека api не отвечает —
-    красное с причиной; api возвращается (L88)."""
-    seen = stack(monkeypatch, [])
+    красное с причиной и хвостом журнала; api возвращается (L88, L89)."""
+    seen, _ = stack(monkeypatch, [FINISHED, FINISHED])
     monkeypatch.setattr(stop, "net_health", lambda run: ("8107", SimpleNamespace(returncode=1)))
     monkeypatch.setattr(stop, "time", clock(5.0))
-    with pytest.raises(stop.StepError, match="из сети стека — код 1"):
-        stop.step_crash(SimpleNamespace())
-    assert seen[-2:] == ["start", "healthy"]
+    red(stop.step_crash, "из сети стека — код 1")
+    assert seen[-3:] == ["tail", "start", "healthy"]
