@@ -11,7 +11,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:reviewer3-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-24T10:18Z)
@@ -51,6 +51,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния 5в (`quality`, `ubuntu-24.04`): джоба `stack` — шагов 28, красных 0; A88 — остановка api кодом 143 быстрее 10 с с записью «Finished server process», падение — перезапуск +1 и healthy не позже 50 с; A89 — «сервисов 5, правил 27, нарушений 0». На выкате (Ч1.6) — журнал journald с меткой сервиса (`ai-geo-audit-api` и др.), лимиты наложения в `HostConfig`, у Redis `maxmemory` 104857600 и `noeviction`, у Postgres `max_connections` 50
+- **observe_until:** 2026-12-01 — первые прогоны CI на main после 5в: джоба `stack`, шаги A88 и A89; боевое наложение на сервере — на выкате (Ч1.6)
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
