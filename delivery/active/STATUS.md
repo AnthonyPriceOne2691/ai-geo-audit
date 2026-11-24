@@ -21,8 +21,21 @@
        уроки L122–L127 — в плане. -->
 - **builder:** agent:front-session
 - **verifier:** agent:reviewer2-session
-- **human_ok_spec:** pending
+- **human_ok_spec:** yes (by=human:owner at=2026-11-24T13:20Z)
+  <!-- Слово владельца 2026-11-24T13:20:59Z — «Подписываю 1.12а и даю да» на список ведущей из
+       трёх: 1) подпись под спекой — примеры A220–A238 на `3049c23` (файл спеки `807096099db7`,
+       строк `| A` — 21, `a01e6edfdc78`; A239 — в запасе); 2) слово на новую зависимость
+       `cryptography` 50.0.2 с косвенными `cffi` 2.1.1 и `pycparser` 3.12 — строки
+       `new_dependency` ниже; 3) окно подписи необратимого — следом, касанием владельца. Показ —
+       суть примеров простыми словами, «Сверка с ТЗ», чего защита не ловит, сведения о версии.
+       Перед словом владелец спросил про сервер: общий сервер агентства (ТЗ, «Сервер и база»).
+       Внесла ведущая. -->
 - **human_ok_plan:** n/a reason=класс M
+- **new_dependency:** cryptography reason=шифр ключей сервисов в базе (Fernet, MultiFernet) — 50.0.2, выпуск 2026-09-30, последняя старше 14 суток, колёса abi3 под CPython 3.12; своего шифра не пишем by=human:owner at=2026-11-24T13:20Z
+- **new_dependency:** cffi reason=косвенная `cryptography` 50.0.2 — 2.1.1 по пробному `uv add --no-sync` by=human:owner at=2026-11-24T13:20Z
+- **new_dependency:** pycparser reason=косвенная `cffi` 2.1.1 — 3.12 по пробному `uv add --no-sync` by=human:owner at=2026-11-24T13:20Z
+  <!-- Слово владельца 2026-11-24T13:20:59Z, пункт 2 списка ведущей. Версию на день кода сверить
+       ещё раз по первоисточнику (L49): иная версия — снова словом владельца. Внесла ведущая. -->
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present — pytest на настоящем Postgres 16; сценарии smoke — `delivery/evals/smoke/run.sh` (S3, S1, S2)
 - **artifact_oracle:** `scripts/stack_oracle.py` — образ с новым пакетом, api в бою с мастер-ключом нового формата (A60, A65 Ч1.5а)
