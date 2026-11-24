@@ -224,13 +224,16 @@ def test_a21_migrate_refuses_an_unencoded_password_without_printing_it() -> None
     assert "ss-word-123456" not in run.stderr
 
 
-#: Чужие роли по процессам (A174): у сервиса — роль миграций и суперпользователь образа.
+#: Чужие роли по процессам (A174): у сервиса — роль миграций и суперпользователь образа; имена,
+#: похожие на роль, — тоже чужие: сверка с учётом регистра и целиком (находка 4 проверяющей).
 FOREIGN: list[tuple[sc.Process, str]] = [
     ("api", "audit_migrate"),
     ("api", "audit"),
     ("worker", "audit_migrate"),
     ("worker", "audit"),
     ("migrate", "audit_app"),
+    ("api", "AUDIT_APP"),
+    ("migrate", "audit_migrate_x"),
 ]
 LONG = "pw-1234567890"
 
@@ -244,8 +247,9 @@ def test_a174_foreign_db_role_is_refused_without_the_found_name(
     monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process, user: str
 ) -> None:
     """A174: в бою у `api` и `worker` в адресе базы роль `audit_migrate` или суперпользователь
-    `audit`, у `migrate` — `audit_app`: отказ у `DATABASE_URL` ровно «в адресе чужая роль базы —
-    нужна <роль процесса>»; найденного имени и пароля в тексте отказа нет."""
+    `audit`, у `migrate` — `audit_app`; похожие на роль `AUDIT_APP` у `api` и `audit_migrate_x` у
+    `migrate`: отказ у `DATABASE_URL` ровно «в адресе чужая роль базы — нужна <роль процесса>»;
+    найденного имени и пароля в тексте отказа нет."""
     env = full_env(master_key) | {"DATABASE_URL": db(LONG, user=user)}
     found = prod(monkeypatch, process, **env)
     assert found == [foreign_role(process)]
