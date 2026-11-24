@@ -269,3 +269,62 @@ main `fe0f367` («Скорость CI»)
 | implement_retries | 5 — правки после красного: скан образа на 1.30.6 (`d118982`); одинаковая порча `nginx.conf` и оракула (`9441c68`); порча A84 печатала литерал (`8eeabc4`); живая порча «`resolver` без `valid`» зелёная (`850f33e`); формат строки decisions, §12.2 (`51f88c4`) |
 | verify_fails_before_green | 2 — приёмка вернула работу дважды (находки 1 и 2); CI — 0 падений: прогон на `7b98cd8` отменён новым пушем; отказов pre-push — 0 |
 | est_token_or_cost | n/a — работа по подписке, расход сессии не измерялся |
+
+## Прогон в чистом клоне
+
+Локальные гейты обходятся, поэтому доказательство — прогон на склонированном состоянии (§10.4).
+Один прогон на коммите сдачи `3f59527`, с 2026-11-24T09:29:14Z по 09:32:20Z (`date -u` до и
+после). Клон свежий (`--no-local`), с ветки `ch1-05b-web-hardening`; база диффа — `origin/main`
+клона, `fe0f367`. Команды в клоне — подоболочкой. Коды выхода стадии pre-push и pytest в первом
+проходе не записались: оболочка — zsh, `PIPESTATUS` в ней пуст; обе команды повторены в bash,
+09:31:11–09:32:20Z, ниже — вывод повтора. Вывод дословный, длинные строки обрезаны знаком «…»:
+
+```
+$ git clone -q --no-local -b ch1-05b-web-hardening <репозиторий> <клон> && cd <клон>
+$ git log --format="%h %p %s" -4 && git rev-parse --short origin/main \
+    && git merge-base HEAD origin/main
+3f59527 37b033c chore(delivery): Ч1.5б — сдача: архив, уроки L103–L113, наблюдение до 2026-12-01
+37b033c 2de8ec4 docs(delivery): Ч1.5б — подпись владельца под утверждениями и слово на публикацию; …
+2de8ec4 22d1aa9 docs(delivery): Ч1.5б — eval-smoke: приёмка A77–A84, A86, A87 и A23 с доказательств…
+22d1aa9 20bde77 docs(delivery): Ч1.5б — вердикт проверяющего: к сдаче; пробы проверяющего, прогон C…
+fe0f367
+fe0f367613ead20ec6c56267e796833594b562aa
+$ python3 scripts/delivery_check.py --diff-base origin/main; echo "exit=$?"
+простой: окно fe0f367613ea..HEAD (база origin/main) — поставок, которые архивирует этот дифф: 1
+судится поставка, которую архивирует этот дифф: delivery/archive/2026-11-24-ch1-05b-web-hardening (…
+debt: снимков долга на HEAD не прочитано — таять нечему
+§3.1d: номера примеров сверены с архивом — спек 15, новых 10, уже встречались 1: A23 (delivery/arch…
+breakers: files=24 net_loc=2126 (+2233/-107), excluded=11 (delivery/|knowledge/|scripts/lint/|scrip…
+наблюдение §13.1: поставок в архиве 18, окон со сроком 18, истекших без observed.md 0
+сквозные проверки §6.1: сценариев в таблице 0 (delivery/evals/smoke/README.md)
+WARNING: idle: нет delivery/active/STATUS.md — активной поставки нет (§2.3a). Начинаешь работу? Соз…
+WARNING: delivery/evals/smoke/README.md: таблица сценариев пуста, а код уже поставлен — в архиве ес…
+delivery_check: 0 error(s), 2 warning(s)
+exit=0
+$ (cd backend && uv sync --frozen -q); echo "uv sync exit=$?"
+uv sync exit=0
+$ backend/.venv/bin/pre-commit run --all-files > <журнал>; echo "exit=$?"; \
+    grep -c 'Passed$' <журнал>; grep -c 'Skipped$' <журнал>; grep 'Failed$' <журнал>
+exit=0
+27
+1
+$ backend/.venv/bin/pre-commit run --all-files --hook-stage pre-push; echo "exit=$?"
+check for added large files.......................................................Passed
+dead code — объявлено и никем не зовётся (ратчет, pre-push).......................Passed
+delivery phase gate + breakers (pre-push).........................................Passed
+baseline only melts (pre-push)....................................................Passed
+новая зависимость объявлена в STATUS (pre-push)...................................Passed
+exit=0
+$ cd backend && uv run --frozen pytest -q -p no:cacheprovider -W error | tail -1; \
+    echo "pytest exit=${PIPESTATUS[0]}"
+собрано 1054, прошло 1054, пропущено 0
+pytest exit=0
+```
+
+- Счёт — 2126 строк в 24 файлах при пределах 2500 и 50; судится архив поставки, фаза handoff.
+  WARNING «idle» — после переноса активной поставки нет; пустая таблица сквозных проверок —
+  предупреждение контура о `delivery/evals/smoke/`, не код этой поставки. A23 «уже встречался» —
+  общий пример сканера правила LOGIC-10, тот же пример.
+- Скан A23 на коммите сдачи против `fe0f367`, файлов 35: совпадений 2, оба — текст правила:
+  строка A23 спеки (`spec.md:179`) и строка A23 этого отчёта (`verify-report.md:188`).
+- Тестовая база клона `audit_test_995cd4104a` снята после прогона, клон удалён.
