@@ -6,7 +6,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:lead-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-19T11:32Z)
@@ -110,6 +110,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния 5б (`quality`, `ubuntu-24.04`): джоба `stack` — шагов 25, красных 0, у A84 тело ровно 1 048 576 байт — 405 от api, а не 502; `image-scan` — у образа web находок HIGH и CRITICAL с исправлением 0; `tests` — без падений и пропусков
+- **observe_until:** 2026-12-01 — первые прогоны CI на main после 5б и Ч1.5в: те же шаги стека и скан образа web
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
