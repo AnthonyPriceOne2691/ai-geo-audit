@@ -125,9 +125,18 @@ React с Vite и Mantine, pytest, docker compose.
   единственный доверенный прокси api (`API_TRUSTED_PROXIES`).
 - Права: у всех `cap_drop: [ALL]`, `no-new-privileges` и корень только для чтения; запись — в
   `tmpfs` и томах; db и redis — под пользователем своего образа.
+- Остановка: `stop_grace_period` — у api 30 с (мягкая остановка uvicorn 20 с и 10 с на закрытие
+  пулов), у db 60 с. `docker compose stop api` даёт код 143, а не 0: uvicorn 0.54 после мягкой
+  остановки снова поднимает SIGTERM; с записью «Finished server process» в журнале это норма.
+  Разбор — `ai_geo_audit.ops.stop_verdict`: «остановлен», «убит по сроку» (137) или «упал».
 - Правила файла — `python -m ai_geo_audit.ops.stack_rules` над выводом
   `docker compose -f docker-compose.yml --profile '*' config --no-interpolate --format json`:
   код 0 — нарушений нет, 1 — нарушения, 2 — отказ.
+- Боевое наложение — `docker-compose.prod.yml`: лимиты памяти и процессора у каждого сервиса,
+  журнал journald с меткой сервиса (`ai-geo-audit-api` и так далее), потолок Redis без
+  вытеснения, `max_connections` базы; подъём — `docker compose -f docker-compose.yml -f
+  docker-compose.prod.yml up -d`. Правила наложения — тот же модуль с флагом `--prod` над слитым
+  выводом обоих файлов.
 - Оракул — `python3 scripts/stack_oracle.py`: собирает образы сервиса и web из чистой копии
   `git archive HEAD`, поднимает стек под своим именем и убирает его в конце прогона; порт web,
   подсеть `front` и адрес web — свои у прогона, от имени стека. Нужны Docker с compose v2 и
