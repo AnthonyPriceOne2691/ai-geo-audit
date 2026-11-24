@@ -78,6 +78,7 @@ PROBES = [
     (drop(svc("migrate"), "logging"), "journald", "migrate"),
     (drop(options("db"), "tag"), "journald", "db"),
     (put(options("web"), "tag", "ai-geo-audit-api"), "journald", "web"),
+    (put(options("api"), "tag", "{{.Name}}"), "journald", "api"),
     (drop(svc("redis"), "command"), "redis-memory", "redis"),
     (command("--maxmemory-policy", "noeviction"), "redis-memory", "redis"),
     (command("--maxmemory", "0", "--maxmemory-policy", "noeviction"), "redis-memory", "redis"),
@@ -95,6 +96,7 @@ PROBE_IDS = [
     "migrate-без-журнала",
     "db-без-метки",
     "web-чужая-метка",
+    "api-метка-шаблоном",
     "redis-без-команды",
     "redis-без-потолка",
     "redis-потолок-0",
@@ -126,6 +128,7 @@ CALM = [
     put(svc("db"), "mem_limit", "1G"),
     put(svc("web"), "mem_limit", "134217728"),
     put(options("api"), "labels", "service"),
+    command("--requirepass", "${REDIS_PASSWORD:?пароль}", *REDIS[1:]),
 ]
 
 
@@ -139,12 +142,13 @@ CALM = [
         "память-1G",
         "память-в-байтах",
         "ещё-опция",
+        "ссылка-в-другом-слове",
     ],
 )
 def test_a89_neighbour_cases_are_not_violations(change: Callable) -> None:
     """A89, первая строка, соседние случаи (L53): команда Redis строкой, как в файле, и с другими
-    флагами, `cpus` строкой, память `1G` и в байтах, другая опция журнала рядом с меткой — не
-    нарушения."""
+    флагами, `cpus` строкой, память `1G` и в байтах, другая опция журнала рядом с меткой, ссылка
+    `${…}` в другом слове команды (пароль очереди «Учёток хранилищ») — не нарушения."""
     config = prod()
     change(config)
     assert found(config) == set()
@@ -195,3 +199,32 @@ def test_a89_unknown_flag_is_refused(
     code, out = run_main(monkeypatch, capsys, json.dumps(prod()), *argv)
     assert code == 2
     assert out.startswith("отказ: ")
+
+
+@pytest.mark.parametrize(
+    ("spoil", "reason"),
+    [
+        (put(svc("api"), "mem_limit", "${API_MEMORY:-512m}"), "api: mem_limit"),
+        (put(svc("web"), "cpus", "${WEB_CPUS}"), "web: cpus"),
+        (
+            command("--maxmemory", "${REDIS_MAX:-100mb}", "--maxmemory-policy", "noeviction"),
+            "redis",
+        ),
+        (command("--maxmemory", "100mb", "--maxmemory-policy", "${POLICY}"), "redis"),
+        (put(svc("redis"), "command", 'redis-server --maxmemory 100mb --save "'), "redis: command"),
+    ],
+    ids=["память-ссылкой", "cpus-ссылкой", "потолок-ссылкой", "политика-ссылкой", "кавычка"],
+)
+def test_a89_value_unknown_until_the_server_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    spoil: Callable,
+    reason: str,
+) -> None:
+    """A89: лимит или значение флага Redis ссылкой `${…}` — на сервере значение неизвестно, и
+    команда, которую не разделить на слова оболочки, — отказ с кодом 2, как у `stop-grace`."""
+    config = prod()
+    spoil(config)
+    code, out = run_main(monkeypatch, capsys, json.dumps(config), "--prod")
+    assert code == 2
+    assert out.startswith(f"отказ: сервис {reason}")
