@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 from test_stack_rules import CODES, drop, put, svc, valid
 
+from ai_geo_audit.ops import stack_prod as prod_rules
 from ai_geo_audit.ops import stack_rules as sr
 
 #: Лимиты наложения у каждого сервиса — числа decisions Ч1.5в, срез 0.
@@ -61,6 +64,14 @@ def run_main(
     monkeypatch.setattr("sys.stdin", io.StringIO(text))
     code = sr.main(list(argv))
     return code, capsys.readouterr().out
+
+
+def python_m(text: str) -> tuple[int, str, str]:
+    """Настоящий вход шага A89 в образе — `python -m ai_geo_audit.ops.stack_rules --prod`, JSON на
+    stdin: модуль правил тогда — `__main__`. Код, вывод и поток ошибок."""
+    argv = [sys.executable, "-m", "ai_geo_audit.ops.stack_rules", "--prod"]
+    done = subprocess.run(argv, input=text, capture_output=True, text=True, check=False, timeout=60)
+    return done.returncode, done.stdout, done.stderr
 
 
 def command(*words: str) -> Callable[[dict[str, Any]], None]:
@@ -162,9 +173,11 @@ def test_a89_prod_codes_follow_the_main_set_in_order() -> None:
 def test_a89_prod_rules_run_only_under_the_flag(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A89, вторая строка: без флага — основной набор, «правил 24», лимитов нет — не нарушение;
-    с `--prod` на верном слитом выводе — «сервисов 5, правил 27, нарушений 0»."""
+    """A89, вторая строка: без флага — основной набор, «правил 24», лимитов нет — не нарушение,
+    и у `run()` по умолчанию тоже; с `--prod` на верном слитом выводе — «сервисов 5, правил 27,
+    нарушений 0»."""
     plain = json.dumps(valid())
+    assert sr.run(plain) == (0, ["итог: сервисов 5, правил 24, нарушений 0"])
     assert run_main(monkeypatch, capsys, plain) == (0, "итог: сервисов 5, правил 24, нарушений 0\n")
     summary = "итог: сервисов 5, правил 27, нарушений 0\n"
     assert run_main(monkeypatch, capsys, json.dumps(prod()), "--prod") == (0, summary)
@@ -176,15 +189,17 @@ def test_a89_prod_rules_run_only_under_the_flag(
 def test_a89_violation_lines_name_the_rule_and_the_service(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A89, первая строка: строка нарушения — код правила, сервис и что не так."""
+    """A89, первая строка: строка нарушения — код правила, сервис и что не так; нет обоих
+    лимитов — оба через «и»."""
     config = prod()
     del config["services"]["db"]["mem_limit"]
+    del config["services"]["db"]["cpus"]
     config["services"]["api"]["logging"]["driver"] = "json-file"
     del config["services"]["redis"]["command"]
     code, out = run_main(monkeypatch, capsys, json.dumps(config), "--prod")
     assert code == 1
     assert out.splitlines() == [
-        "limits: сервис db — нет mem_limit",
+        "limits: сервис db — нет mem_limit и cpus",
         "journald: сервис api — журнал не journald с меткой ai-geo-audit-api",
         "redis-memory: сервис redis — нет --maxmemory или вытеснение не noeviction",
         "итог: сервисов 5, правил 27, нарушений 3",
@@ -201,20 +216,35 @@ def test_a89_unknown_flag_is_refused(
     assert out.startswith("отказ: ")
 
 
-@pytest.mark.parametrize(
-    ("spoil", "reason"),
-    [
-        (put(svc("api"), "mem_limit", "${API_MEMORY:-512m}"), "api: mem_limit"),
-        (put(svc("web"), "cpus", "${WEB_CPUS}"), "web: cpus"),
-        (
-            command("--maxmemory", "${REDIS_MAX:-100mb}", "--maxmemory-policy", "noeviction"),
-            "redis",
-        ),
-        (command("--maxmemory", "100mb", "--maxmemory-policy", "${POLICY}"), "redis"),
-        (put(svc("redis"), "command", 'redis-server --maxmemory 100mb --save "'), "redis: command"),
-    ],
-    ids=["память-ссылкой", "cpus-ссылкой", "потолок-ссылкой", "политика-ссылкой", "кавычка"],
-)
+def test_a89_redis_memory_without_redis_has_nothing_to_judge() -> None:
+    """A89: в стеке нет сервиса redis — правилу `redis-memory` судить нечего: ни нарушения, ни
+    отказа."""
+    config = prod()
+    del config["services"]["redis"]
+    assert list(prod_rules.redis_memory(sr.parse(config))) == []
+
+
+#: Хвост отказа на значении ссылкой и флаги Redis — литералами, как строки нарушений.
+REF = "— ссылка ${…}, значение на сервере неизвестно"
+FLAGS = "--maxmemory или --maxmemory-policy"
+# Порча и строка отказа после «отказ: сервис »: значение ссылкой и команда без слов оболочки.
+REFUSALS = [
+    (put(svc("api"), "mem_limit", "${API_MEMORY:-512m}"), f"api: mem_limit {REF}"),
+    (put(svc("web"), "cpus", "${WEB_CPUS}"), f"web: cpus {REF}"),
+    (
+        command("--maxmemory", "${REDIS_MAX:-100mb}", "--maxmemory-policy", "noeviction"),
+        f"redis: {FLAGS} {REF}",
+    ),
+    (command("--maxmemory", "100mb", "--maxmemory-policy", "${POLICY}"), f"redis: {FLAGS} {REF}"),
+    (
+        put(svc("redis"), "command", 'redis-server --maxmemory 100mb --save "'),
+        "redis: command не делится на слова оболочки",
+    ),
+]
+REFUSAL_IDS = ["память-ссылкой", "cpus-ссылкой", "потолок-ссылкой", "политика-ссылкой", "кавычка"]
+
+
+@pytest.mark.parametrize(("spoil", "reason"), REFUSALS, ids=REFUSAL_IDS)
 def test_a89_value_unknown_until_the_server_is_refused(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -222,9 +252,27 @@ def test_a89_value_unknown_until_the_server_is_refused(
     reason: str,
 ) -> None:
     """A89: лимит или значение флага Redis ссылкой `${…}` — на сервере значение неизвестно, и
-    команда, которую не разделить на слова оболочки, — отказ с кодом 2, как у `stop-grace`."""
+    команда, которую не разделить на слова оболочки, — отказ с кодом 2, как у `stop-grace`;
+    строка отказа — целиком."""
     config = prod()
     spoil(config)
-    code, out = run_main(monkeypatch, capsys, json.dumps(config), "--prod")
-    assert code == 2
-    assert out.startswith(f"отказ: сервис {reason}")
+    out = f"отказ: сервис {reason}\n"
+    assert run_main(monkeypatch, capsys, json.dumps(config), "--prod") == (2, out)
+
+
+@pytest.mark.parametrize(
+    ("spoil", "code", "line"),
+    [
+        (lambda config: None, 0, "итог: сервисов 5, правил 27, нарушений 0"),
+        *((spoil, 2, f"отказ: сервис {reason}") for spoil, reason in REFUSALS),
+    ],
+    ids=["верный", *REFUSAL_IDS],
+)
+def test_a89_python_m_entry_as_in_the_image(spoil: Callable, code: int, line: str) -> None:
+    """A89, вторая строка, находка 4 приёмки: настоящий вход — `python -m … --prod`, как его зовёт
+    шаг A89 в образе. Модуль правил тогда — `__main__`, а отказ боевых правил — тот же класс:
+    строка отказа целиком, код 2 и пустой поток ошибок, а не трассировка с кодом 1; на верном
+    слитом выводе — «правил 27»: флаг доходит до входа."""
+    config = prod()
+    spoil(config)
+    assert python_m(json.dumps(config)) == (code, f"{line}\n", "")
