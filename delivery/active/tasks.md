@@ -8,12 +8,13 @@
 том же срезе: тест сначала красный, потом зелёный.
 
 ## Slice 0 — пробы до кода (db)
-- [ ] T0: пробы 1 и 6 плана — на образе postgres 16 и под правами main (`user: postgres`, корень
+- [x] T0: пробы 1 и 6 плана — на образе postgres 16 и под правами main (`user: postgres`, корень
       только для чтения, L110): `\getenv` и `:'имя'` в `/docker-entrypoint-initdb.d/`, схема
       `public` и права владельца базы и `PUBLIC`, `pg_hba_file_rules` и `password_encryption`,
       `ALTER TABLE … OWNER` с последовательностью `bigserial`, `VERBOSITY terse`,
       `log_min_error_statement`; 24 и 3 правила main на черновике compose с переменными db. Итог —
-      строками в decisions, строк кода нет. Расхождение — ведущей до среза 2.
+      строками в decisions, строк кода нет. Расхождение — ведущей до среза 2. Сделано
+      2026-11-24T13:51–13:52Z: расхождений с планом нет, запасные ходы «Risks» не нужны.
 
 ## Slice 1 — роль процесса (A174)
 - [ ] T1: `config/startup_checks.py` — таблица `DB_ROLES`, сверка роли у `DATABASE_URL` после

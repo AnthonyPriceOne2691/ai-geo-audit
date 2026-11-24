@@ -12,7 +12,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** tasks
+- **phase:** implement
 - **builder:** agent:hands-session
 - **verifier:** agent:reviewer3-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-24T13:40Z)
