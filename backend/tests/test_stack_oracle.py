@@ -177,9 +177,11 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
-#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87.
+#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
+#: Ч1.5в, срез 3 — A88, срез 4 — A89.
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
+STEP_EXAMPLES |= {"A88", "A89"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -191,11 +193,66 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_a87() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_to_a89() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
-    A80, A81, A82, A83, A84, A86 и A87."""
+    A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89."""
     assert steps_problems(oracle.STEPS) == []
+
+
+def test_a88_stop_steps_go_after_hardening_and_before_a67() -> None:
+    """A88: остановка и падение api ломают api — шаги стоят после шагов web и защиты стека и до
+    A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков."""
+    hard = importlib.import_module("stack_oracle_hardening")
+    stop = importlib.import_module("stack_oracle_stop")
+    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *compose.BREAKING_STEPS]
+    assert oracle.STEPS[-len(tail) :] == tail
+    assert [step.__name__ for _, _, step, _ in stop.STOP_STEPS] == ["step_stop", "step_crash"]
+
+
+def test_a69_a88_network_probe_takes_the_api_port_from_its_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A69, A88 (L50): здоровье из разового контейнера в сети стека тем же образом; порт — из
+    окружения контейнера api, без `API_PORT` — 8107."""
+    sent: list[tuple[str, ...]] = []
+
+    def result(run: object, *args: str, **kw: object) -> SimpleNamespace:
+        sent.append(args)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(compose, "compose_result", result)
+    once = ("run", "--rm", "-T", "--no-deps", "--entrypoint", "python", "migrate", "-c")
+    for env, port in ((["A=b", "API_PORT=8200"], "8200"), (["A=b"], "8107")):
+        monkeypatch.setattr(
+            compose, "inspect", lambda run, service, env=env: {"Config": {"Env": env}}
+        )
+        assert compose.net_health(SimpleNamespace())[0] == port
+        assert sent[-1] == (*once, compose.NET_PROBE.format(port=port))
+
+
+@pytest.mark.parametrize(("net", "why"), [(0, ""), (1, "из сети стека — URLError: refused")])
+def test_a69_health_step_takes_the_network_answer_from_net_health(
+    monkeypatch: pytest.MonkeyPatch, net: int, why: str
+) -> None:
+    """A69: шаг здоровья — healthy не позже 50 с от старта, проба внутри и запрос из сети стека
+    через `net_health`; молчание сети — красное с ответом пробы."""
+    log = [
+        {"ExitCode": 1, "End": "2026-11-24T11:00:05.000000Z"},
+        {"ExitCode": 0, "End": "2026-11-24T11:00:12.500000Z"},
+    ]
+    api = {"State": {"StartedAt": "2026-11-24T11:00:00.000000Z", "Health": {"Log": log}}}
+    answer = SimpleNamespace(returncode=net, stdout=b"URLError: refused\n")
+    monkeypatch.setattr(compose, "inspect", lambda run, service: api)
+    monkeypatch.setattr(
+        compose, "compose_result", lambda *args, **kw: SimpleNamespace(returncode=0)
+    )
+    monkeypatch.setattr(compose, "net_health", lambda run: ("8107", answer))
+    if not why:
+        assert compose.step_health(SimpleNamespace()).startswith("healthy через 12.5 с от старта")
+        return
+    with pytest.raises(compose.StepError, match=why):
+        compose.step_health(SimpleNamespace())
 
 
 @pytest.mark.parametrize(
@@ -440,3 +497,92 @@ def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: P
     assert run.password not in reason and run.jwt not in reason
     tails = [call[-4:] for call in docker.logs_calls]
     assert tails == [("--no-color", "--tail", "20", service) for service in ("migrate", "web")]
+
+
+class RulesAnswer(oracle.Docker):
+    """Подставной исполнитель шага правил (A73): `config --services` — пять сервисов, `config
+    --format json` — пустой стек, правила в образе — заданные код и вывод."""
+
+    answer: tuple[int, str] = (0, "")
+    seen: tuple[tuple[str, ...], ...] = ()
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        self.seen += (args,)
+        if "--services" in args:
+            names = b"db\nredis\nmigrate\napi\nweb\n"
+            return subprocess.CompletedProcess(["docker", *args], 0, names, b"")
+        if "config" in args:
+            return subprocess.CompletedProcess(["docker", *args], 0, b"{}", b"")
+        code, text = self.answer
+        return subprocess.CompletedProcess(["docker", *args], code, text.encode(), b"")
+
+
+@pytest.mark.parametrize(
+    ("code", "text", "red"),
+    [
+        (0, "итог: сервисов 5, правил 24, нарушений 0\n", ""),
+        (
+            0,
+            "итог: сервисов 5, правил 23, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 23,",
+        ),
+        (0, "итог: сервисов 4, правил 24, нарушений 0\n", "правила — код 0: итог: сервисов 4,"),
+        (
+            1,
+            "stop-grace: сервис api — срок\nитог: сервисов 5, правил 24, нарушений 1\n",
+            "правила — код 1: stop-grace: сервис api — срок | итог",
+        ),
+    ],
+    ids=["24", "23", "сервисов-4", "нарушение"],
+)
+def test_a73_a87_rules_step_wants_five_services_and_twenty_four_rules(
+    tmp_path: Path, code: int, text: str, red: str
+) -> None:
+    """A73, A87: шаг правил на настоящем файле — зелёный только при коде 0 и итоге «сервисов 5,
+    правил 24, нарушений 0»: шестнадцать кодов Ч1.5а, семь A87 и `stop-grace` A88; иначе
+    красное с кодом и хвостом вывода."""
+    docker = RulesAnswer()
+    docker.answer = (code, text)
+    run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    if not red:
+        done = compose.step_rules_on_file(run)
+        assert done == "итог: сервисов 5, правил 24, нарушений 0; config --services — 5"
+        return
+    with pytest.raises(oracle.StepError) as failure:
+        compose.step_rules_on_file(run)
+    assert str(failure.value).startswith(red)
+
+
+@pytest.mark.parametrize(
+    ("text", "red"),
+    [
+        ("итог: сервисов 5, правил 27, нарушений 0\n", ""),
+        (
+            "итог: сервисов 5, правил 24, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 24,",
+        ),
+    ],
+    ids=["27", "без-боевых"],
+)
+def test_a89_prod_rules_step_reads_both_files_with_the_flag(
+    tmp_path: Path, text: str, red: str
+) -> None:
+    """A89, вторая строка: шаг правил на основном файле с боевым наложением — оба файла названы
+    явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5, правил 27,
+    нарушений 0»."""
+    docker = RulesAnswer()
+    docker.answer = (0, text)
+    run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    if red:
+        with pytest.raises(oracle.StepError, match=red):
+            compose.step_rules_on_prod(run)
+    else:
+        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 27")
+    files = ["-f", str(run.copy / "docker-compose.yml"), "-f", str(run.copy / compose.PROD)]
+    configs = [args for args in docker.seen if "config" in args]
+    assert configs
+    assert all(" ".join(files) in " ".join(args) for args in configs)
+    *_, rules = docker.seen
+    assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
+    assert compose.PROD == "docker-compose.prod.yml"
+    assert compose.PROD_RULES == 27

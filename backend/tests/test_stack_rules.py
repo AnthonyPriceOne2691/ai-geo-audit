@@ -1,5 +1,5 @@
 """Правила стека над выводом `docker compose config --no-interpolate --format json` (A71–A73,
-A87).
+A87, A88).
 
 Конфиги вымышленные и в той форме, что дал compose 5.7.0 (замер среза 0 в decisions): порты —
 объектами или, если в списке есть `${…}`, сырыми строками; `environment` — отображением или
@@ -18,6 +18,7 @@ import pytest
 from pydantic import Field, SecretStr
 
 from ai_geo_audit import config
+from ai_geo_audit.api import app as api_app
 from ai_geo_audit.config import startup_checks
 from ai_geo_audit.ops import stack_rules as sr
 
@@ -48,6 +49,7 @@ CODES = (
     "trusted-is-web",
     "segments",
     "internal",
+    "stop-grace",
 )
 TRUSTED = "API_TRUSTED_PROXIES"
 
@@ -81,13 +83,15 @@ def valid() -> dict[str, Any]:
 
 
 def plain() -> dict[str, Any]:
-    """Стек Ч1.5а: db, redis, migrate, api; секреты — только `${VAR:?причина}`."""
+    """Стек Ч1.5а: db, redis, migrate, api; секреты — только `${VAR:?причина}`; сроки остановки
+    api и db — ровно пороги `stop-grace` (A88)."""
     return {
         "name": "ai-geo-audit",
         "services": {
             "db": {
                 "image": "postgres:16-alpine" + DIGEST,
                 "restart": "unless-stopped",
+                "stop_grace_period": "60s",
                 "environment": {"POSTGRES_PASSWORD": "${DB_PASSWORD:?пароль базы}"},
                 "healthcheck": {"test": ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U a"], **HEALTH},
                 "volumes": [{"type": "volume", "source": "db-data", "target": "/var/lib/data"}],
@@ -112,6 +116,7 @@ def plain() -> dict[str, Any]:
             "api": {
                 "image": BACKEND,
                 "restart": "unless-stopped",
+                "stop_grace_period": "30s",
                 "init": True,
                 "depends_on": {
                     "migrate": {"condition": "service_completed_successfully", "required": True},
@@ -404,19 +409,19 @@ def test_a72_violation_names_code_service_variable_without_value(
     assert "нарушений 1" in out
 
 
-def test_a73_a87_rule_codes_are_the_sixteen_of_a71_a72_and_seven_of_a87_in_order() -> None:
-    """A73, A87: перечень кодов модуля — шестнадцать кодов A71 и A72 и семь кодов A87, по
-    порядку; `stop-grace` (A88) — срез 5."""
+def test_a73_a87_a88_rule_codes_are_a71_a72_a87_and_stop_grace_in_order() -> None:
+    """A73, A87, A88: перечень кодов модуля — шестнадцать кодов A71 и A72, семь кодов A87 и
+    `stop-grace` из A88, по порядку."""
     assert sr.RULES == CODES
 
 
 def test_a73_a87_summary_names_services_and_rules(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A73, A87: верный стек — код 0, «сервисов 5, правил 23», нарушений 0."""
+    """A73, A87: верный стек — код 0, «сервисов 5, правил 24», нарушений 0."""
     code, out = run(monkeypatch, capsys, json.dumps(valid()))
     assert code == 0
-    assert out.strip() == "итог: сервисов 5, правил 23, нарушений 0"
+    assert out.strip() == "итог: сервисов 5, правил 24, нарушений 0"
 
 
 def test_a73_web_waits_for_api_by_health_or_the_order_is_red(
@@ -453,6 +458,36 @@ def interpolated() -> str:
         ('{"networks": {"data": "internal"}, "services": {"a": {}}}', "networks незнакомого"),
         ('{"networks": ["data"], "services": {"a": {}}}', "networks незнакомого"),
         (interpolated(), "--no-interpolate"),
+        (
+            '{"services": {"api": {"environment": {"A": "${B:?r}"}, "stop_grace_period": "30"}}}',
+            "api: stop_grace_period незнакомого вида",
+        ),
+        (
+            '{"services": {"db": {"environment": {"A": "${B:?r}"}, "stop_grace_period": "1d"}}}',
+            "db: stop_grace_period незнакомого вида",
+        ),
+        (
+            '{"services": {"api": {"environment": {"A": "${B:?r}"}, "stop_grace_period": ""}}}',
+            "api: stop_grace_period незнакомого вида",
+        ),
+        *[
+            (
+                json.dumps(
+                    {
+                        "services": {
+                            name: {"environment": {"A": "${B:?r}"}, "stop_grace_period": term}
+                        }
+                    }
+                ),
+                f"{name}: stop_grace_period незнакомого вида",
+            )
+            for name, term in (
+                ("api", "${API_STOP_GRACE:-30s}"),
+                ("db", "1m30"),
+                ("api", "-5s"),
+                ("db", "30sec"),
+            )
+        ],
     ],
     ids=[
         "пусто",
@@ -464,6 +499,13 @@ def interpolated() -> str:
         "сеть-строка",
         "сети-списком",
         "подстановка",
+        "срок-без-единиц",
+        "срок-в-днях",
+        "срок-пустой",
+        "срок-ссылкой",
+        "хвост-без-единицы",
+        "срок-с-минусом",
+        "лишние-буквы",
     ],
 )
 def test_a73_empty_or_wrong_input_is_refused_not_clean(
@@ -573,3 +615,91 @@ def test_a87_root_is_read_only_everywhere_and_the_exception_list_is_empty() -> N
     from ai_geo_audit.ops import stack_hardening
 
     assert stack_hardening.WRITABLE_ROOT == {}
+
+
+# Сроки мягкой остановки (A88, третья строка): проба — ровно её нарушение у своего сервиса.
+STOP_GRACE = [
+    (put(svc("api"), "stop_grace_period", "29s"), "api"),
+    (put(svc("api"), "stop_grace_period", "15s"), "api"),
+    (drop(svc("api"), "stop_grace_period"), "api"),
+    (put(svc("db"), "stop_grace_period", "59s"), "db"),
+    (put(svc("db"), "stop_grace_period", "30s"), "db"),
+    (put(svc("db"), "stop_grace_period", "59999ms"), "db"),
+    (drop(svc("db"), "stop_grace_period"), "db"),
+]
+
+
+@pytest.mark.parametrize(
+    ("spoil", "service"),
+    STOP_GRACE,
+    ids=["api-29", "api-15", "api-нет", "db-59", "db-30", "db-59999ms", "db-нет"],
+)
+def test_a88_short_stop_grace_is_red_for_its_service(spoil: Callable, service: str) -> None:
+    """A88, третья строка: у api срок меньше предела uvicorn с запасом на пулы (30 с), у db —
+    меньше 60 с, без `stop_grace_period` — умолчание докера 10 с: красное `stop-grace` с именем
+    сервиса."""
+    config = valid()
+    spoil(config)
+    assert found(config) == {("stop-grace", service, None)}
+
+
+@pytest.mark.parametrize(
+    ("api", "db"),
+    [("30s", "60s"), ("1m", "1m"), ("45s", "1m30s"), ("30000ms", "0.02h"), ("1h", "2m")],
+    ids=["ровно", "минуты", "смесь", "мс-и-часы", "с-запасом"],
+)
+def test_a88_stop_grace_at_or_above_the_limit_is_not_a_violation(api: str, db: str) -> None:
+    """A88, третья строка, соседние случаи (L53): срок ровно на пороге и выше — не нарушение;
+    длительность — строкой, как в файле: секунды, минуты, часы, миллисекунды и их смесь."""
+    config = valid()
+    config["services"]["api"]["stop_grace_period"] = api
+    config["services"]["db"]["stop_grace_period"] = db
+    assert found(config) == set()
+
+
+def test_a88_api_limit_is_read_from_server_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A88, третья строка: предел api правило берёт из `server_settings()` Ч1.3
+    (`timeout_graceful_shutdown`), а не из своей копии числа: предел uvicorn 25 с — и 30 с уже
+    мало, нужно 35 с."""
+    assert api_app.server_settings()["timeout_graceful_shutdown"] == 20
+    monkeypatch.setattr(api_app, "GRACEFUL_SHUTDOWN_SECONDS", 25)
+    config = valid()
+    assert found(config) == {("stop-grace", "api", None)}
+    config["services"]["api"]["stop_grace_period"] = "35s"
+    assert found(config) == set()
+
+
+def test_a88_db_term_is_judged_without_api() -> None:
+    """A88, третья строка: api в стеке нет — срок db судится всё равно."""
+    config = valid()
+    del config["services"]["api"]
+    assert ("stop-grace", "db", None) not in found(config)
+    config["services"]["db"]["stop_grace_period"] = "30s"
+    assert ("stop-grace", "db", None) in found(config)
+
+
+def test_a88_stop_grace_line_names_the_term_and_the_need(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A88, третья строка: строка нарушения называет срок и сколько нужно; без ключа — что срок
+    взят у докера."""
+    config = valid()
+    config["services"]["api"]["stop_grace_period"] = "29s"
+    config["services"]["db"].pop("stop_grace_period")
+    code, out = run(monkeypatch, capsys, json.dumps(config))
+    assert code == 1
+    assert out.splitlines() == [
+        "stop-grace: сервис api — stop_grace_period 29 с, нужно не меньше 30 с",
+        "stop-grace: сервис db — stop_grace_period нет — у докера 10 с, нужно не меньше 60 с",
+        "итог: сервисов 5, правил 24, нарушений 2",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [("30s", 30.0), ("1m30s", 90.0), ("0.01h", 36.0), ("1500ms", 1.5), ("2m", 120.0)],
+)
+def test_a88_duration_is_read_in_seconds(text: str, seconds: float) -> None:
+    """A88: длительность compose — строка, как в файле (замер compose 5.7.0, decisions Ч1.5в):
+    секунды, минуты, часы и миллисекунды, по отдельности и вместе."""
+    assert sr._seconds("api", text) == pytest.approx(seconds)

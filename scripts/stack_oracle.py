@@ -30,6 +30,7 @@ from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, sta
 from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError
 from stack_oracle_compose import cleanup as stack_cleanup
 from stack_oracle_hardening import HARDENING_STEPS
+from stack_oracle_stop import STOP_STEPS
 from stack_oracle_web import WEB_BUILD_STEPS, WEB_STACK_STEPS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -410,6 +411,7 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     *STACK_STEPS,
     *WEB_STACK_STEPS,
     *HARDENING_STEPS,
+    *STOP_STEPS,
     *BREAKING_STEPS,
 ]
 
