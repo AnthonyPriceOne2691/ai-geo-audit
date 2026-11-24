@@ -28,20 +28,26 @@ DB_TMPFS = {"/var/run/postgresql": "", "/tmp": ""}
         ("db", {"Tmpfs": DB_TMPFS, "ReadonlyRootfs": False}, "db: ReadonlyRootfs False"),
         ("db", {}, "db: Tmpfs []"),
         ("db", {"Tmpfs": {"/tmp": ""}}, "db: Tmpfs ['/tmp']"),
+        (
+            "db",
+            {"Tmpfs": DB_TMPFS | {"/var/lib/postgresql/data": ""}},
+            "db: Tmpfs ['/tmp', '/var/lib/postgresql/data', '/var/run/postgresql']",
+        ),
         ("api", {"CapDrop": None}, "api: CapDrop None"),
         ("redis", {"CapDrop": ["NET_RAW"]}, "redis: CapDrop ['NET_RAW']"),
         ("web", {"SecurityOpt": None}, "web: SecurityOpt []"),
         ("migrate", {"SecurityOpt": ["label=disable"]}, "migrate: SecurityOpt ['label=disable']"),
         ("web", {"ReadonlyRootfs": False}, "web: ReadonlyRootfs False"),
+        ("migrate", {"ReadonlyRootfs": None}, "migrate: ReadonlyRootfs None"),
     ],
 )
 def test_a87_container_privileges_are_judged_by_host_config(
     name: str, change: dict[str, object], problem: str
 ) -> None:
     """A87, первая строка: у каждого — `CapDrop` `["ALL"]` и `no-new-privileges:true`; корень
-    только для чтения у db, redis, migrate, api и web; у db в `HostConfig.Tmpfs` —
-    `/var/run/postgresql` и `/tmp` (слово владельца 2026-11-23T14:12:15Z); иначе — красное с
-    именем."""
+    только для чтения у db, redis, migrate, api и web — флаг `True`, без флага красное; у db в
+    `HostConfig.Tmpfs` — ровно `/var/run/postgresql` и `/tmp` (слово владельца
+    2026-11-23T14:12:15Z), лишний путь — база в памяти; иначе — красное с именем."""
     assert hard.SERVICES == ("db", "redis", "migrate", "api", "web")
     assert hard.TMPFS == {"db": ["/tmp", "/var/run/postgresql"]}
     found = hard.privilege_problems(name, GOOD | change)

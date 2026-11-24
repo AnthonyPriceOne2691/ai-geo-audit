@@ -67,6 +67,12 @@ def test_a77_web_image_has_exactly_dist_and_our_conf(
     assert (problem in text) if problem else not text, text
 
 
+def test_a77_empty_dist_is_red_even_with_an_empty_site_root() -> None:
+    """A77: пустой `dist/` — красное и при пустом корне сайта в образе: сайта нет."""
+    scan = SimpleNamespace(names={"etc/nginx/conf.d/web.conf"}, hits=[], envs=[])
+    assert web.image_problems(scan, set()) == ["корень сайта: лишние [], нет []"]
+
+
 def test_a82_listening_ports_are_read_from_proc_net_tcp() -> None:
     """A82, первая строка: слушающие порты — строки `/proc/net/tcp*` в состоянии 0A; соединения
     и заголовок не в счёт."""
@@ -208,6 +214,12 @@ SITE_SPOILS = [
     ("два Cache-Control", "cache", put(ASSET, "Cache-Control", "a", "b"), "Control — ['a', 'b']"),
     ("без include", "headers", put(ASSET, "X-Frame-Options"), f"{ASSET}: X-Frame-Options — []"),
     ("версия nginx", "headers", put("/", "Server", "nginx/1.30.6"), "Server — ['nginx/1.30.6']"),
+    (
+        "снят proxy_hide_header",
+        "headers",
+        put("/api/health", "X-Content-Type-Options", "nosniff", "nosniff"),
+        "/api/health: X-Content-Type-Options — ['nosniff', 'nosniff']",
+    ),
     ("номер заменён", "headers", put("/api/nope", "X-Request-ID", "web-1"), "ID — ['web-1']"),
     ("CSP снят", "csp", put("/x/y", "Content-Security-Policy"), "/x/y: заголовков CSP 0"),
     ("unsafe-inline", "csp", put("/", "Content-Security-Policy", UNSAFE), "script-src — 'self' 'u"),
@@ -227,8 +239,9 @@ def test_a78_a80_web_step_on_a_spoiled_web_is_red_with_the_reason(
 ) -> None:
     """A78, A79 (первая строка), A80: порча web — красный шаг с причиной: `/x/y` — 404 без
     `try_files`, страница не из `dist/`, два `Cache-Control` у файла сборки, заголовок защиты
-    пропал или `Server` с версией, у `/api/` чужой номер запроса, CSP нет или директива
-    ослаблена, нет `Cross-Origin-Opener-Policy`."""
+    пропал, повторён тем же значением (у `/api/` снят `proxy_hide_header`) или `Server` с
+    версией, у `/api/` чужой номер запроса, CSP нет или директива ослаблена, нет
+    `Cross-Origin-Opener-Policy`."""
     site = good_web()
     change(site)
     with pytest.raises(web.StepError) as failure:
@@ -236,18 +249,30 @@ def test_a78_a80_web_step_on_a_spoiled_web_is_red_with_the_reason(
     assert why in str(failure.value), spoil
 
 
-@pytest.mark.parametrize("spoil", ["", "страница nginx", "без no-store"])
-def test_a84_refusal_is_the_proxy_sample_with_no_store(spoil: str) -> None:
-    """A84, A79: отказ web равен образцу раздела «прокси» — код, тип и тело — и несёт `no-store` и
-    заголовки защиты; страница nginx или отказ без `no-store` — красное."""
+@pytest.mark.parametrize(
+    ("spoil", "change", "why"),
+    [
+        ("", {}, ""),
+        ("страница nginx", {}, "<html>nginx</html>"),
+        ("без no-store", {"Cache-Control": ""}, "502: Cache-Control — []"),
+        ("версия nginx", {"Server": "nginx/1.30.7"}, "502: Server — ['nginx/1.30.7']"),
+    ],
+)
+def test_a84_refusal_is_the_proxy_sample_with_no_store(
+    spoil: str, change: dict[str, str], why: str
+) -> None:
+    """A84, A79: отказ web равен образцу раздела «прокси» — код, тип и тело — и несёт заголовки
+    защиты, `Server` без версии и `no-store`; страница nginx, отказ с телом образца без `no-store`
+    или с версией в `Server` — красное с причиной."""
     proxy = json.loads((dbtools.ROOT / web.CONTRACT).read_text("utf-8"))["proxy"]
     sample = next(s for s in proxy if s["id"] == "proxy-bad-gateway")
     head = web.SECURITY | {"Server": "nginx", "Content-Type": "application/json"}
-    head |= {} if spoil == "без no-store" else {"Cache-Control": "no-store"}
-    body = b"<html>nginx</html>" if spoil else json.dumps(sample["body"]).encode()
-    got = (502, message({name: [value] for name, value in head.items()}), body)
+    head |= {"Cache-Control": "no-store"} | change
+    page = spoil == "страница nginx"
+    body = b"<html>nginx</html>" if page else json.dumps(sample["body"]).encode()
+    got = (502, message({name: [value] for name, value in head.items() if value}), body)
     found = " ".join(web.refusal_problems("502", got, sample))
-    assert (spoil == "") is (found == ""), found
+    assert (why in found) if why else not found, found
 
 
 HEALTH = "2026-11-23T12:00:00+00:00 GET / 200 0.000 -"
