@@ -9,7 +9,8 @@
 переменные отображением или списком; правила читают обе (замер compose 5.7.0, decisions Ч1.5а).
 
 Запуск — внутри собранного образа: `python -m ai_geo_audit.ops.stack_rules < config.json`;
-код 0 — нарушений нет, 1 — нарушения, 2 — отказ.
+код 0 — нарушений нет, 1 — нарушения, 2 — отказ. Предел мягкой остановки api правило
+`stop-grace` берёт из настроек uvicorn — `server_settings()` (A88), а не из своей копии числа.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from urllib.parse import urlsplit
 from pydantic import SecretStr
 
 from ai_geo_audit import config
+from ai_geo_audit.api.app import server_settings
 from ai_geo_audit.config import startup_checks
 from ai_geo_audit.ops import stack_hardening as hard
 
@@ -42,6 +44,13 @@ IMAGE_WORKDIR = "/app"
 MASTER_KEY_NAME = "master_key"
 #: Секреты образов, а не конфига: пароль суперпользователя базы задаёт образ postgres.
 IMAGE_SECRETS = frozenset({"POSTGRES_PASSWORD"})
+#: Запас к пределу мягкой остановки uvicorn у api: после неё процесс ещё закрывает пул базы, а
+#: своего предела закрытия пулов в коде нет — 10 с — оценка (decisions Ч1.5в, срез 0).
+POOL_CLOSE_SECONDS = 10
+#: Срок остановки базы: контрольная точка Postgres при остановке.
+DB_STOP_SECONDS = 60
+#: Срок остановки без `stop_grace_period` — умолчание докера.
+DOCKER_STOP_SECONDS = 10
 #: Кто кого ждёт и по какому условию.
 ORDER = (
     ("api", "migrate", "service_completed_successfully"),
@@ -69,6 +78,8 @@ _REF = re.compile(r"\$\{[^}]*\}")
 _STRICT_REF = hard.STRICT_REF
 _IMAGE = re.compile(r"(?P<name>[a-z0-9._/-]+):(?P<tag>[\w.-]+)@sha256:[0-9a-f]{64}")
 _PG_HOST = re.compile(r"(?:^|\s)(?:-h|--host)(?:=|\s+)(\S+)")
+_DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+_UNIT_SECONDS = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 
 Finding = tuple[str | None, str | None, str]
 
@@ -360,6 +371,34 @@ def _master_key(stack: Stack) -> Iterator[Finding]:
             yield name, None, "смонтирован файл мастер-ключа"
 
 
+def _seconds(service: str, raw: object) -> float:
+    """Длительность compose в секундах: строка, как в файле, — `30s`, `1m30s`, `500ms` (замер
+    compose 5.7.0, decisions Ч1.5в); другой вид — отказ."""
+    text = str(raw)
+    parts = _DURATION.findall(text)
+    if not parts or "".join(map("".join, parts)) != text:
+        raise InputRefusedError(f"сервис {service}: stop_grace_period незнакомого вида")
+    return sum(float(number) * _UNIT_SECONDS[unit] for number, unit in parts)
+
+
+def _stop_needs() -> tuple[tuple[str, float], ...]:
+    """Сроки остановки: у api — мягкая остановка uvicorn из `server_settings()` и запас на
+    закрытие пулов, у db — контрольная точка."""
+    graceful = float(str(server_settings()["timeout_graceful_shutdown"]))
+    return ("api", graceful + POOL_CLOSE_SECONDS), ("db", DB_STOP_SECONDS)
+
+
+def _stop_grace(stack: Stack) -> Iterator[Finding]:
+    for name, need in _stop_needs():
+        if name not in stack.services:
+            continue
+        raw = stack.services[name].get("stop_grace_period")
+        got = DOCKER_STOP_SECONDS if raw is None else _seconds(name, raw)
+        if got < need:
+            said = "stop_grace_period нет — у докера" if raw is None else "stop_grace_period"
+            yield name, None, f"{said} {got:g} с, нужно не меньше {need:g} с"
+
+
 CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("stack-name", _stack_name),
     ("ports", _ports),
@@ -384,6 +423,7 @@ CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("trusted-is-web", hard.trusted_is_web),
     ("segments", hard.segments),
     ("internal", hard.internal),
+    ("stop-grace", _stop_grace),
 )
 RULES = tuple(code for code, _ in CHECKS)
 

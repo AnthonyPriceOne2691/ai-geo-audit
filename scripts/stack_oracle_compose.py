@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from stack_oracle import Run
 
 COMPOSE = "docker-compose.yml"
+#: Правил основного набора (A87): шестнадцать кодов Ч1.5а, семь A87 и `stop-grace` A88.
+MAIN_RULES = 24
 
 
 DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
@@ -213,7 +215,7 @@ def alembic(run: Run, command: str) -> list[str]:
 
 
 def step_rules_on_file(run: Run) -> str:
-    """A73, A87: правила на настоящем файле внутри собранного образа — «сервисов 5, правил 23»,
+    """A73, A87: правила на настоящем файле внутри собранного образа — «сервисов 5, правил 24»,
     нарушений 0. Файл назван явно — чужой
     `docker-compose.override.yml` не подмешается; профили включены все; без `-p`."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
@@ -226,7 +228,8 @@ def step_rules_on_file(run: Run) -> str:
     rules = ["-m", "ai_geo_audit.ops.stack_rules"]
     done = run.docker.result("run", *flags, run.image, *rules, stdin=raw.encode())
     lines = output(done).strip().splitlines()
-    if done.returncode or lines[-1:] != [f"итог: сервисов {len(services)}, правил 23, нарушений 0"]:
+    total = f"итог: сервисов {len(services)}, правил {MAIN_RULES}, нарушений 0"
+    if done.returncode or lines[-1:] != [total]:
         raise StepError(f"правила — код {done.returncode}: {' | '.join(lines[-5:])}")
     return f"{lines[-1]}; config --services — {len(services)}"
 
