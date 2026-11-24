@@ -32,6 +32,7 @@ from ai_geo_audit.api.app import server_settings
 from ai_geo_audit.config import startup_checks
 from ai_geo_audit.ops import stack_hardening as hard
 from ai_geo_audit.ops import stack_prod as prod_rules
+from ai_geo_audit.ops.stack_refusal import InputRefusedError
 
 STACK_NAME = "ai-geo-audit"
 #: Образы из реестра: имя и тег линии (слово владельца 2026-11-19T10:40Z, дайджесты — срез 0).
@@ -84,10 +85,6 @@ _DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
 _UNIT_SECONDS = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 
 Finding = tuple[str | None, str | None, str]
-
-
-class InputRefusedError(ValueError):
-    """Ввод не годится для правил: проверять нечего или нечем."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,8 +5,8 @@
 
 Вход — вывод `--no-interpolate`: значения стоят как в файле — `mem_limit` строкой (`1g`), `cpus`
 числом или строкой, `command` списком или строкой (замер compose 5.7.0, decisions Ч1.5в).
-Модуль берёт `Stack` правил стека только для типов, поэтому `stack_rules` импортирует отсюда без
-круга.
+Модуль берёт `Stack` правил стека только для типов, а класс отказа — из `stack_refusal`, поэтому
+`stack_rules` импортирует отсюда без круга.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ import itertools
 import shlex
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
+
+from ai_geo_audit.ops.stack_refusal import InputRefusedError
 
 if TYPE_CHECKING:
     from ai_geo_audit.ops.stack_rules import Finding, Stack
@@ -27,18 +29,11 @@ UNLIMITED = (None, "", 0, "0")
 POLICY = "noeviction"
 
 
-def _refusal(why: str) -> ValueError:
-    """Отказ правил стека, код 2: класс отказа живёт в `stack_rules`, а тот импортирует отсюда —
-    берётся при вызове, без круга импорта."""
-    from ai_geo_audit.ops.stack_rules import InputRefusedError
-
-    return InputRefusedError(why)
-
-
 def _unknown(name: str, what: str, values: tuple[object, ...]) -> None:
     """Значение ссылкой `${…}` — на сервере неизвестно: отказ, а не «нарушений нет»."""
     if any("${" in str(value) for value in values):
-        raise _refusal(f"сервис {name}: {what} — ссылка ${{…}}, значение на сервере неизвестно")
+        why = f"сервис {name}: {what} — ссылка ${{…}}, значение на сервере неизвестно"
+        raise InputRefusedError(why)
 
 
 def limits(stack: Stack) -> Iterator[Finding]:
@@ -67,7 +62,7 @@ def _command(service: dict[str, Any]) -> list[str]:
     try:
         return shlex.split(raw)
     except ValueError:
-        raise _refusal("сервис redis: command не делится на слова оболочки") from None
+        raise InputRefusedError("сервис redis: command не делится на слова оболочки") from None
 
 
 def redis_memory(stack: Stack) -> Iterator[Finding]:
