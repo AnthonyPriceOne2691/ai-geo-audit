@@ -8,8 +8,10 @@
 вида. Форма вывода зависит от содержимого файла — порты объектами или сырыми строками,
 переменные отображением или списком; правила читают обе (замер compose 5.7.0, decisions Ч1.5а).
 
-Запуск — внутри собранного образа: `python -m ai_geo_audit.ops.stack_rules < config.json`;
-код 0 — нарушений нет, 1 — нарушения, 2 — отказ.
+Запуск — внутри собранного образа: `python -m ai_geo_audit.ops.stack_rules < config.json`; с
+флагом `--prod` — ещё три боевых правила над выводом основного файла с боевым наложением (A89,
+`stack_prod`); код 0 — нарушений нет, 1 — нарушения, 2 — отказ. Предел мягкой остановки api правило
+`stop-grace` берёт из настроек uvicorn — `server_settings()` (A88), а не из своей копии числа.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import ipaddress
 import json
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, get_args
 from urllib.parse import urlsplit
@@ -26,8 +28,11 @@ from urllib.parse import urlsplit
 from pydantic import SecretStr
 
 from ai_geo_audit import config
+from ai_geo_audit.api.app import server_settings
 from ai_geo_audit.config import startup_checks
 from ai_geo_audit.ops import stack_hardening as hard
+from ai_geo_audit.ops import stack_prod as prod_rules
+from ai_geo_audit.ops.stack_refusal import InputRefusedError
 
 STACK_NAME = "ai-geo-audit"
 #: Образы из реестра: имя и тег линии (слово владельца 2026-11-19T10:40Z, дайджесты — срез 0).
@@ -42,6 +47,13 @@ IMAGE_WORKDIR = "/app"
 MASTER_KEY_NAME = "master_key"
 #: Секреты образов, а не конфига: пароль суперпользователя базы задаёт образ postgres.
 IMAGE_SECRETS = frozenset({"POSTGRES_PASSWORD"})
+#: Запас к пределу мягкой остановки uvicorn у api: после неё процесс ещё закрывает пул базы, а
+#: своего предела закрытия пулов в коде нет — 10 с — оценка (decisions Ч1.5в, срез 0).
+POOL_CLOSE_SECONDS = 10
+#: Срок остановки базы: контрольная точка Postgres при остановке.
+DB_STOP_SECONDS = 60
+#: Срок остановки без `stop_grace_period` — умолчание докера.
+DOCKER_STOP_SECONDS = 10
 #: Кто кого ждёт и по какому условию.
 ORDER = (
     ("api", "migrate", "service_completed_successfully"),
@@ -69,12 +81,10 @@ _REF = re.compile(r"\$\{[^}]*\}")
 _STRICT_REF = hard.STRICT_REF
 _IMAGE = re.compile(r"(?P<name>[a-z0-9._/-]+):(?P<tag>[\w.-]+)@sha256:[0-9a-f]{64}")
 _PG_HOST = re.compile(r"(?:^|\s)(?:-h|--host)(?:=|\s+)(\S+)")
+_DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
+_UNIT_SECONDS = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 
 Finding = tuple[str | None, str | None, str]
-
-
-class InputRefusedError(ValueError):
-    """Ввод не годится для правил: проверять нечего или нечем."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +370,34 @@ def _master_key(stack: Stack) -> Iterator[Finding]:
             yield name, None, "смонтирован файл мастер-ключа"
 
 
+def _seconds(service: str, raw: object) -> float:
+    """Длительность compose в секундах: строка, как в файле, — `30s`, `1m30s`, `500ms` (замер
+    compose 5.7.0, decisions Ч1.5в); другой вид — отказ."""
+    text = str(raw)
+    parts = _DURATION.findall(text)
+    if not parts or "".join(map("".join, parts)) != text:
+        raise InputRefusedError(f"сервис {service}: stop_grace_period незнакомого вида")
+    return sum(float(number) * _UNIT_SECONDS[unit] for number, unit in parts)
+
+
+def _stop_needs() -> tuple[tuple[str, float], ...]:
+    """Сроки остановки: у api — мягкая остановка uvicorn из `server_settings()` и запас на
+    закрытие пулов, у db — контрольная точка."""
+    graceful = float(str(server_settings()["timeout_graceful_shutdown"]))
+    return ("api", graceful + POOL_CLOSE_SECONDS), ("db", DB_STOP_SECONDS)
+
+
+def _stop_grace(stack: Stack) -> Iterator[Finding]:
+    for name, need in _stop_needs():
+        if name not in stack.services:
+            continue
+        raw = stack.services[name].get("stop_grace_period")
+        got = DOCKER_STOP_SECONDS if raw is None else _seconds(name, raw)
+        if got < need:
+            said = "stop_grace_period нет — у докера" if raw is None else "stop_grace_period"
+            yield name, None, f"{said} {got:g} с, нужно не меньше {need:g} с"
+
+
 CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("stack-name", _stack_name),
     ("ports", _ports),
@@ -384,36 +422,47 @@ CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("trusted-is-web", hard.trusted_is_web),
     ("segments", hard.segments),
     ("internal", hard.internal),
+    ("stop-grace", _stop_grace),
 )
 RULES = tuple(code for code, _ in CHECKS)
+#: Боевой набор (A89, флаг `--prod`): основной и три правила наложения.
+PROD_CHECKS = CHECKS + prod_rules.CHECKS
+PROD_RULES = tuple(code for code, _ in PROD_CHECKS)
 
 
-def check(raw: object) -> list[Violation]:
-    """Нарушения стека в порядке перечня; негодный ввод — `InputRefusedError`."""
+def check(raw: object, *, prod: bool = False) -> list[Violation]:
+    """Нарушения стека в порядке перечня; `prod` — с боевыми правилами; негодный ввод —
+    `InputRefusedError`."""
     stack = parse(raw)
-    return [Violation(code, *finding) for code, rule in CHECKS for finding in rule(stack)]
+    checks = PROD_CHECKS if prod else CHECKS
+    return [Violation(code, *finding) for code, rule in checks for finding in rule(stack)]
 
 
-def run(text: str) -> tuple[int, list[str]]:
+def run(text: str, *, prod: bool = False) -> tuple[int, list[str]]:
     """Код выхода и строки вывода: нарушения и итог либо одна строка отказа."""
     if not text.strip():
         return 2, ["отказ: пустой ввод"]
     try:
         raw = json.loads(text)
-        found = check(raw)
+        found = check(raw, prod=prod)
     except InputRefusedError as refusal:
         return 2, [f"отказ: {refusal}"]
     except json.JSONDecodeError:
         return 2, ["отказ: ввод не JSON"]
-    total = f"итог: сервисов {len(raw['services'])}, правил {len(RULES)}, нарушений {len(found)}"
+    rules = len(PROD_RULES if prod else RULES)
+    total = f"итог: сервисов {len(raw['services'])}, правил {rules}, нарушений {len(found)}"
     return (1 if found else 0), [violation.line() for violation in found] + [total]
 
 
-def main() -> int:
-    code, lines = run(sys.stdin.read())
+def main(argv: Sequence[str] = ()) -> int:
+    """Вход модуля: JSON на stdin; флаг `--prod` добавляет боевые правила (A89), другой — отказ."""
+    if list(argv) not in ([], ["--prod"]):
+        sys.stdout.write("отказ: флаг — только --prod\n")
+        return 2
+    code, lines = run(sys.stdin.read(), prod=bool(argv))
     sys.stdout.write("\n".join(lines) + "\n")
     return code
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

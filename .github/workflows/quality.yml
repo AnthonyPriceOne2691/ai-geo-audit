@@ -443,7 +443,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false  # токен не остаётся в .git/config (A100)
-      - name: Оракул стека (A60–A67, A69, A73, A77–A84, A86, A87)
+      - name: Оракул стека (A60–A67, A69, A73, A77–A84, A86–A89)
         run: python3 scripts/stack_oracle.py
 
   # Скан образа (A124–A129): Trivy 0.76.2 файлом выпуска по сумме, канарейка, скан файла образа

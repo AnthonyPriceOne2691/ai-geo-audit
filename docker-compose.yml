@@ -21,6 +21,8 @@ services:
       - /var/run/postgresql
       - /tmp
     restart: unless-stopped
+    # Срок мягкой остановки — на контрольную точку Postgres; по истечении докер убивает (A88).
+    stop_grace_period: 60s
     networks: [data]
     environment:
       POSTGRES_USER: audit
@@ -73,6 +75,8 @@ services:
     <<: *hardened
     image: ${BACKEND_IMAGE:-ai-geo-audit-backend:local}
     restart: unless-stopped
+    # Мягкая остановка uvicorn — 20 с (Ч1.3), ещё 10 с — на закрытие пулов: правило stop-grace.
+    stop_grace_period: 30s
     init: true
     read_only: true
     networks: [data, front]
