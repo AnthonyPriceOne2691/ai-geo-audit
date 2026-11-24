@@ -7,6 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
+from ai_geo_audit import config
+from ai_geo_audit.config import master_key
+
 
 @dataclass(frozen=True)
 class MasterFile:
@@ -27,9 +32,15 @@ def write(path: Path, lines: list[str], *, newline: str = "\n") -> Path:
     return path
 
 
-def marker() -> str:
-    """Выдуманное значение ключа, которое тест ищет во всём выводе."""
-    return f"metka-{secrets.token_hex(12)}"
+def marker(length: int = 30) -> str:
+    """Выдуманное значение ключа заданной длины, которое тест ищет во всём выводе."""
+    return f"metka-{secrets.token_hex(length)}"[:length]
+
+
+def use(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """Процесс смотрит в этот файл и читает его заново — как после перезапуска."""
+    monkeypatch.setattr(config, "keys", config.KeySettings(master_key_file=str(path)))
+    master_key.read.cache_clear()
 
 
 #: Негодные файлы A220 и соседние случаи (L53): id латиницей (L59) → причина и содержимое из

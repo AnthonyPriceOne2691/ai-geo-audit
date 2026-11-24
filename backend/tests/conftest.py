@@ -120,7 +120,7 @@ def master_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> masterkeys.M
     конфиг процесса смотрит в него."""
     lines = [masterkeys.line()]
     path = masterkeys.write(tmp_path / "master.key", lines)
-    monkeypatch.setattr(config, "keys", config.KeySettings(master_key_file=str(path)))
+    masterkeys.use(monkeypatch, path)
     return masterkeys.MasterFile(path, lines)
 
 

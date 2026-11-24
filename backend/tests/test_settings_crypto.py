@@ -16,16 +16,11 @@ import masterkeys
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
 
-from ai_geo_audit import config
 from ai_geo_audit.config import master_key
 from ai_geo_audit.logs import setup as logs
 from ai_geo_audit.settings import crypto
 
-
-def use_file(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
-    """Процесс смотрит в этот файл и читает его заново — как после перезапуска."""
-    monkeypatch.setattr(config, "keys", config.KeySettings(master_key_file=str(path)))
-    master_key.read.cache_clear()
+use_file = masterkeys.use
 
 
 def unreadable(name: str, ciphertext: str, master_id: str) -> crypto.KeyUnreadable:
