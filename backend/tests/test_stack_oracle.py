@@ -440,3 +440,55 @@ def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: P
     assert run.password not in reason and run.jwt not in reason
     tails = [call[-4:] for call in docker.logs_calls]
     assert tails == [("--no-color", "--tail", "20", service) for service in ("migrate", "web")]
+
+
+class RulesAnswer(oracle.Docker):
+    """Подставной исполнитель шага правил (A73): `config --services` — пять сервисов, `config
+    --format json` — пустой стек, правила в образе — заданные код и вывод."""
+
+    answer: tuple[int, str] = (0, "")
+
+    def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        if "--services" in args:
+            names = b"db\nredis\nmigrate\napi\nweb\n"
+            return subprocess.CompletedProcess(["docker", *args], 0, names, b"")
+        if "config" in args:
+            return subprocess.CompletedProcess(["docker", *args], 0, b"{}", b"")
+        code, text = self.answer
+        return subprocess.CompletedProcess(["docker", *args], code, text.encode(), b"")
+
+
+@pytest.mark.parametrize(
+    ("code", "text", "red"),
+    [
+        (0, "итог: сервисов 5, правил 24, нарушений 0\n", ""),
+        (
+            0,
+            "итог: сервисов 5, правил 23, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 23,",
+        ),
+        (0, "итог: сервисов 4, правил 24, нарушений 0\n", "правила — код 0: итог: сервисов 4,"),
+        (
+            1,
+            "stop-grace: сервис api — срок\nитог: сервисов 5, правил 24, нарушений 1\n",
+            "правила — код 1: stop-grace: сервис api — срок | итог",
+        ),
+    ],
+    ids=["24", "23", "сервисов-4", "нарушение"],
+)
+def test_a73_a87_rules_step_wants_five_services_and_twenty_four_rules(
+    tmp_path: Path, code: int, text: str, red: str
+) -> None:
+    """A73, A87: шаг правил на настоящем файле — зелёный только при коде 0 и итоге «сервисов 5,
+    правил 24, нарушений 0»: шестнадцать кодов Ч1.5а, семь A87 и `stop-grace` A88; иначе
+    красное с кодом и хвостом вывода."""
+    docker = RulesAnswer()
+    docker.answer = (code, text)
+    run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    if not red:
+        done = compose.step_rules_on_file(run)
+        assert done == "итог: сервисов 5, правил 24, нарушений 0; config --services — 5"
+        return
+    with pytest.raises(oracle.StepError) as failure:
+        compose.step_rules_on_file(run)
+    assert str(failure.value).startswith(red)
