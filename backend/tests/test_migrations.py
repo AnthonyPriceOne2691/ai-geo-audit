@@ -132,17 +132,22 @@ def test_a119_findings_are_exactly_the_model_gaps_and_repeats(numbers: list[int]
 
 
 def test_a18_alembic_env_is_built_from_scratch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A22: подпроцесс alembic получает адрес своей тестовой базы, `ENV_FILE=/dev/null` и
-    `COVERAGE_*`; чужой `DATABASE_URL` и посторонний секрет окружения теста до него не доходят."""
+    """A22: подпроцесс alembic получает адрес своей тестовой базы, `ENV_FILE=/dev/null`,
+    `COVERAGE_*` и `PYTHONPATH` (smoke: под `merge_guard` — пакет дерева, решение ведущей
+    2026-11-23T14:19Z); чужой `DATABASE_URL`, посторонний секрет и соседний ключ `PYTHONSTARTUP`
+    окружения теста до него не доходят."""
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://u:p@127.0.0.1:5432/somebody_else")
     monkeypatch.setenv("COVERAGE_PROCESS_START", "/tmp/coverage.ini")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-for-alembic")
+    monkeypatch.setenv("PYTHONPATH", "/srv/tree/backend/src")
+    monkeypatch.setenv("PYTHONSTARTUP", "/srv/tree/startup.py")
     env = dbtools.alembic_env()
     assert env["DATABASE_URL"] == dbtools.own_url()
     assert (env["ENV_FILE"], env["COVERAGE_PROCESS_START"]) == ("/dev/null", "/tmp/coverage.ini")
+    assert env["PYTHONPATH"] == "/srv/tree/backend/src"
     cov = {"COVERAGE_PROCESS_CONFIG"} & os.environ.keys()  # ставит покрытие подпроцессов
     base = {"PATH", "ENV_FILE", "DATABASE_URL", "PYTHONUTF8", "COVERAGE_PROCESS_START"}
-    assert set(env) == base | cov
+    assert set(env) == base | {"PYTHONPATH"} | cov
 
 
 async def test_a22_test_database_is_built_by_upgrade_head() -> None:
