@@ -98,7 +98,8 @@ def appeared(path: Path, seconds: float = 10) -> None:
     """Ждать файла не дольше `seconds`: подставной процесс сообщает, что готов."""
     deadline = time.monotonic() + seconds
     while not path.exists():
-        assert time.monotonic() < deadline, f"нет {path.name} за {seconds:g} с"
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"нет {path.name} за {seconds:g} с")
         time.sleep(0.02)
 
 

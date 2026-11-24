@@ -132,7 +132,7 @@ def test_a119_findings_are_exactly_the_model_gaps_and_repeats(numbers: list[int]
 
 
 def test_a18_alembic_env_is_built_from_scratch(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A22: подпроцесс alembic получает адрес своей тестовой базы, `ENV_FILE=/dev/null`,
+    """A22, A377: подпроцесс alembic получает адрес своей тестовой базы, `ENV_FILE=/dev/null`,
     `COVERAGE_*` и `PYTHONPATH` (smoke: под `merge_guard` — пакет дерева, решение ведущей
     2026-11-23T14:19Z); чужой `DATABASE_URL`, посторонний секрет и соседний ключ `PYTHONSTARTUP`
     окружения теста до него не доходят."""
