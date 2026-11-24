@@ -549,15 +549,18 @@ def test_a370_head_revision_without_schema_tables_is_red(
 
 def test_a370_s3_judges_the_settings_tables_too() -> None:
     """A370, L121: S3 судит все таблицы `models.Base.metadata`, и среди них — таблицы ключей и
-    настроек. Проверка — в свежем процессе, как в `run.sh` (`PYTHONPATH` на `backend/src`): в
-    процессе pytest `schema` уже импортирован модулями тестов, и тест здесь не держал бы ничего
-    (находка 6 проверяющей)."""
+    настроек. Проверка — в свежем процессе, как в `run.sh` (`PYTHONPATH` на `backend/src` корня):
+    в процессе pytest `schema` уже импортирован модулями тестов, и тест здесь не держал бы ничего
+    (находка 6 проверяющей). Подпроцесс — не часть прогона порч: под mutmut пакет `mutants/src`
+    с батутами и `MUTANT_UNDER_TEST=stats` звали бы `config()` mutmut от `tests/`, и сбор
+    статистики падал (CI на `a7a2211`); поэтому путь — исходный, а переменной mutmut нет."""
     tables_of = "sorted(smoke_run.models.Base.metadata.tables)"
     code = f"import json, smoke_run; print(json.dumps({tables_of}))"
+    env = {name: value for name, value in os.environ.items() if name != mutation_db.MUTANT}
     run = subprocess.run(
         [sys.executable, "-c", code],
         cwd=TESTS,
-        env={**os.environ, "PYTHONPATH": str(SRC)},
+        env=env | {"PYTHONPATH": str(ROOT / "backend" / "src")},
         capture_output=True,
         text=True,
         timeout=60,
