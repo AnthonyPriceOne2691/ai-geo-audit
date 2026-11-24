@@ -1,5 +1,6 @@
 """Сквозные проверки smoke (A370–A379): помощник `smoke_run` на подставных сценариях, замок копии,
-остатки прошлого прогона и окружение; настоящие S3 и S1 — на тестовом Postgres.
+остатки прошлого прогона, окружение, сбои, уборка и сигналы; настоящие S3 и S1 — на тестовом
+Postgres. Контракт CI (A372, A376) — в `test_smoke_ci.py`.
 
 Каждый тест — со своим `.smoke/` в `tmp_path` и своим именем базы: настоящий `run.sh` той же копии и
 доли mutmut с набором не сталкиваются. Каталог пакета подпроцессов — тот, откуда пакет импортировал
@@ -9,11 +10,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fcntl
 import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -21,21 +24,18 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import dbtools
 import envguard
+import mutation_db
 import pytest
 import smoke_run
-import yaml
-from test_oracle_jobs import soft_exit
 
 import ai_geo_audit
 
 ROOT = envguard.ROOT
 SRC = Path(ai_geo_audit.__file__).resolve().parents[1]
 RUN_SH = ROOT / "delivery" / "evals" / "smoke" / "run.sh"
-QUALITY = ROOT / ".github" / "workflows" / "quality.yml"
 TESTS = Path(__file__).resolve().parent
 SLEEPER = (sys.executable, "-c", "import time; time.sleep(60)")
 Action = Callable[[smoke_run.Run, float], None]
@@ -101,6 +101,30 @@ def appeared(path: Path, seconds: float = 10) -> None:
         if time.monotonic() > deadline:
             raise TimeoutError(f"нет {path.name} за {seconds:g} с")
         time.sleep(0.02)
+
+
+#: Текст `OSError` соединения с пропавшим Postgres — как у asyncpg.
+LOST = "Connect call failed ('127.0.0.1', 5462)"
+
+
+def postgres_gone_after(monkeypatch: pytest.MonkeyPatch, calls: int) -> None:
+    """`drop` помощника: первые `calls` вызовов — настоящие, дальше Postgres «пропал» — каждый
+    следующий падает `OSError`."""
+    real = smoke_run.drop
+    seen: list[str] = []
+
+    async def drop(db: str) -> bool:
+        seen.append(db)
+        if len(seen) > calls:
+            raise OSError(LOST)
+        return await real(db)
+
+    monkeypatch.setattr(smoke_run, "drop", drop)
+
+
+def lost_connection(_run: smoke_run.Run, _deadline: float) -> None:
+    """Подставной сценарий: Postgres пропал посреди сценария."""
+    raise OSError(LOST)
 
 
 def test_a375_readme_table_and_helper_agree_on_ids_and_limits() -> None:
@@ -345,15 +369,6 @@ def test_a377_alembic_subprocess_gets_the_pythonpath_of_the_tree(
     assert dbtools.alembic_env()["PYTHONPATH"] == "/srv/tree/backend/src"
 
 
-def test_a372_s2_is_the_ci_test_step_without_coverage() -> None:
-    """A372: S2 — команда шага «Тесты с покрытием» из `backend/` без `--cov…`."""
-    jobs = yaml.safe_load(QUALITY.read_text(encoding="utf-8"))["jobs"]
-    step = next(s for s in jobs["tests"]["steps"] if s.get("name") == "Тесты с покрытием")
-    words = str(step["run"]).splitlines()[0].split()
-    found = (step["working-directory"], [w for w in words if not w.startswith("--cov")])
-    assert found == ("backend", list(smoke_run.S2_COMMAND))
-
-
 def test_a378_second_run_refuses_while_the_first_holds_the_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -580,80 +595,324 @@ def test_a371_server_record_names_the_leader_of_its_group(tmp_path: Path) -> Non
     assert found == expected
 
 
-MARKER = "delivery/evals/smoke/run.sh"
-SMOKE_RUN = f"bash {MARKER} --skip 'S2=набор прошёл шагом «Тесты с покрытием» этой джобы'"
-TEMPLATE_STEP = "Smoke evals (product oracles)"
+def test_a373_unexpected_failure_of_a_scenario_is_a_cause_line_in_the_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A373: непредусмотренный сбой сценария — Postgres пропал посреди S3 — код 1, строка «S3: сбой
+    OSError: <текст>» в первых 15 строках, за ней хвост с трассировкой и итог; уборка падает тем же
+    сбоем — своей строкой после итога и причину не заменяет."""
+    postgres_gone_after(monkeypatch, 1)
+    lines: list[str] = []
+    only = (scenario("S3", lost_connection),)
+    code = smoke_run.smoke(make_run(tmp_path, lines), only, {}, fake_package(tmp_path))
+    cause = lines.index(f"S3: сбой OSError: {LOST}")
+    ending = [f"    OSError: {LOST}", "сценариев 0 из 1", f"уборка: сбой OSError: {LOST}"]
+    assert (code, cause < 15, lines[-3:]) == (1, True, ending), lines
 
 
-def smoke_ci_problems(workflow: dict[Any, Any]) -> list[str]:
-    """A376: шаг smoke в `tests` после набора — команда целиком, без глушилок и конвейера
-    (`soft_exit`, L91); шаг шаблона «Smoke evals» в `delivery` run.sh не гоняет: там нет ни базы,
-    ни зависимостей."""
-    jobs = workflow.get("jobs", {})
-    tests = jobs.get("tests", {})
-    steps = tests.get("steps", [])
-    names = [str(s.get("name", "")) for s in steps]
-    smoke = [i for i, s in enumerate(steps) if MARKER in str(s.get("run", ""))]
-    problems = soft_exit("tests", tests, MARKER)
-    if smoke and str(steps[smoke[0]].get("run", "")).strip() != SMOKE_RUN:
-        problems.append("tests: команда шага smoke — не целиком")
-    if smoke and "Тесты с покрытием" in names and smoke[0] < names.index("Тесты с покрытием"):
-        problems.append("tests: шаг smoke раньше набора")
-    template = [
-        s for s in jobs.get("delivery", {}).get("steps", []) if s.get("name") == TEMPLATE_STEP
-    ]
-    if not template or f"bash {MARKER}" in str(template[0].get("run", "")):
-        problems.append("delivery: шаг «Smoke evals» гоняет run.sh без базы и зависимостей")
-    return problems
+def test_a370_failed_cleanup_after_green_scenarios_is_red(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A370: сценарии зелёные, а базу smoke не снести — Postgres пропал к уборке: код 1, строка
+    «уборка: сбой <Тип>: <текст>» после итога."""
+    postgres_gone_after(monkeypatch, 1)
+    lines: list[str] = []
+    code = smoke_run.smoke(
+        make_run(tmp_path, lines), (scenario("S3", ok),), {}, fake_package(tmp_path)
+    )
+    ending = ["сценариев 1 из 1", f"уборка: сбой OSError: {LOST}"]
+    assert (code, lines[-2:]) == (1, ending), lines
 
 
-def test_a376_smoke_runs_in_the_tests_job_after_the_suite() -> None:
-    """A376: в `tests` после набора — `run.sh --skip 'S2=…'` (S3 и S1, пропуск S2 назван в итоге);
-    команда шага — целиком по контракту, глушилок и конвейера нет; в `delivery` — строка, где идёт
-    smoke."""
-    assert smoke_ci_problems(yaml.safe_load(QUALITY.read_text(encoding="utf-8"))) == []
+def test_a377_unexpected_failure_before_scenarios_is_a_cause_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A377: сбой до сценариев — Postgres пропал между проверкой и сносом базы прошлого прогона:
+    код 1, второй строкой «до сценариев: сбой <Тип>: <текст>», ни один сценарий не засчитан."""
+    postgres_gone_after(monkeypatch, 0)
+    lines: list[str] = []
+    ran: list[str] = []
+    only = scenario("S3", lambda _run, _deadline: ran.append("S3"))
+    code = smoke_run.smoke(make_run(tmp_path, lines), (only,), {}, fake_package(tmp_path))
+    said = [f"до сценариев: сбой OSError: {LOST}", f"уборка: сбой OSError: {LOST}"]
+    assert (code, ran, lines[1:]) == (1, [], said), lines
 
 
-def smoke_step(workflow: dict[Any, Any]) -> dict[str, Any]:
-    return next(s for s in workflow["jobs"]["tests"]["steps"] if MARKER in str(s.get("run", "")))
+@pytest.mark.parametrize("red", [False, True], ids=["зелёный", "красный"])
+def test_a370_smoke_base_made_by_a_scenario_is_gone_after_the_run(
+    tmp_path: Path, red: bool
+) -> None:
+    """A370: базу smoke, которую создал сценарий, уборка прогона сносит — и после зелёного
+    сценария, и после красного."""
+    lines: list[str] = []
+    run = make_run(tmp_path, lines)
+
+    def makes_base(run: smoke_run.Run, _deadline: float) -> None:
+        asyncio.run(smoke_run.recreate(run.db))
+        if red:
+            raise smoke_run.ScenarioError("подставной отказ")
+
+    try:
+        code = smoke_run.smoke(run, (scenario("S3", makes_base),), {}, fake_package(tmp_path))
+    finally:
+        left = asyncio.run(smoke_run.drop(run.db))
+    assert (code, left) == (int(red), False), lines
 
 
-def before_suite(workflow: dict[Any, Any]) -> None:
-    steps = workflow["jobs"]["tests"]["steps"]
-    step = smoke_step(workflow)
-    steps.remove(step)
-    steps.insert(0, step)
+def test_a371_signal_with_a_failed_cleanup_does_not_claim_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A371: SIGTERM посреди сценария, а уборка упала — код 143, строка сбоя уборки и «прерван
+    сигналом 15» без слов «сняты»; обработчики сигналов после прогона — прежние."""
+    postgres_gone_after(monkeypatch, 1)
+    lines: list[str] = []
+
+    def interrupted(_run: smoke_run.Run, _deadline: float) -> None:
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(5)
+
+    handlers = (signal.SIGINT, signal.SIGTERM)
+    before = [signal.getsignal(s) for s in handlers]
+    only = (scenario("S3", interrupted),)
+    code = smoke_run.smoke(make_run(tmp_path, lines), only, {}, fake_package(tmp_path))
+    restored = [signal.getsignal(s) for s in handlers] == before
+    ending = [f"уборка: сбой OSError: {LOST}", "прерван сигналом 15"]
+    assert (code, lines[-2:], restored) == (143, ending, True), lines
 
 
-def template_runs_it(workflow: dict[Any, Any]) -> None:
-    steps = workflow["jobs"]["delivery"]["steps"]
-    next(s for s in steps if s.get("name") == TEMPLATE_STEP)["run"] = f"bash {MARKER}"
+#: Прогон-подставка: сценарий создаёт базу smoke, запускает подставной сервер тем же путём, что S1,
+#: и спит; код выхода — код `smoke()`.
+SIGNALLED = """
+import asyncio, os, sys, time
+from pathlib import Path
+sys.path.insert(0, {tests!r})
+import smoke_run
+
+def sleeping(run, _deadline):
+    asyncio.run(smoke_run.recreate(run.db))
+    smoke_run.launch(run, {server!r}, dict(os.environ))
+    time.sleep(60)
+
+run = smoke_run.Run(Path({root!r}), Path({state!r}), {db!r}, Path({src!r}))
+only = (smoke_run.Scenario("S1", 60.0, sleeping),)
+raise SystemExit(smoke_run.smoke(run, only, {{}}, Path({package!r})))
+"""
+
+#: Подставной сервер: готов — файл `ready`; на `SIGTERM` — файл `term` и выход через 1 с: второй
+#: сигнал тест шлёт, пока уборка ждёт сервер.
+LINGERING = """
+import signal, sys, time
+def term(*_):
+    open({term!r}, "w").close()
+    time.sleep(1)
+    sys.exit(0)
+signal.signal(signal.SIGTERM, term)
+open({ready!r}, "w").close()
+time.sleep(60)
+"""
 
 
-COPIES: dict[str, tuple[Callable[[dict[Any, Any]], None], str]] = {
-    "нет шага": (lambda w: w["jobs"]["tests"]["steps"].remove(smoke_step(w)), "нет шага с"),
-    "мягкий выход": (lambda w: smoke_step(w).update(run=f"{SMOKE_RUN} || true"), "мягкий выход"),
-    "continue-on-error": (
-        lambda w: smoke_step(w).update({"continue-on-error": True}),
-        "continue-on-error",
-    ),
-    "условие шага": (lambda w: smoke_step(w).update({"if": "always()"}), "условие"),
-    "конвейер": (lambda w: smoke_step(w).update(run=f"{SMOKE_RUN} | tee smoke.log"), "не целиком"),
-    "пропуск S1": (
-        lambda w: smoke_step(w).update(run=SMOKE_RUN.replace("'S2=", "'S1=")),
-        "не целиком",
-    ),
-    "раньше набора": (before_suite, "раньше набора"),
-    "delivery гоняет run.sh": (template_runs_it, "delivery:"),
-}
+def signalled(run: smoke_run.Run, tmp_path: Path) -> subprocess.Popen[str]:
+    """Помощник подпроцессом со спящим сценарием S1 и подставным сервером."""
+    ready, term = tmp_path / "ready", tmp_path / "term"
+    server = (sys.executable, "-c", LINGERING.format(ready=str(ready), term=str(term)))
+    script = SIGNALLED.format(
+        tests=str(TESTS),
+        root=str(run.root),
+        state=str(run.state),
+        db=run.db,
+        src=str(run.src),
+        server=server,
+        package=str(fake_package(run.root)),
+    )
+    env = dict(os.environ) | {"PYTHONPATH": str(SRC)}
+    return subprocess.Popen(
+        [sys.executable, "-c", script],
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
 
 
-@pytest.mark.parametrize("case", list(COPIES))
-def test_a376_smoke_step_copies_are_red_and_named(case: str) -> None:
-    """A376, копии: без шага, с глушилкой, условием, конвейером, другой командой, раньше набора и
-    с `delivery`, гоняющей run.sh, — красные, каждая своей строкой."""
-    change, named = COPIES[case]
-    workflow = yaml.safe_load(QUALITY.read_text(encoding="utf-8"))
-    change(workflow)
-    problems = smoke_ci_problems(workflow)
-    assert [p for p in problems if named in p], problems
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(signal.SIGTERM, signal.SIGINT), (signal.SIGINT, signal.SIGTERM)],
+    ids=["SIGTERM", "SIGINT"],
+)
+def test_a371_signal_cleans_up_once_and_a_second_one_does_not_cut_it(
+    tmp_path: Path, first: signal.Signals, second: signal.Signals
+) -> None:
+    """A371, A370: сигнал посреди сценария — код 128 + номер (143 у SIGTERM, 130 у SIGINT) и
+    строка «прерван сигналом N: сервер и база smoke сняты»; второй сигнал, пока уборка ждёт сервер,
+    её не рвёт и кода не меняет: группы сервера и базы smoke после нет."""
+    run = make_run(tmp_path, [])
+    helper = signalled(run, tmp_path)
+    record = run.state / smoke_run.SERVER_FILE
+    pgid = None
+    try:
+        appeared(tmp_path / "ready")
+        appeared(record)
+        pgid = int(json.loads(record.read_text(encoding="utf-8"))["pgid"])
+        helper.send_signal(first)
+        appeared(tmp_path / "term")
+        helper.send_signal(second)
+        out, _ = helper.communicate(timeout=30)
+        stopped = gone(pgid)
+    finally:
+        helper.kill()
+        helper.wait()
+        if pgid is not None:
+            smoke_run.kill_group(pgid)
+        left = asyncio.run(smoke_run.drop(run.db))
+    said = f"прерван сигналом {int(first)}: сервер и база smoke сняты"
+    found = (helper.returncode, out.splitlines()[-1], out.count("прерван"), left, stopped)
+    assert found == (128 + first, said, 1, False, True), out
+
+
+def test_a370_smoke_base_name_is_its_own_and_a_link_gives_the_same_run(tmp_path: Path) -> None:
+    """A370, семь вопросов п. 5: база smoke — своё имя от корня копии, отдельно от базы набора,
+    шаблона и копий порч; корень через ссылку — тот же прогон (`resolve()`): тот же `.smoke/`, та
+    же база, тот же каталог пакета."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    run, through = smoke_run.Run.of(real), smoke_run.Run.of(link)
+    root = real.resolve()
+    others = {
+        "набора": dbtools.own_name(root),
+        "шаблона": mutation_db.template_name(root),
+        "копии порч": mutation_db.copy_name(os.getpid(), root),
+    }
+    assert smoke_run.TEST_NAME.fullmatch(run.db)
+    assert {case: name for case, name in others.items() if name == run.db} == {}
+    found = (through.root, through.state, through.db, through.src)
+    assert found == (root, root / ".smoke", run.db, root / "backend" / "src")
+
+
+@pytest.mark.parametrize("name", ["postgres", "audit", "audit_test_", "audit_test_0123456789x"])
+def test_a370_bases_without_the_test_name_are_refused_before_a_connection(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A370, «Безопасность»: создание и снос — только `audit_test_` и 10 знаков; иное имя —
+    `RefusedError` до соединения с сервером."""
+    connections: list[object] = []
+    monkeypatch.setattr(smoke_run.asyncpg, "connect", lambda *args, **_: connections.append(args))
+    for action in (smoke_run.recreate, smoke_run.drop):
+        with pytest.raises(dbtools.RefusedError, match="только audit_test_"):
+            asyncio.run(action(name))
+    assert connections == []
+
+
+@pytest.mark.parametrize(
+    ("body", "cause"),
+    [
+        ("raise SystemExit(1)", "S1: проба здоровья — код 1"),
+        ("import time; time.sleep(60)", "S1: проба здоровья не кончилась за 6 с после старта"),
+    ],
+    ids=["код", "срок"],
+)
+def test_a371_probe_gives_zero_within_the_readiness_deadline_from_the_start(
+    tmp_path: Path, body: str, cause: str
+) -> None:
+    """A371: сервер готов, а проба `api.probe` — не код 0 (например, порт ей не передан) — S1
+    красный с кодом пробы; проба не кончилась к сроку готовности от старта сервера — красный сразу
+    по этому сроку, а не по пределу сценария; сервера и файла группы после нет."""
+    lines: list[str] = []
+    run = make_run(tmp_path, lines, ready_seconds=6)
+    probe = (sys.executable, "-c", body)
+    asyncio.run(smoke_run.recreate(run.db))
+    began = time.monotonic()
+    try:
+        code = smoke_run.runner(
+            run, (scenario("S1", lambda r, d: smoke_run.s1(r, d, probe=probe), limit=60),), {}
+        )
+    finally:
+        asyncio.run(smoke_run.drop(run.db))
+    spent = time.monotonic() - began
+    assert (code, cause in lines, spent < 15) == (1, True, True), (spent, lines)
+    assert not (run.state / smoke_run.SERVER_FILE).exists()
+
+
+#: Подставной интерпретатор `backend/.venv`: печатает свой pid, `PYTHONPATH` и аргументы.
+FAKE_PYTHON = '#!/bin/sh\nprintf "%s\\n" "$$" "$PYTHONPATH" "$@"\n'
+
+
+def test_a377_run_sh_execs_the_copy_python_with_the_resolved_src(tmp_path: Path) -> None:
+    """A377: `run.sh` — `exec` интерпретатора `backend/.venv` копии (у `run.sh` и помощника один
+    pid: сигналы доходят до уборки без посредника); `PYTHONPATH` — `backend/src` корня после
+    `pwd -P`, и при запуске через ссылку; аргументы — как есть."""
+    copy = tmp_path / "copy"
+    script = copy / "delivery" / "evals" / "smoke" / "run.sh"
+    script.parent.mkdir(parents=True)
+    shutil.copy2(RUN_SH, script)
+    python = copy / "backend" / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(FAKE_PYTHON, encoding="utf-8")
+    python.chmod(0o755)
+    link = tmp_path / "link"
+    link.symlink_to(copy)
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    root = copy.resolve()
+    expected = [str(root / "backend" / "src"), str(root / "backend" / "tests" / "smoke_run.py")]
+    found = {}
+    for case, start in {"копия": copy, "ссылка": link}.items():
+        shell = subprocess.Popen(
+            ["bash", str(start / "delivery" / "evals" / "smoke" / "run.sh"), "--skip", "S2=x"],
+            env=env,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        out, _ = shell.communicate(timeout=30)
+        said = out.splitlines()
+        found[case] = (shell.returncode, said[:1] == [str(shell.pid)], said[1:])
+    same = (0, True, [*expected, "--skip", "S2=x"])
+    assert found == {"копия": same, "ссылка": same}
+
+
+def test_a377_scenarios_run_their_subprocesses_on_the_package_dir_of_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A377: `PYTHONPATH` подпроцессов S3, S1 и S2 — каталог пакета прогона: в дереве
+    `merge_guard` — `backend/src` дерева, а не пакет хозяина одолженного окружения. Подпроцессы
+    подменены: окружение пишется, команда — пустая."""
+    seen: dict[str, str | None] = {}
+    spawn = smoke_run.spawn
+
+    def recording(
+        _command: tuple[str, ...], log: Path, env: dict[str, str]
+    ) -> subprocess.Popen[bytes]:
+        seen[log.stem] = env.get("PYTHONPATH")
+        return spawn((sys.executable, "-c", "pass"), log, os.environ)
+
+    monkeypatch.setattr(smoke_run, "spawn", recording)
+    run = make_run(tmp_path, [])
+    run.src = tmp_path / "tree" / "backend" / "src"
+    try:
+        for action in (smoke_run.s3, smoke_run.s1, smoke_run.s2):
+            with contextlib.suppress(smoke_run.ScenarioError):
+                action(run, time.monotonic() + 30)
+    finally:
+        asyncio.run(smoke_run.drop(run.db))
+    assert seen == dict.fromkeys(("S3", "S1", "S2"), str(run.src))
+
+
+def test_a379_leader_identity_does_not_depend_on_the_language_of_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A379, L97: время старта и команда лидера — одна строка при любом языке прогона: запись под
+    одним `LC_ALL` и сверка под другим совпадают (проба второй проверяющей: C, ru_RU.UTF-8 и
+    en_GB.UTF-8 давали три разные строки)."""
+    server = subprocess.Popen(SLEEPER, start_new_session=True)
+    found = []
+    try:
+        for language in ("C", "ru_RU.UTF-8", "en_GB.UTF-8"):
+            monkeypatch.setenv("LC_ALL", language)
+            monkeypatch.setenv("LANG", language)
+            found.append(smoke_run.identity(server.pid))
+    finally:
+        server.kill()
+        server.wait()
+    assert found[0] is not None
+    assert found == [found[0]] * 3

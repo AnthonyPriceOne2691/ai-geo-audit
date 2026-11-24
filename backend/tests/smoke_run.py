@@ -5,9 +5,11 @@
 корня. Тесты зовут функции напрямую — со своим `.smoke/` в `tmp_path` и своим именем базы.
 
 Ход прогона: замок копии → остатки прошлого прогона → путь пакета и Postgres → сценарии подряд →
-снос базы smoke. В выводе — строка на сценарий; вывод самого сценария — в файл в `.smoke/`, при
-отказе — строка причины и хвост: строка причины попадает в первые 15 строк — окно отказа
-`merge_guard`. SIGINT и SIGTERM — уборка ровно одна, код 128 + номер сигнала.
+уборка: сервер и база smoke. В выводе — строка на сценарий; вывод самого сценария — в файл в
+`.smoke/`, при отказе — строка причины и хвост: строка причины попадает в первые 15 строк — окно
+отказа `merge_guard`. Непредусмотренный сбой — тоже строка причины, «сбой <Тип>: <текст>»; сбой
+уборки — своей строкой после итога. SIGINT и SIGTERM — обвязкой оракула (`oracle_guard.guarded`,
+A74): уборка ровно одна и без сигналов, код 128 + номер первого сигнала.
 """
 
 from __future__ import annotations
@@ -26,10 +28,10 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import FrameType
 
 import asyncpg
 import dbtools
@@ -40,6 +42,11 @@ from alembic.script import ScriptDirectory
 
 import ai_geo_audit
 from ai_geo_audit.storage import models
+
+# Обвязка сигналов оракула (A74) лежит в `scripts/`, вне пакета; путь — в конец `sys.path`: модули
+# `scripts/` не заслоняют ни один другой.
+sys.path.append(str(envguard.ROOT / "scripts"))
+import oracle_guard
 
 HERE = Path(__file__).resolve()
 ROOT = envguard.ROOT
@@ -55,7 +62,6 @@ BUSY = "smoke уже идёт в этой копии"
 FOREIGN = "судится чужой пакет"
 #: Команда шага «Тесты с покрытием» без `--cov…` (A372); `uv` — только с `--no-sync` (A377).
 S2_COMMAND = ("uv", "run", "--no-sync", "pytest")
-SIGNALS = (signal.SIGINT, signal.SIGTERM)
 #: Строка таблицы README: id и предел в секундах — последний столбец (A375).
 ROW = re.compile(r"(?m)^\|\s*(S\d+)\s*\|.*\|\s*(\d+)\s*с\s*\|\s*$")
 TEST_NAME = re.compile(r"audit_test_[0-9a-f]{10}")
@@ -71,15 +77,6 @@ class TimedOutError(ScenarioError):
 
 class BusyError(Exception):
     """Замок копии держит другой прогон (A378)."""
-
-
-class Interrupted(BaseException):
-    """SIGINT или SIGTERM посреди прогона; `code` — 128 + номер сигнала."""
-
-    def __init__(self, signum: int) -> None:
-        super().__init__(signum)
-        self.signum = signum
-        self.code = 128 + signum
 
 
 def say_line(text: str) -> None:
@@ -98,6 +95,8 @@ class Run:
     ready_seconds: float = READY_SECONDS
     stop_seconds: float = STOP_SECONDS
     server: subprocess.Popen[bytes] | None = field(default=None, repr=False)
+    #: Postgres ответил до сценариев: база smoke — на уборке; иначе прогон её не трогал.
+    reached: bool = False
 
     @classmethod
     def of(cls, root: Path) -> Run:
@@ -143,7 +142,9 @@ def wait_gone(pgid: int, seconds: float) -> bool:
 
 
 def identity(pid: int) -> list[str] | None:
-    """Время старта и команда процесса по `ps`; процесса нет — None."""
+    """Время старта и команда процесса по `ps` в языке C: запись лидера и сверка с ней — одна
+    строка при любых `LC_ALL` и `LANG` прогонов (проба второй проверяющей 2026-11-24: C, ru_RU и
+    en_GB давали три разные строки времени); процесса нет — None."""
     found: list[str] = []
     for column in ("lstart=", "command="):
         done = subprocess.run(
@@ -151,6 +152,7 @@ def identity(pid: int) -> list[str] | None:
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "LC_ALL": "C"},
         )
         line = done.stdout.strip()
         if done.returncode != 0 or not line:
@@ -205,12 +207,11 @@ def forget(run: Run) -> None:
     (run.state / SERVER_FILE).unlink(missing_ok=True)
 
 
-def wait_ready(run: Run, server: subprocess.Popen[bytes], port: int) -> None:
-    """`GET /api/health` 200 — один срок по `monotonic` (L83). Сервер вышел раньше — отказ сразу,
-    с кодом выхода, а не по сроку (A373)."""
-    deadline = time.monotonic() + run.ready_seconds
+def wait_ready(run: Run, server: subprocess.Popen[bytes], port: int, ready_by: float) -> None:
+    """`GET /api/health` 200 до срока `ready_by` по `monotonic` — общего с пробой (L83). Сервер
+    вышел раньше — отказ сразу, с кодом выхода, а не по сроку (A373)."""
     with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=1.0) as http:
-        while time.monotonic() < deadline:
+        while time.monotonic() < ready_by:
             code = server.poll()
             if code is not None:
                 raise ScenarioError(f"сервер вышел с кодом {code} до готовности")
@@ -383,16 +384,25 @@ def s3(run: Run, deadline: float, command: Sequence[str] | None = None) -> None:
         raise ScenarioError(problem)
 
 
-def s1(run: Run, deadline: float, port: int | None = None) -> None:
+def s1(
+    run: Run, _deadline: float, port: int | None = None, probe: Sequence[str] | None = None
+) -> None:
     """S1: на базе S3 сервер настоящей точкой входа своей группой процессов (L55); окружение —
-    значения настроек тестов, как A55; готов — проба `api.probe` код 0; остановка — `SIGTERM`."""
+    значения настроек тестов, как A55. Готовность и проба `api.probe` с кодом 0 — одним сроком, не
+    позже 15 с после старта (A371, L83); остановка — `SIGTERM`, не позже 25 с. Предел сценария,
+    60 с, выше суммы сроков: своего таймера у S1 нет."""
     port = port or live_server.free_port()
     env = live_server.live_env(port, url_of(run.db), run.src)
+    ready_by = time.monotonic() + run.ready_seconds
     server = launch(run, (sys.executable, "-m", "ai_geo_audit.api"), env)
     try:
-        wait_ready(run, server, port)
-        probe = (sys.executable, "-m", "ai_geo_audit.api.probe")
-        code = run_limited(probe, run.log("S1"), deadline, env)
+        wait_ready(run, server, port, ready_by)
+        health = probe or (sys.executable, "-m", "ai_geo_audit.api.probe")
+        try:
+            code = run_limited(health, run.log("S1"), ready_by, env)
+        except TimedOutError:
+            cause = f"проба здоровья не кончилась за {run.ready_seconds:g} с после старта"
+            raise ScenarioError(cause) from None
         if code != 0:
             raise ScenarioError(f"проба здоровья — код {code}")
         stop_server(run, server)
@@ -437,8 +447,15 @@ def tail(run: Run, scenario: str) -> None:
         run.say(f"    {line}")
 
 
+def failure_line(failure: Exception) -> str:
+    """Непредусмотренный сбой одной строкой: тип и текст исключения."""
+    return f"сбой {type(failure).__name__}: {failure}"
+
+
 def attempt(run: Run, scenario: Scenario) -> str | None:
-    """Один сценарий под своим пределом; причина отказа или None."""
+    """Один сценарий под своим пределом; причина отказа или None. Непредусмотренный сбой (Postgres
+    пропал посреди сценария) — «сбой <Тип>: <текст>», трассировка — в конец файла сценария:
+    причина встаёт в окно 15 строк, а трассировка — в хвост за ней."""
     run.log(scenario.id).write_bytes(b"")
     began = time.monotonic()
     try:
@@ -447,28 +464,29 @@ def attempt(run: Run, scenario: Scenario) -> str | None:
         return f"предел {scenario.limit:g} с"
     except ScenarioError as failure:
         return str(failure)
+    except Exception as failure:
+        with run.log(scenario.id).open("a", encoding="utf-8") as log:
+            log.write(traceback.format_exc())
+        return failure_line(failure)
     run.say(f"{scenario.id}: зелёный за {time.monotonic() - began:.0f} с")
     return None
 
 
 def runner(run: Run, scenarios: Sequence[Scenario], skip: Mapping[str, str]) -> int:
     """Сценарии подряд: первый сбой — код 1, строка причины, хвост вывода и итог; ноль
-    засчитанных — красное (L73). Сервер сценария снимается при любом исходе."""
+    засчитанных — красное (L73)."""
     passed: list[str] = []
-    try:
-        for scenario in scenarios:
-            if scenario.id in skip:
-                run.say(f"{scenario.id}: пропущен — {skip[scenario.id]}")
-                continue
-            cause = attempt(run, scenario)
-            if cause:
-                run.say(f"{scenario.id}: {cause}")
-                tail(run, scenario.id)
-                run.say(summary(passed, scenarios, skip))
-                return 1
-            passed.append(scenario.id)
-    finally:
-        halt(run)
+    for scenario in scenarios:
+        if scenario.id in skip:
+            run.say(f"{scenario.id}: пропущен — {skip[scenario.id]}")
+            continue
+        cause = attempt(run, scenario)
+        if cause:
+            run.say(f"{scenario.id}: {cause}")
+            tail(run, scenario.id)
+            run.say(summary(passed, scenarios, skip))
+            return 1
+        passed.append(scenario.id)
     run.say(summary(passed, scenarios, skip))
     return 0 if passed else 1
 
@@ -481,48 +499,57 @@ def report(run: Run, notes: Sequence[str]) -> None:
 def prepared(
     run: Run, scenarios: Sequence[Scenario], skip: Mapping[str, str], package: Path
 ) -> int:
-    """Под замком: путь пакета первой строкой, остатки прошлого прогона, окружение, сценарии;
-    база smoke снимается при любом исходе."""
+    """Тело прогона под замком: путь пакета первой строкой, остатки прошлого прогона, окружение,
+    сценарии. Сбой до сценариев — строкой «до сценариев: сбой <Тип>: <текст>», код 1."""
     run.say(f"пакет: {Path(package).resolve().parent}")
-    notes = leftover_group(run.state)
-    problem = package_problem(run.root, package) or asyncio.run(postgres_problem())
+    notes: list[str] = []
+    try:
+        notes += leftover_group(run.state)
+        problem = package_problem(run.root, package) or asyncio.run(postgres_problem())
+        run.reached = problem is None
+        if run.reached and asyncio.run(drop(run.db)):
+            notes.append("база снята")
+    except Exception as failure:
+        problem = f"до сценариев: {failure_line(failure)}"
+    report(run, notes)
     if problem:
-        report(run, notes)
         run.say(problem)
         return 1
+    return runner(run, scenarios, skip)
+
+
+def cleanup(run: Run) -> bool:
+    """Уборка прогона при любом исходе — сервер и база smoke, если Postgres ответил до сценариев
+    (A370, A371); `guarded` зовёт её ровно один раз и без сигналов. Сбой уборки — своей строкой
+    после итога: причину сценария он не заменяет. True — убрано."""
     try:
-        if asyncio.run(drop(run.db)):
-            notes.append("база снята")
-        report(run, notes)
-        return runner(run, scenarios, skip)
-    finally:
-        asyncio.run(drop(run.db))
-
-
-def interrupt(signum: int, _frame: FrameType | None) -> None:
-    for sig in SIGNALS:
-        signal.signal(sig, signal.SIG_IGN)  # второй сигнал уборку не рвёт
-    raise Interrupted(signum)
+        halt(run)
+        if run.reached:
+            asyncio.run(drop(run.db))
+    except Exception as failure:
+        run.say(f"уборка: {failure_line(failure)}")
+        return False
+    return True
 
 
 def smoke(run: Run, scenarios: Sequence[Scenario], skip: Mapping[str, str], package: Path) -> int:
     """Прогон копии под замком; занят — код 1 «smoke уже идёт в этой копии», `.smoke/` и базы не
-    тронуты (A378). Обработчики сигналов после — прежние."""
-    before = {sig: signal.getsignal(sig) for sig in SIGNALS}
+    тронуты (A378). Тело — под SIGINT и SIGTERM обвязкой оракула (A74): уборка одна и без
+    сигналов, код — 128 + номер первого сигнала, обработчики после — прежние. Сбой уборки —
+    код 1."""
     try:
         with copy_lock(run.state):
-            for sig in SIGNALS:
-                signal.signal(sig, interrupt)
-            return prepared(run, scenarios, skip, package)
+            stopped, code, clean = oracle_guard.guarded(
+                lambda: prepared(run, scenarios, skip, package), lambda: cleanup(run)
+            )
     except BusyError as busy:
         run.say(str(busy))
         return 1
-    except Interrupted as stop:
-        run.say(f"прерван сигналом {stop.signum}: сервер и база smoke сняты")
-        return stop.code
-    finally:
-        for sig, handler in before.items():
-            signal.signal(sig, signal.SIG_DFL if handler is None else handler)
+    if stopped is not None:
+        swept = ": сервер и база smoke сняты" if clean else ""
+        run.say(f"прерван сигналом {stopped - 128}{swept}")
+        return stopped
+    return (code or 0) if clean else 1
 
 
 def parse_skip(args: Sequence[str], scenarios: Sequence[Scenario]) -> dict[str, str]:
