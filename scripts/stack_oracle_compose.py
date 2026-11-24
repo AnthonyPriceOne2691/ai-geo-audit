@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from stack_oracle import Run
 
 COMPOSE = "docker-compose.yml"
@@ -152,6 +154,14 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
         "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
     }
+
+
+def write_master_key(path: Path) -> None:
+    """Выдуманный мастер-ключ прогона в формате файла A220 (Ч1.12а): строка из 64 знаков hex — 32
+    случайных байта — и перевод строки; проверка старта api в бою его разбирает (A65). Права 644:
+    файл читает uid 10001 в контейнере, права машины переходят как есть."""
+    path.write_text(f"{secrets.token_hex(32)}\n", encoding="ascii")
+    path.chmod(0o644)
 
 
 def compose_base(run: Run) -> list[str]:

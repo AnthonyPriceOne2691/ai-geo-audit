@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import ipaddress
+import os
 import socket
 import subprocess
 import sys
@@ -17,6 +18,8 @@ from types import SimpleNamespace
 
 import dbtools
 import pytest
+
+from ai_geo_audit.config import master_key
 
 sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 _spec = importlib.util.spec_from_file_location(
@@ -586,3 +589,25 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
     assert compose.PROD == "docker-compose.prod.yml"
     assert compose.PROD_RULES == 27
+
+
+def test_a65_a220_oracle_master_key_passes_the_startup_parse(tmp_path: Path) -> None:
+    """A65 Ч1.5а, A220: оракул пишет выдуманный мастер-ключ в формате файла A220 — одна строка из
+    64 знаков hex и перевод строки, права 644 (читает uid 10001); тот же разбор, что у проверки
+    старта api в бою, даёт ключ 1; у двух прогонов ключи разные. Без Docker: порча «назад к
+    `token_urlsafe`» краснеет здесь, а не только в джобе `stack` (находка 5 проверяющей). Маска
+    процесса — строгая: права 644 ставит сама запись, а не умолчание машины."""
+    first, second = tmp_path / "first.key", tmp_path / "second.key"
+    mask = os.umask(0o077)
+    try:
+        compose.write_master_key(first)
+        compose.write_master_key(second)
+    finally:
+        os.umask(mask)
+    assert oracle.write_master_key is compose.write_master_key
+    keys = [master_key.parse(path.read_bytes()) for path in (first, second)]
+    assert [len(found) for found in keys] == [1, 1]
+    assert keys[0][0].raw != keys[1][0].raw
+    assert first.read_bytes().count(b"\n") == 1
+    assert first.read_bytes().endswith(b"\n")
+    assert (first.stat().st_mode & 0o777, second.stat().st_mode & 0o777) == (0o644, 0o644)
