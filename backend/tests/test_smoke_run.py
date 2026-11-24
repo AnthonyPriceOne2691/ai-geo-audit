@@ -448,6 +448,19 @@ def test_a379_stale_file_with_a_foreign_leader_leaves_the_group_alone(tmp_path: 
     assert (notes, alive, (state / smoke_run.SERVER_FILE).exists()) == (expected, True, False)
 
 
+def test_a379_stale_file_without_a_live_group_is_named_and_removed(tmp_path: Path) -> None:
+    """A379: файл группы есть, а процесса уже нет (машину перезагрузили) — строка «группы <pid>
+    уже нет», файл снят, сигналов никому."""
+    state = make_run(tmp_path, []).state
+    finished = subprocess.Popen((sys.executable, "-c", "pass"), start_new_session=True)
+    finished.wait()
+    record = {"pgid": finished.pid, "leader": ["Mon Jan  1 00:00:00 2024", "python"]}
+    (state / smoke_run.SERVER_FILE).write_text(json.dumps(record), encoding="utf-8")
+    notes = smoke_run.leftover_group(state)
+    expected = [f"группы {finished.pid} уже нет"]
+    assert (notes, (state / smoke_run.SERVER_FILE).exists()) == (expected, False)
+
+
 def test_a379_next_run_names_the_group_and_the_base_left_by_kill_9(tmp_path: Path) -> None:
     """A379: после `kill -9` прогона во время S1 следующий прогон до сценариев снимает группу и
     базу smoke: «от прошлого прогона: группа <pid> снята, база снята»."""
