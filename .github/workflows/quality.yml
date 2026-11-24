@@ -205,11 +205,13 @@ jobs:
             python scripts/delivery_metrics.py --base "$BASE" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # Адаптация шаблона: здесь нет ни базы, ни зависимостей — smoke судит шаг «Smoke (S3, S1)»
+      # джобы `tests`, а S2 — её шаг «Тесты с покрытием» (спека smoke, A376).
       - name: Smoke evals (product oracles)
         if: always()
         run: |
           if [ -f delivery/evals/smoke/run.sh ]; then
-            bash delivery/evals/smoke/run.sh
+            echo "smoke §6.1 — шаг «Smoke (S3, S1)» джобы tests; S2 — её шаг «Тесты с покрытием»"
           else
             echo "no smoke suite — Delivery §6 backlog"
           fi
@@ -329,6 +331,11 @@ jobs:
         run: |
           uv run --no-sync pytest --cov --cov-report=json:coverage.json
           git rev-parse HEAD > coverage.json.head
+
+      # Сквозные проверки §6.1: S3 — миграции с нуля, S1 — сервер на этой базе. S2 — сам шаг выше:
+      # пропуск по имени, вслух в итоге. Команда целиком, без глушилок и конвейера (A376).
+      - name: Smoke (S3, S1)
+        run: bash delivery/evals/smoke/run.sh --skip 'S2=набор прошёл шагом «Тесты с покрытием» этой джобы'
 
       # Отчёт этой джобы, а не второй прогон набора; база — шаг «Diff base» (A108).
       - name: Diff coverage
