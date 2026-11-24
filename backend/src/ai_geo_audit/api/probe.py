@@ -6,6 +6,7 @@
 Только конфиг и стандартная библиотека: `curl` в образ не ставится.
 """
 
+# Метка ветки-пробы smoke (L95): правка `backend/src` зовёт доли mutmut на запросе. Не сливать.
 from __future__ import annotations
 
 import socket
