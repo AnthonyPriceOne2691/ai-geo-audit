@@ -178,10 +178,10 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
 #: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
-#: Ч1.5в, срез 3 — A88.
+#: Ч1.5в, срез 3 — A88, срез 4 — A89.
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
-STEP_EXAMPLES |= {"A88"}
+STEP_EXAMPLES |= {"A88", "A89"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -193,10 +193,10 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_to_a88() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_to_a89() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
-    A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88."""
+    A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -504,8 +504,10 @@ class RulesAnswer(oracle.Docker):
     --format json` — пустой стек, правила в образе — заданные код и вывод."""
 
     answer: tuple[int, str] = (0, "")
+    seen: tuple[tuple[str, ...], ...] = ()
 
     def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
+        self.seen += (args,)
         if "--services" in args:
             names = b"db\nredis\nmigrate\napi\nweb\n"
             return subprocess.CompletedProcess(["docker", *args], 0, names, b"")
@@ -549,3 +551,38 @@ def test_a73_a87_rules_step_wants_five_services_and_twenty_four_rules(
     with pytest.raises(oracle.StepError) as failure:
         compose.step_rules_on_file(run)
     assert str(failure.value).startswith(red)
+
+
+@pytest.mark.parametrize(
+    ("text", "red"),
+    [
+        ("итог: сервисов 5, правил 27, нарушений 0\n", ""),
+        (
+            "итог: сервисов 5, правил 24, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 24,",
+        ),
+    ],
+    ids=["27", "без-боевых"],
+)
+def test_a89_prod_rules_step_reads_both_files_with_the_flag(
+    tmp_path: Path, text: str, red: str
+) -> None:
+    """A89, вторая строка: шаг правил на основном файле с боевым наложением — оба файла названы
+    явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5, правил 27,
+    нарушений 0»."""
+    docker = RulesAnswer()
+    docker.answer = (0, text)
+    run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    if red:
+        with pytest.raises(oracle.StepError, match=red):
+            compose.step_rules_on_prod(run)
+    else:
+        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 27")
+    files = ["-f", str(run.copy / "docker-compose.yml"), "-f", str(run.copy / compose.PROD)]
+    configs = [args for args in docker.seen if "config" in args]
+    assert configs
+    assert all(" ".join(files) in " ".join(args) for args in configs)
+    *_, rules = docker.seen
+    assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
+    assert compose.PROD == "docker-compose.prod.yml"
+    assert compose.PROD_RULES == 27
