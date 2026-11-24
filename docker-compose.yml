@@ -1,13 +1,27 @@
-# Стек сервиса: db, redis, migrate, api. Web, урезанные права, сети и боевые отличия — Ч1.5б.
-# Портов наружу нет. Секреты — только окружением сервера, ${VAR:?причина}: у процесса ровно
-# переменные его проверки старта, прочее — поля конфига. Правила файла —
+# Стек сервиса: db, redis, migrate, api, web. Урезанные права, сети и боевые отличия — Ч1.5б.
+# Наружу — только порт web на петле. Секреты — только окружением сервера, ${VAR:?причина}: у
+# процесса ровно переменные его проверки старта, прочее — поля конфига. Правила файла —
 # ai_geo_audit.ops.stack_rules над `docker compose config --no-interpolate --format json`.
 name: ai-geo-audit
 
+# Урезанные права у каждого сервиса (A87): прав Linux нет, setuid их не добавит.
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
 services:
+  # Под пользователем образа: от root входной скрипт меняет права каталогов и пользователя, а прав
+  # на это нет. Корень только для чтения: сокет, lock-файл и временные файлы — в tmpfs (A87).
   db:
+    <<: *hardened
     image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    user: postgres
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
     restart: unless-stopped
+    networks: [data]
     environment:
       POSTGRES_USER: audit
       POSTGRES_DB: audit
@@ -22,8 +36,12 @@ services:
       start_period: 10s
 
   redis:
+    <<: *hardened
     image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    user: redis
+    read_only: true
     restart: unless-stopped
+    networks: [data]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -33,6 +51,7 @@ services:
 
   # Миграции — тем же образом до api, одноразово: без перезапуска, сбой называется по имени.
   migrate:
+    <<: *hardened
     build:
       context: .
       dockerfile: deploy/backend/Dockerfile
@@ -41,6 +60,8 @@ services:
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     init: true
+    read_only: true
+    networks: [data]
     depends_on:
       db:
         condition: service_healthy
@@ -49,9 +70,12 @@ services:
       DATABASE_URL: ${MIGRATE_DATABASE_URL:?задайте адрес базы migrate — .env.example}
 
   api:
+    <<: *hardened
     image: ${BACKEND_IMAGE:-ai-geo-audit-backend:local}
     restart: unless-stopped
     init: true
+    read_only: true
+    networks: [data, front]
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -74,6 +98,48 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # Фронт под nginx от uid 101: порт — только на петле машины, к нему ходит прокси хоста (Ч1.6).
+  # Проверка здоровья — страница, а не /api/health: перезапуск api не роняет статус web.
+  web:
+    <<: *hardened
+    build:
+      context: .
+      dockerfile: deploy/web/Dockerfile
+      target: web
+    image: ${WEB_IMAGE:-ai-geo-audit-web:local}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Постоянный адрес в front — единственный доверенный прокси api (A83); edge — для порта.
+    networks:
+      front:
+        ipv4_address: ${WEB_ADDRESS:?задайте адрес web в подсети front}
+      edge:
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${WEB_PORT:?задайте порт web на петле машины}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+# data — db, redis, migrate, api; front — api и web: обе без выхода наружу (A86). edge — обычная
+# сеть только у web: опубликованному порту нужна сеть с выходом.
+networks:
+  data:
+    internal: true
+  front:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${FRONT_SUBNET:?задайте подсеть front — /28 вне пулов докера}
+  edge:
 
 volumes:
   db-data:

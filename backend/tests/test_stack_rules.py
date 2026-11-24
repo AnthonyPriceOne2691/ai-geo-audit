@@ -1,4 +1,5 @@
-"""Правила стека над выводом `docker compose config --no-interpolate --format json` (A71–A73).
+"""Правила стека над выводом `docker compose config --no-interpolate --format json` (A71–A73,
+A87).
 
 Конфиги вымышленные и в той форме, что дал compose 5.7.0 (замер среза 0 в decisions): порты —
 объектами или, если в списке есть `${…}`, сырыми строками; `environment` — отображением или
@@ -7,6 +8,7 @@
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 from collections.abc import Callable
@@ -39,13 +41,47 @@ CODES = (
     "unknown-var",
     "env-file",
     "master-key",
+    "cap-drop",
+    "no-new-privileges",
+    "read-only",
+    "web-address",
+    "trusted-is-web",
+    "segments",
+    "internal",
 )
+TRUSTED = "API_TRUSTED_PROXIES"
 
 Found = set[tuple[str, str | None, str | None]]
 
 
+def hardened(name: str, *nets: str) -> dict[str, Any]:
+    """Урезанные права и сети сервиса в виде вывода compose 5.7.0 (A87): сети — отображением."""
+    shield = {"cap_drop": ["ALL"], "security_opt": ["no-new-privileges:true"], "read_only": True}
+    return shield | {"networks": dict.fromkeys(nets)}
+
+
 def valid() -> dict[str, Any]:
-    """Верный стек: db, redis, migrate, api; секреты — только `${VAR:?причина}`."""
+    """Верный стек: db, redis, migrate, api, web; секреты — только `${VAR:?причина}`; права
+    урезаны, сети — data, front и edge (A86, A87)."""
+    stack = plain()
+    nets = {"db": ("data",), "redis": ("data",), "migrate": ("data",), "api": ("data", "front")}
+    for name, service in stack["services"].items():
+        service.update(hardened(name, *nets[name]))
+    stack["services"]["web"] = copy.deepcopy(WEB)
+    stack["networks"] = {
+        "data": {"internal": True, "name": "ai-geo-audit_data"},
+        "front": {
+            "internal": True,
+            "ipam": {"config": [{"subnet": "${FRONT_SUBNET:?подсеть front}"}]},
+            "name": "ai-geo-audit_front",
+        },
+        "edge": {"name": "ai-geo-audit_edge"},
+    }
+    return stack
+
+
+def plain() -> dict[str, Any]:
+    """Стек Ч1.5а: db, redis, migrate, api; секреты — только `${VAR:?причина}`."""
     return {
         "name": "ai-geo-audit",
         "services": {
@@ -136,8 +172,11 @@ WEB = {
     "build": {"context": "/srv/copy", "dockerfile": "deploy/web/Dockerfile"},
     "image": "ai-geo-audit-web:local",
     "restart": "unless-stopped",
+    "depends_on": {"api": {"condition": "service_healthy", "required": True}},
     "healthcheck": {"test": ["CMD", "true"]},
+    **hardened("web", "edge"),
 }
+WEB["networks"]["front"] = {"ipv4_address": "${WEB_ADDRESS:?адрес web}"}
 WEB_OPEN = {**WEB, "ports": [{"published": "8080", "target": 80}]}
 PORT = [{"host_ip": "127.0.0.1", "published": "8080", "target": 80}]
 PG_NO_HOST = {"test": ["CMD-SHELL", "pg_isready -U a"]}
@@ -172,6 +211,7 @@ STRUCTURE = [
         None,
     ),
     (put(svc("migrate"), "depends_on", ["db"]), "order", "migrate", None),
+    (drop(svc("web"), "depends_on"), "order", "web", None),
     (drop(svc("migrate"), "init"), "init", "migrate", None),
     (put(svc("api"), "init", False), "init", "api", None),
     (put(svc("db"), "healthcheck", PG_NO_HOST), "db-health-tcp", "db", None),
@@ -364,18 +404,31 @@ def test_a72_violation_names_code_service_variable_without_value(
     assert "нарушений 1" in out
 
 
-def test_a73_rule_codes_are_exactly_the_sixteen_of_a71_a72_in_order() -> None:
-    """A73: перечень кодов модуля — ровно шестнадцать кодов A71 и A72, в том же порядке."""
+def test_a73_a87_rule_codes_are_the_sixteen_of_a71_a72_and_seven_of_a87_in_order() -> None:
+    """A73, A87: перечень кодов модуля — шестнадцать кодов A71 и A72 и семь кодов A87, по
+    порядку; `stop-grace` (A88) — срез 5."""
     assert sr.RULES == CODES
 
 
-def test_a73_summary_names_services_and_rules(
+def test_a73_a87_summary_names_services_and_rules(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A73: верный стек — код 0, «сервисов 4, правил 16», нарушений 0."""
+    """A73, A87: верный стек — код 0, «сервисов 5, правил 23», нарушений 0."""
     code, out = run(monkeypatch, capsys, json.dumps(valid()))
     assert code == 0
-    assert out.strip() == "итог: сервисов 4, правил 16, нарушений 0"
+    assert out.strip() == "итог: сервисов 5, правил 23, нарушений 0"
+
+
+def test_a73_web_waits_for_api_by_health_or_the_order_is_red(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A73: строка web в `ORDER` — у web без `depends_on` нарушение «ждёт api не по
+    service_healthy»; у web, который ждёт api по здоровью, — нет."""
+    stack = valid()
+    stack["services"]["web"].pop("depends_on")
+    code, out = run(monkeypatch, capsys, json.dumps(stack))
+    assert code == 1
+    assert "order: сервис web — ждёт api не по service_healthy" in out.splitlines()
 
 
 def interpolated() -> str:
@@ -397,9 +450,21 @@ def interpolated() -> str:
         ("{}", "ноль сервисов"),
         ('{"name": "ai-geo-audit", "services": {}}', "ноль сервисов"),
         ('{"services": {"api": {"environment": "X=${Y:?r}"}}}', "незнакомого вида"),
+        ('{"networks": {"data": "internal"}, "services": {"a": {}}}', "networks незнакомого"),
+        ('{"networks": ["data"], "services": {"a": {}}}', "networks незнакомого"),
         (interpolated(), "--no-interpolate"),
     ],
-    ids=["пусто", "пробелы", "не json", "без services", "ноль сервисов", "вид", "подстановка"],
+    ids=[
+        "пусто",
+        "пробелы",
+        "не json",
+        "без services",
+        "ноль сервисов",
+        "вид",
+        "сеть-строка",
+        "сети-списком",
+        "подстановка",
+    ],
 )
 def test_a73_empty_or_wrong_input_is_refused_not_clean(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], text: str, reason: str
@@ -410,3 +475,101 @@ def test_a73_empty_or_wrong_input_is_refused_not_clean(
     assert code == 2
     assert out.startswith("отказ: ") and reason in out
     assert "нарушений" not in out
+
+
+def web_front(config: dict[str, Any]) -> dict[str, Any]:
+    return config["services"]["web"]["networks"]["front"]
+
+
+def network(name: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    return lambda config: config["networks"][name]
+
+
+WEB_IN_DATA = {"edge": None, "front": {"ipv4_address": "${WEB_ADDRESS:?адрес}"}, "data": None}
+# Проба и ровно её нарушения (A87, вторая строка): код, сервис, переменная.
+HARDENING = [
+    (drop(svc("redis"), "cap_drop"), {("cap-drop", "redis", None)}),
+    (put(svc("api"), "cap_drop", ["NET_RAW"]), {("cap-drop", "api", None)}),
+    (drop(svc("db"), "security_opt"), {("no-new-privileges", "db", None)}),
+    (
+        put(svc("web"), "security_opt", ["no-new-privileges:false"]),
+        {("no-new-privileges", "web", None)},
+    ),
+    (drop(svc("migrate"), "read_only"), {("read-only", "migrate", None)}),
+    (put(svc("web"), "read_only", False), {("read-only", "web", None)}),
+    (put(svc("db"), "read_only", False), {("read-only", "db", None)}),
+    (drop(web_front, "ipv4_address"), {("web-address", "web", None)}),
+    (put(web_front, "ipv4_address", "${WEB_ADDRESS:-172.16.0.14}"), {("web-address", "web", None)}),
+    (put(svc("web"), "networks", {"edge": None}), {("web-address", "web", None)}),
+    (drop(services, "web"), {("web-address", "web", None)}),
+    (put(env("api"), TRUSTED, "172.16.0.14"), {("trusted-is-web", "api", TRUSTED)}),
+    (put(web_front, "ipv4_address", "172.16.0.14"), {("trusted-is-web", "api", TRUSTED)}),
+    (
+        put(web_front, "ipv4_address", "${FRONT_ADDRESS:?адрес}"),
+        {("trusted-is-web", "api", TRUSTED)},
+    ),
+    (put(svc("web"), "networks", WEB_IN_DATA), {("segments", "web", None)}),
+    (put(svc("redis"), "networks", {"data": None, "edge": None}), {("segments", "redis", None)}),
+    (drop(svc("api"), "networks"), {("segments", "api", None)}),
+    (put(svc("db"), "networks", {"default": None}), {("segments", "db", None)}),
+    (
+        drop(network("data"), "internal"),
+        {("internal", name, None) for name in ("db", "redis", "migrate", "api")},
+    ),
+    (
+        put(network("front"), "internal", False),
+        {("internal", "api", None), ("internal", "web", None)},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("spoil", "expected"),
+    HARDENING,
+    ids=[" ".join(sorted({f"{c} {s}" for c, s, _ in want})) for _, want in HARDENING],
+)
+def test_a87_each_hardening_rule_has_its_probe(spoil: Callable, expected: Found) -> None:
+    """A87, вторая строка: проба каждого условия правил защиты — ровно её нарушения с кодом
+    правила и именем сервиса; без правила его проба проходит, и тест красный."""
+    config = valid()
+    spoil(config)
+    assert found(config) == expected
+
+
+def both_literal(config: dict[str, Any]) -> None:
+    web_front(config)["ipv4_address"] = "172.16.0.14"
+    config["services"]["api"]["environment"][TRUSTED] = " 172.16.0.14"
+
+
+# Соседние случаи без нарушения (L53): лишние права к ALL, адрес числом у обоих, сети списком,
+# обычная сеть у web.
+CALM = [
+    put(svc("redis"), "cap_drop", ["NET_RAW", "ALL"]),
+    put(svc("api"), "security_opt", ["seccomp=unconfined", "no-new-privileges:true"]),
+    both_literal,
+    put(svc("redis"), "networks", ["data"]),
+    put(svc("web"), "networks", {"front": {"ipv4_address": "${WEB_ADDRESS:?а}"}, "edge": {}}),
+]
+
+
+@pytest.mark.parametrize(
+    "change",
+    CALM,
+    ids=["all-и-ещё", "две-опции", "адрес-числом", "сети-списком", "edge-у-web"],
+)
+def test_a87_neighbour_cases_are_not_violations(change: Callable) -> None:
+    """A87, вторая строка: соседние случаи — `ALL` среди других, `no-new-privileges` среди
+    опций, один и тот же адрес числом у web и api, сети списком, обычная сеть у web — не
+    нарушения."""
+    config = valid()
+    change(config)
+    assert found(config) == set()
+
+
+def test_a87_root_is_read_only_everywhere_and_the_exception_list_is_empty() -> None:
+    """A87, первая строка: корень только для чтения у всех пяти, у db — с `tmpfs` (слово
+    владельца 2026-11-23T14:12:15Z). Список исключений правила `read-only` пуст, механизм
+    остаётся: вторая строка A87 — «не в списке исключений»."""
+    from ai_geo_audit.ops import stack_hardening
+
+    assert stack_hardening.WRITABLE_ROOT == {}

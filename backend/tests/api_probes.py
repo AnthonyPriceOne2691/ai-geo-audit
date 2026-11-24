@@ -72,8 +72,10 @@ SAMPLES = json.loads((dbtools.ROOT / "contracts" / "api-refusals.json").read_tex
 
 
 def sample(kind: str) -> dict[str, Any]:
-    """Образец вида из файла договора — раздела сервиса `samples`."""
-    return next(s for s in SAMPLES["samples"] if s["id"] == kind)
+    """Образец из файла договора по `id` — раздела сервиса `samples` или раздела прокси `proxy`."""
+    return next(
+        s for part in ("samples", "proxy") for s in SAMPLES.get(part, []) if s["id"] == kind
+    )
 
 
 class ProbeBody(RequestModel):

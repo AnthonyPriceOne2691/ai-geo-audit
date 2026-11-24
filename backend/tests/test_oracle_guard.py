@@ -264,10 +264,11 @@ class SignalDuringUp(oracle.Docker):  # type: ignore[name-defined,misc]
 
 
 #: Свои объекты прогона к `up --wait` — что записали шаги до подъёма: сборка (контейнер
-#: `-inspect`, образ `-backend:oracle`), проба контекста (образ `-context:oracle`), две выгрузки
-#: под одним именем `-export`, правила A73 (`-rules`).
-OWN_CONTAINERS = ("inspect", "export", "export", "rules")
-OWN_IMAGES = ("backend:oracle", "context:oracle")
+#: `-inspect`, образ `-backend`), проба контекста (образ `-context`), выгрузки под одним именем
+#: `-export`, образ web (`-web`, стадия `-web-build`, контейнер `-web-dist`, проба контекста
+#: `-web-context`), правила A73 (`-rules`); у образов метка `:oracle`.
+OWN_CONTAINERS = ("inspect", "export", "export", "web-dist", "export", "export", "rules")
+OWN_IMAGES = ("backend", "context", "web", "web-build", "web-context")
 
 
 def interrupted_run(
@@ -279,7 +280,7 @@ def interrupted_run(
     (copy / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
     name = guard.stack_name(copy)
     docker.containers.extend(f"{name}-{kind}" for kind in OWN_CONTAINERS)
-    docker.images.extend(f"{name}-{kind}" for kind in OWN_IMAGES)
+    docker.images.extend(f"{name}-{kind}:oracle" for kind in OWN_IMAGES)
     run = oracle.Run(docker, copy, name, "oracle-canary-0", {})
     up = [step for step in oracle.STEPS if step[2].__name__ == "step_up"]
     code = oracle.finish(run, up)
@@ -298,7 +299,7 @@ def one_cleanup_pass(docker: SignalDuringUp, after: list[tuple[str, ...]], name:
     assert {"-v", "--remove-orphans"} <= set(down)
     removals = [c for c in after if "down" in c or "rm" in c]
     own = [("rm", "-f", "-v", f"{name}-{kind}") for kind in dict.fromkeys(OWN_CONTAINERS)]
-    own += [("image", "rm", "-f", f"{name}-{kind}") for kind in OWN_IMAGES]
+    own += [("image", "rm", "-f", f"{name}-{kind}:oracle") for kind in OWN_IMAGES]
     assert sorted(removals) == sorted([down, *own]), removals
     names = {m for c in docker.commands for m in STACK_NAME.findall(" ".join(c))}
     assert names and all(n.startswith(name) for n in names), names
@@ -310,7 +311,7 @@ def test_a74_signal_during_up_gives_exactly_one_down_of_its_own_name(
 ) -> None:
     """A74, первая и вторая строки: сигнал во время `up --wait` — выход 130 (SIGINT) или 143
     (SIGTERM); после сигнала один проход уборки: одна `down -v --remove-orphans` своего имени и
-    удаление своих трёх контейнеров и двух образов по точному имени — шесть удалений, каждое
+    удаление своих четырёх контейнеров и пяти образов по точному имени — десять удалений, каждое
     один раз, других нет."""
     docker = SignalDuringUp(sent)
     got, after, name = interrupted_run(tmp_path, docker)

@@ -91,6 +91,8 @@ BOM = {
         },
     ],
 }
+#: Опись образа web: ОС его базы, пакетов Python нет — окружение не читается.
+ALPINE = {"type": "operating-system", "name": "alpine", "version": "3.24.4"}
 
 
 def vuln(ident: str, package: str, version: str, fixed: str = "", severity: str = "HIGH") -> Any:
@@ -154,6 +156,8 @@ class Fake:
             out = b""
         elif argv[1] == "rootfs":
             out = self.canary
+        elif "cyclonedx" in argv and argv[argv.index("--input") + 1].endswith("web.tar"):
+            out = json.dumps({**BOM, "components": [ALPINE]}).encode()
         elif "cyclonedx" in argv:
             out = json.dumps(BOM).encode()
         return subprocess.CompletedProcess(argv, code, out, err)
@@ -584,7 +588,7 @@ def test_a127_bom_of_the_same_image_file_and_its_count_and_sum_in_the_journal(
 ) -> None:
     """A127: опись CycloneDX того же файла образа; каждый пакет окружения — в описи с той же
     версией (имена по PEP 503), иначе «сканер не видит пакет <имя>»; число компонентов и sha256
-    описи — в журнале; окружение читается в контейнере без сети."""
+    описи — в журнале; окружение — в контейнере без сети и только у образа с Python."""
     fake = Fake(env=env)
     assert scan.run("trivy", tmp_path, fake) == 0
     capsys.readouterr()
@@ -597,8 +601,19 @@ def test_a127_bom_of_the_same_image_file_and_its_count_and_sum_in_the_journal(
     assert text in out
     bom = next(call for call in fake.calls if "cyclonedx" in call)
     assert bom[bom.index("--input") + 1] == str(tmp_path / "backend.tar")
-    probe = next(call for call in fake.calls if call[:2] == ["docker", "run"])
+    [probe] = [call for call in fake.calls if call[:2] == ["docker", "run"]]
     assert probe[probe.index("--network") + 1] == "none"
+    assert "ai-geo-audit-scan:backend" in probe
+
+
+def test_a126_a127_scan_list_has_the_web_image_on_alpine_without_python() -> None:
+    """A126, A127: в списке скана — образ сервиса на debian с окружением Python и образ web на
+    alpine без него: опись web сверяет только ОС базы."""
+    images = [(i.dockerfile, i.target, i.os, i.python) for i in scan.IMAGES]
+    assert images == [
+        ("deploy/backend/Dockerfile", "backend", "debian", True),
+        ("deploy/web/Dockerfile", "web", "alpine", False),
+    ]
 
 
 def test_a127_bom_problems_name_the_package_the_empty_bom_and_the_os() -> None:
@@ -672,12 +687,12 @@ def test_a128_canary_runs_without_the_ignore_file(tmp_path: Path) -> None:
 
 
 def trivy_calls(work: Path) -> list[list[str]]:
-    """Все вызовы `trivy` за `run` и `sbom`: база, канарейка, скан образа, опись."""
+    """Все вызовы `trivy` за `run` и `sbom`: база, канарейка, скан и опись каждого образа."""
     fake = Fake()
     assert scan.run("trivy", work, fake) == 0
     assert scan.sbom("trivy", work, fake) == 0
     calls = [call for call in fake.calls if call[0] == "trivy"]
-    assert len(calls) == 4, calls
+    assert len(calls) == 2 + 2 * len(scan.IMAGES), calls
     return calls
 
 
@@ -709,5 +724,5 @@ def test_a126_only_the_download_touches_the_db_scans_skip_the_update(tmp_path: P
     assert len(downloads) == 1
     assert "--skip-db-update" not in downloads[0]
     scans = [call for call in calls if "--download-db-only" not in call]
-    assert len(scans) == 3
+    assert len(scans) == 1 + 2 * len(scan.IMAGES)
     assert all("--skip-db-update" in call for call in scans), scans

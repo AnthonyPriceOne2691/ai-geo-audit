@@ -76,7 +76,10 @@ class Image:
 
 
 #: Список скана — каждый образ, который собирает репозиторий; страж A126 сверяет его с `deploy/`.
-IMAGES = (Image("deploy/backend/Dockerfile", "backend", "debian", python=True),)
+IMAGES = (
+    Image("deploy/backend/Dockerfile", "backend", "debian", python=True),
+    Image("deploy/web/Dockerfile", "web", "alpine", python=False),
+)
 IGNORE_FILE = ".trivyignore"
 OWNER = "by=human:owner"
 #: У каждого вызова `trivy` (A129): без проверки версии и телеметрии; только уязвимости пакетов

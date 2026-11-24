@@ -27,6 +27,7 @@ from pydantic import SecretStr
 
 from ai_geo_audit import config
 from ai_geo_audit.config import startup_checks
+from ai_geo_audit.ops import stack_hardening as hard
 
 STACK_NAME = "ai-geo-audit"
 #: Образы из реестра: имя и тег линии (слово владельца 2026-11-19T10:40Z, дайджесты — срез 0).
@@ -41,12 +42,11 @@ IMAGE_WORKDIR = "/app"
 MASTER_KEY_NAME = "master_key"
 #: Секреты образов, а не конфига: пароль суперпользователя базы задаёт образ postgres.
 IMAGE_SECRETS = frozenset({"POSTGRES_PASSWORD"})
-#: Единственный доверенный прокси api — адрес web из переменной сервера.
-WEB_ADDRESS = "WEB_ADDRESS"
 #: Кто кого ждёт и по какому условию.
 ORDER = (
     ("api", "migrate", "service_completed_successfully"),
     ("migrate", "db", "service_healthy"),
+    ("web", "api", "service_healthy"),
 )
 #: Виды полей, которые читают правила; другой вид — отказ, а не «нарушений нет».
 SHAPES: dict[str, tuple[type, ...]] = {
@@ -58,12 +58,15 @@ SHAPES: dict[str, tuple[type, ...]] = {
     "env_file": (list,),
     "depends_on": (dict, list),
     "healthcheck": (dict,),
+    "networks": (dict, list),
+    "cap_drop": (list,),
+    "security_opt": (list,),
 }
 
 #: Сервис и процесс сопоставляются по имени: api — `api`, migrate — `migrate`.
 _PROCESSES: dict[str, startup_checks.Process] = {p: p for p in get_args(startup_checks.Process)}
 _REF = re.compile(r"\$\{[^}]*\}")
-_STRICT_REF = re.compile(r"\$\{([A-Za-z_]\w*):\?[^}]+\}")
+_STRICT_REF = hard.STRICT_REF
 _IMAGE = re.compile(r"(?P<name>[a-z0-9._/-]+):(?P<tag>[\w.-]+)@sha256:[0-9a-f]{64}")
 _PG_HOST = re.compile(r"(?:^|\s)(?:-h|--host)(?:=|\s+)(\S+)")
 
@@ -95,6 +98,7 @@ class Stack:
     name: object
     services: dict[str, dict[str, Any]]
     env: dict[str, dict[str, object]]
+    networks: dict[str, dict[str, Any]]
 
 
 def _own(service: str) -> frozenset[str]:
@@ -119,6 +123,9 @@ def parse(raw: object) -> Stack:
     services = raw.get("services") if isinstance(raw, dict) else None
     if not isinstance(raw, dict) or not isinstance(services, dict) or not services:
         raise InputRefusedError("ноль сервисов — правилам нечего проверять")
+    networks = raw.get("networks") or {}
+    if not isinstance(networks, dict) or not all(isinstance(n, dict) for n in networks.values()):
+        raise InputRefusedError("networks незнакомого вида")
     env: dict[str, dict[str, object]] = {}
     for name, service in services.items():
         if not isinstance(service, dict):
@@ -133,7 +140,7 @@ def parse(raw: object) -> Stack:
             "в environment нет ни одной ссылки ${…} — похоже на вывод без --no-interpolate: "
             "с подстановкой правила не видят env_file"
         )
-    return Stack(raw.get("name"), services, env)
+    return Stack(raw.get("name"), services, env, networks)
 
 
 def _stack_name(stack: Stack) -> Iterator[Finding]:
@@ -237,23 +244,14 @@ def _image_digest(stack: Stack) -> Iterator[Finding]:
             yield name, None, "образ из реестра — не «имя:тег линии@sha256:…» из списка"
 
 
-def _one_address(text: str) -> bool:
-    try:
-        ipaddress.ip_address(text.strip())
-    except ValueError:
-        return False
-    return True
-
-
 def _trusted_proxy(stack: Stack) -> Iterator[Finding]:
     var = "API_TRUSTED_PROXIES"
     for name, values in stack.env.items():
         value = values.get(var)
         if var not in _own(name) or value in (None, ""):
             continue  # нет переменной — правило required-vars
-        ref = _STRICT_REF.fullmatch(str(value))
-        if (ref[1] if ref else None) != WEB_ADDRESS and not _one_address(str(value)):
-            yield name, var, f"доверенный прокси — не один адрес из {WEB_ADDRESS}"
+        if hard.trusted(value) is None:
+            yield name, var, f"доверенный прокси — не один адрес из {hard.WEB_ADDRESS}"
 
 
 def _volume_target(entry: object) -> str:
@@ -379,6 +377,13 @@ CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("unknown-var", _unknown_var),
     ("env-file", _env_file),
     ("master-key", _master_key),
+    ("cap-drop", hard.cap_drop),
+    ("no-new-privileges", hard.no_new_privileges),
+    ("read-only", hard.read_only),
+    ("web-address", hard.web_address),
+    ("trusted-is-web", hard.trusted_is_web),
+    ("segments", hard.segments),
+    ("internal", hard.internal),
 )
 RULES = tuple(code for code, _ in CHECKS)
 
