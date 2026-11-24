@@ -301,3 +301,16 @@ def test_a88_crash_step_without_a_child_of_init_or_a_restart_is_red(
     with pytest.raises(stop.StepError, match="api не перезапущен за 50 с"):
         stop.step_crash(SimpleNamespace())
     assert seen == ["exec True", "exec False", "start", "healthy"]
+
+
+def test_a88_crash_step_with_a_silent_network_is_red_and_returns_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A88, четвёртая строка: перезапуск и healthy есть, а из сети стека api не отвечает —
+    красное с причиной; api возвращается (L88)."""
+    seen = stack(monkeypatch, [])
+    monkeypatch.setattr(stop, "net_health", lambda run: ("8107", SimpleNamespace(returncode=1)))
+    monkeypatch.setattr(stop, "time", clock(5.0))
+    with pytest.raises(stop.StepError, match="из сети стека — код 1"):
+        stop.step_crash(SimpleNamespace())
+    assert seen[-2:] == ["start", "healthy"]

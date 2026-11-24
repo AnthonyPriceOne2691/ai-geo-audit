@@ -231,6 +231,30 @@ def test_a69_a88_network_probe_takes_the_api_port_from_its_environment(
         assert sent[-1] == (*once, compose.NET_PROBE.format(port=port))
 
 
+@pytest.mark.parametrize(("net", "why"), [(0, ""), (1, "из сети стека — URLError: refused")])
+def test_a69_health_step_takes_the_network_answer_from_net_health(
+    monkeypatch: pytest.MonkeyPatch, net: int, why: str
+) -> None:
+    """A69: шаг здоровья — healthy не позже 50 с от старта, проба внутри и запрос из сети стека
+    через `net_health`; молчание сети — красное с ответом пробы."""
+    log = [
+        {"ExitCode": 1, "End": "2026-11-24T11:00:05.000000Z"},
+        {"ExitCode": 0, "End": "2026-11-24T11:00:12.500000Z"},
+    ]
+    api = {"State": {"StartedAt": "2026-11-24T11:00:00.000000Z", "Health": {"Log": log}}}
+    answer = SimpleNamespace(returncode=net, stdout=b"URLError: refused\n")
+    monkeypatch.setattr(compose, "inspect", lambda run, service: api)
+    monkeypatch.setattr(
+        compose, "compose_result", lambda *args, **kw: SimpleNamespace(returncode=0)
+    )
+    monkeypatch.setattr(compose, "net_health", lambda run: ("8107", answer))
+    if not why:
+        assert compose.step_health(SimpleNamespace()).startswith("healthy через 12.5 с от старта")
+        return
+    with pytest.raises(compose.StepError, match=why):
+        compose.step_health(SimpleNamespace())
+
+
 @pytest.mark.parametrize(
     ("change", "problem"),
     [
