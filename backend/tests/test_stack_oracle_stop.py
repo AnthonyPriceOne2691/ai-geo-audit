@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterator
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -124,6 +125,34 @@ def test_a88_uvicorn_must_be_the_one_child_of_init(found: list[str], child: bool
     """A88, четвёртая строка: убивается ровно один процесс `python -m ai_geo_audit.api`, и его
     родитель — init (pid 1): без init сигнал первому процессу пространства не дойдёт."""
     assert stop.child_of_init(found) is child
+
+
+#: Процессы контейнера api в миниатюре `/proc`: командная строка и `stat` — init с той же командой
+#: в хвосте, uvicorn — его сын, проба здоровья Docker — сын нулевого процесса.
+PROCESSES = {
+    "1": (b"/sbin/docker-init\0--\0python\0-m\0ai_geo_audit.api\0", "1 (docker-init) S 0 1 1"),
+    "7": (b"python\0-m\0ai_geo_audit.api\0", "7 (python) S 1 7 7"),
+    "33": (b"python\0-m\0ai_geo_audit.api.probe\0", "33 (python) S 0 33 33"),
+}
+
+
+def test_a88_search_takes_only_uvicorn_by_argv_words(tmp_path: Path) -> None:
+    """A88, четвёртая строка: поиск сверяет слова argv — ровно `python -m ai_geo_audit.api`; init с
+    той же командой в хвосте и проба здоровья `ai_geo_audit.api.probe` рядом с uvicorn не
+    находятся; процесс, исчезнувший посреди обхода, и записи не-числа пропускаются."""
+    for pid, (cmdline, stat) in PROCESSES.items():
+        (tmp_path / pid).mkdir()
+        (tmp_path / pid / "cmdline").write_bytes(cmdline)
+        (tmp_path / pid / "stat").write_text(stat, encoding="utf-8")
+    (tmp_path / "40").mkdir()
+    (tmp_path / "self").mkdir()
+    done = subprocess.run(
+        [sys.executable, "-c", stop.FIND, str(tmp_path)],
+        capture_output=True,
+        encoding="utf-8",
+        check=True,
+    )
+    assert done.stdout.split() == ["7", "1"]
 
 
 class Answer:
