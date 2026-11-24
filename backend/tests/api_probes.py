@@ -264,7 +264,7 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     key.write_text("master-key-from-plain-words-for-tests-only", encoding="utf-8")
     env = {
         "APP_ENV": "prod",
-        "DATABASE_URL": f"postgresql+asyncpg://audit:{PROD_DB_WORDS}@db:5432/audit",
+        "DATABASE_URL": f"postgresql+asyncpg://audit_app:{PROD_DB_WORDS}@db:5432/audit",
         "REDIS_URL": "redis://redis:6379/0",
         "JWT_SECRET": PROD_JWT_WORDS,
         "KEYS_MASTER_KEY_FILE": str(key),

@@ -11,8 +11,16 @@ import pytest
 from ai_geo_audit import config
 from ai_geo_audit.config import startup_checks as sc
 
+#: Роли процессов литералами: тест сверяет таблицу `startup_checks.DB_ROLES`, а не берёт её (A174).
+ROLE: dict[sc.Process, str] = {
+    "api": "audit_app",
+    "worker": "audit_app",
+    "migrate": "audit_migrate",
+}
 # pragma: allowlist nextline secret
-DSN = "postgresql+asyncpg://audit:pw-1234567890@db:5432/audit"
+DSN = "postgresql+asyncpg://audit_app:pw-1234567890@db:5432/audit"
+# pragma: allowlist nextline secret
+DSN_MIGRATE = "postgresql+asyncpg://audit_migrate:pw-1234567890@db:5432/audit"
 
 
 @pytest.fixture
@@ -90,7 +98,7 @@ def test_a3_master_key_file_must_exist(monkeypatch: pytest.MonkeyPatch, master_k
 def test_a3_processes_need_different_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """A3, A33: миграциям хватает базы; воркеру не нужен секрет входа, api — нужно всё, и ещё
     адреса прокси (A33)."""
-    assert names(prod(monkeypatch, "migrate", DATABASE_URL=DSN)) == set()
+    assert names(prod(monkeypatch, "migrate", DATABASE_URL=DSN_MIGRATE)) == set()
     worker = {"REDIS_URL", "KEYS_MASTER_KEY_FILE"}
     assert names(prod(monkeypatch, "worker", DATABASE_URL=DSN)) == worker
     api = worker | {"JWT_SECRET", "API_TRUSTED_PROXIES"}
@@ -110,7 +118,9 @@ def test_a33_prod_api_needs_trusted_proxies_explicitly(
     with pytest.raises(sc.ConfigError) as refusal:
         sc.check_startup("api", prod(monkeypatch, "api", **env))
     assert [line.strip() for line in str(refusal.value).splitlines()[1:]] == [EXPLICIT]
-    assert [p for p in ("worker", "migrate") if names(prod(monkeypatch, p, **env))] == []
+    worker = names(prod(monkeypatch, "worker", **env))
+    migrate = names(prod(monkeypatch, "migrate", **env | {"DATABASE_URL": DSN_MIGRATE}))
+    assert (worker, migrate) == (set(), set())
 
 
 def test_a4_starts_without_external_keys(monkeypatch: pytest.MonkeyPatch, master_key: str) -> None:
@@ -131,7 +141,7 @@ UNENCODED = ["pa@ss-word-123456", "pa#ss-word-123456", "pa?ss-word-123456", "pa/
 PROCESSES: list[sc.Process] = ["api", "worker", "migrate"]
 
 
-def db(password: str | None, rest: str = "db:5432/audit", user: str = "audit") -> str:
+def db(password: str | None, rest: str = "db:5432/audit", user: str = "audit_migrate") -> str:
     auth = user if password is None else f"{user}:{password}"
     return f"postgresql+asyncpg://{auth}@{rest}"
 
@@ -143,7 +153,8 @@ def test_a21_unencoded_sign_in_the_db_password_is_refused(
 ) -> None:
     """A21: в бою в пароле базы не закодирован `@`, `#`, `?` или `/` — `api`, `worker` и `migrate`
     не стартуют со своей причиной, а не «короче 12»; ни адреса, ни куска пароля в отказе нет."""
-    found = prod(monkeypatch, process, **full_env(master_key) | {"DATABASE_URL": db(password)})
+    url = db(password, user=ROLE[process])
+    found = prod(monkeypatch, process, **full_env(master_key) | {"DATABASE_URL": url})
     assert found == [sc.Problem("DATABASE_URL", sc.DB_URL_UNENCODED_CHARS)]
     assert "ss-word" not in sc.DB_URL_UNENCODED_CHARS and "audit" not in sc.DB_URL_UNENCODED_CHARS
 
@@ -154,7 +165,7 @@ GOOD = [
     db("pass-word-123456", "db/audit"),
     db("pass-word-123456", "db:5432/audit?ssl=require"),
     db("pa%40ss-word-123456"),
-    db("pass-word-123456", "db:5432/au%2Fdit", user="au%40dit"),
+    db("pass-word-123456", "db:5432/au%2Fdit", user="audit%5Fmigrate"),
     db(quote("пароль-длин1")),
 ]
 
@@ -176,9 +187,9 @@ def test_a21_db_password_of_11_signs_is_refused_and_12_starts(
 ) -> None:
     """A21: в бою пароль базы 11 знаков — `api`, `worker` и `migrate` не стартуют с причиной
     «пароль базы короче 12 знаков»; 12 — старт."""
-    env = full_env(master_key)
-    assert prod(monkeypatch, process, **env | {"DATABASE_URL": db("a" * 11)}) == [SHORT]
-    assert prod(monkeypatch, process, **env | {"DATABASE_URL": db("a" * 12)}) == []
+    env, user = full_env(master_key), ROLE[process]
+    assert prod(monkeypatch, process, **env | {"DATABASE_URL": db("a" * 11, user=user)}) == [SHORT]
+    assert prod(monkeypatch, process, **env | {"DATABASE_URL": db("a" * 12, user=user)}) == []
 
 
 @pytest.mark.parametrize(
@@ -211,3 +222,88 @@ def test_a21_migrate_refuses_an_unencoded_password_without_printing_it() -> None
     assert sc.DB_URL_UNENCODED_CHARS in run.stderr
     assert "Traceback" not in run.stderr, run.stderr[-1500:]
     assert "ss-word-123456" not in run.stderr
+
+
+#: Чужие роли по процессам (A174): у сервиса — роль миграций и суперпользователь образа.
+FOREIGN: list[tuple[sc.Process, str]] = [
+    ("api", "audit_migrate"),
+    ("api", "audit"),
+    ("worker", "audit_migrate"),
+    ("worker", "audit"),
+    ("migrate", "audit_app"),
+]
+LONG = "pw-1234567890"
+
+
+def foreign_role(process: sc.Process) -> sc.Problem:
+    return sc.Problem("DATABASE_URL", f"в адресе чужая роль базы — нужна {ROLE[process]}")
+
+
+@pytest.mark.parametrize(("process", "user"), FOREIGN, ids=[f"{p}-{u}" for p, u in FOREIGN])
+def test_a174_foreign_db_role_is_refused_without_the_found_name(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process, user: str
+) -> None:
+    """A174: в бою у `api` и `worker` в адресе базы роль `audit_migrate` или суперпользователь
+    `audit`, у `migrate` — `audit_app`: отказ у `DATABASE_URL` ровно «в адресе чужая роль базы —
+    нужна <роль процесса>»; найденного имени и пароля в тексте отказа нет."""
+    env = full_env(master_key) | {"DATABASE_URL": db(LONG, user=user)}
+    found = prod(monkeypatch, process, **env)
+    assert found == [foreign_role(process)]
+    with pytest.raises(sc.ConfigError) as refusal:
+        sc.check_startup(process, found)
+    assert str(refusal.value).splitlines()[1:] == [f"  DATABASE_URL — {foreign_role(process).why}"]
+    assert LONG not in str(refusal.value)
+
+
+@pytest.mark.parametrize("process", PROCESSES)
+def test_a174_own_db_role_starts(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process
+) -> None:
+    """A174: верные роли — старт: `api` и `worker` с `audit_app`, `migrate` с `audit_migrate`."""
+    env = full_env(master_key) | {"DATABASE_URL": db(LONG, user=ROLE[process])}
+    assert prod(monkeypatch, process, **env) == []
+
+
+def test_a174_role_name_is_compared_after_decoding(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A174: имя роли в процентной записи `audit%5Fapp` у `api` — старт: имя сверяется после
+    раскодирования, а не по записи."""
+    env = full_env(master_key) | {"DATABASE_URL": db(LONG, user="audit%5Fapp")}
+    assert prod(monkeypatch, "api", **env) == []
+
+
+def test_a174_password_in_the_name_place_is_short_and_not_printed(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A174: пароль на месте имени — `postgresql+asyncpg://<пароль из 16 знаков>@db:5432/audit` —
+    отказ «пароль базы короче 12 знаков», а не о роли; пароля в тексте нет."""
+    word = "Name-Pass-123456"
+    url = f"postgresql+asyncpg://{word}@db:5432/audit"
+    found = prod(monkeypatch, "api", **full_env(master_key) | {"DATABASE_URL": url})
+    assert found == [SHORT]
+    assert word not in found[0].why
+
+
+def test_a174_one_reason_per_variable_role_goes_last(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A174 и A21: одна переменная — одна причина, роль — последней: чужая роль с паролем в 11
+    знаков — «короче 12», с незакодированным «@» в пароле — причина разборщиков."""
+    env = full_env(master_key)
+    assert prod(monkeypatch, "api", **env | {"DATABASE_URL": db("a" * 11, user="audit")}) == [SHORT]
+    unencoded = db("pa@ss-word-123456", user="audit")
+    found = prod(monkeypatch, "api", **env | {"DATABASE_URL": unencoded})
+    assert found == [sc.Problem("DATABASE_URL", sc.DB_URL_UNENCODED_CHARS)]
+
+
+def test_a174_outside_prod_a_foreign_role_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A174: `APP_ENV=dev` с чужой ролью — молчит."""
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", db(LONG, user="audit"))
+    assert sc.problems("api", app=config.AppSettings(), storage=config.StorageSettings()) == []
+
+
+def test_a174_process_roles_come_from_one_table() -> None:
+    """A174: роли процессов — одна таблица `startup_checks.DB_ROLES`; её же сверяет A179."""
+    assert sc.DB_ROLES == ROLE
