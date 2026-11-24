@@ -109,17 +109,28 @@ React с Vite и Mantine, pytest, docker compose.
 
 ## Стек compose и оракул
 
-- Стек — `docker-compose.yml`: db, redis, migrate и api, портов наружу нет. Переменные стека —
-  блок в `.env.example`; подъём — `docker compose up -d --wait`: migrate прогоняет миграции и
-  выходит, api стартует только после его успешного выхода. Сбой migrate назван по имени.
+- Стек — `docker-compose.yml`: db, redis, migrate, api и web. Наружу — только порт web на петле
+  машины (`WEB_PORT`), к нему ходит прокси хоста. Переменные стека — блок в `.env.example`;
+  подъём — `docker compose up -d --wait`: migrate прогоняет миграции и выходит, api стартует
+  только после его успешного выхода, web — когда api healthy. Сбой migrate назван по имени.
 - Образ сервиса — `deploy/backend/Dockerfile`, контекст — корень, белый список — рядом
   (`Dockerfile.dockerignore`, нужен BuildKit). Базы — по дайджесту; обновление — правкой тега и
   дайджеста со строкой в decisions поставки.
+- Образ web — `deploy/web/Dockerfile`: фронт собирает node 24, отдаёт nginx 1.30 от uid 101;
+  в корне сайта — ровно `dist/`, в `conf.d` — только `deploy/web/nginx.conf`. Заголовки защиты —
+  сниппет `security-headers.conf`, CSP и кэш — в `nginx.conf`; `/api/` — к api через DNS
+  докера, отказы 413, 502 и 504 — образцы раздела `proxy` в `contracts/api-refusals.json`.
+- Сети: `data` — db, redis, migrate и api, `front` — api и web, обе без выхода наружу; `edge` —
+  обычная, только у web. У web постоянный адрес `WEB_ADDRESS` в подсети `FRONT_SUBNET` — он же
+  единственный доверенный прокси api (`API_TRUSTED_PROXIES`).
+- Права: у всех `cap_drop: [ALL]`, `no-new-privileges` и корень только для чтения; запись — в
+  `tmpfs` и томах; db и redis — под пользователем своего образа.
 - Правила файла — `python -m ai_geo_audit.ops.stack_rules` над выводом
   `docker compose -f docker-compose.yml --profile '*' config --no-interpolate --format json`:
   код 0 — нарушений нет, 1 — нарушения, 2 — отказ.
-- Оракул — `python3 scripts/stack_oracle.py`: собирает образ из чистой копии `git archive HEAD`,
-  поднимает стек под своим именем и убирает его в конце прогона. Нужны Docker с compose v2 и
+- Оракул — `python3 scripts/stack_oracle.py`: собирает образы сервиса и web из чистой копии
+  `git archive HEAD`, поднимает стек под своим именем и убирает его в конце прогона; порт web,
+  подсеть `front` и адрес web — свои у прогона, от имени стека. Нужны Docker с compose v2 и
   BuildKit; код 0 — все шаги прошли.
 - Уборка оракула — по своему имени `ai-geo-audit-oracle-` и 10 знакам sha256 пути копии: остатки
   прошлого прогона снимаются на старте, по Ctrl-C и SIGTERM уборка идёт ровно одна; второй прогон
@@ -127,7 +138,7 @@ React с Vite и Mantine, pytest, docker compose.
 - Сканер образа — `python3 scripts/image_scan.py install --dir D`, затем `run --work W --trivy
   D/trivy` и `sbom --work W --trivy D/trivy`: Trivy 0.76.2 файлом выпуска по sha256, скан файла
   `docker save`. Только на раннере — джоба `image-scan`; после ручного прогона на Linux —
-  `docker image rm ai-geo-audit-scan:backend` и каталог `--work`.
+  `docker image rm ai-geo-audit-scan:backend ai-geo-audit-scan:web` и каталог `--work`.
 
 ## Фронт
 

@@ -88,5 +88,31 @@
       "headers": {"content-type": "application/json", "retry-after": "60"},
       "body": {"detail": "Сервис занят — повторите через минуту", "kind": "busy", "retry": true}
     }
+  ],
+  "proxy": [
+    {
+      "id": "proxy-too-large",
+      "when": "через web: тело больше 1 МБ — POST /api/health, 1 048 577 байт",
+      "status": 413,
+      "headers": {"content-type": "application/json"},
+      "body": {"detail": "Запрос слишком большой — можно не больше 1 МБ", "kind": "too-large",
+               "retry": false}
+    },
+    {
+      "id": "proxy-bad-gateway",
+      "when": "через web: api остановлен — GET /api/health",
+      "status": 502,
+      "headers": {"content-type": "application/json"},
+      "body": {"detail": "Сервис временно недоступен — повторите позже", "kind": "unavailable",
+               "retry": true}
+    },
+    {
+      "id": "proxy-gateway-timeout",
+      "when": "через web: api не ответил за 30 с — GET /api/health при api на паузе",
+      "status": 504,
+      "headers": {"content-type": "application/json"},
+      "body": {"detail": "Сервис временно недоступен — повторите позже", "kind": "unavailable",
+               "retry": true}
+    }
   ]
 }

@@ -1,16 +1,19 @@
-"""Чистые части оракула стека без Docker (A61, A62): поиск метки по выгрузке образа, разбор
-контекста сборки, сверка списков файлов, имя стека. Модуль грузится по пути файла: оракул лежит
-вне пакета и пакет не импортирует.
+"""Чистые части оракула стека без Docker (A61, A62, A82): поиск метки по выгрузке образа, разбор
+контекста сборки, сверка списков файлов, имя стека, порт web и подсеть `front`. Модуль грузится по
+пути файла: оракул лежит вне пакета и пакет не импортирует.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import io
+import ipaddress
+import socket
 import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import dbtools
 import pytest
@@ -173,8 +176,10 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
     assert oracle.verdict(0, []) == (0, f"итог: шагов {len(oracle.STEPS)}, красных 0")
 
 
-#: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера.
+#: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
+#: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87.
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
+STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -186,9 +191,10 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_and_a73() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_a87() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
-    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73."""
+    номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
+    A80, A81, A82, A83, A84, A86 и A87."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -213,6 +219,97 @@ def test_a76_step_without_a_number_or_an_example_without_a_step_is_red(
     else:
         steps.append(("A68", "лишний шаг", steps[0][2], False))
     assert problem in steps_problems(steps)
+
+
+#: Пулы докера по умолчанию для сетей без своей подсети: 172.17–172.31 и 192.168.
+POOLS = ("172.17.0.0/16", "172.18.0.0/15", "172.20.0.0/14", "172.24.0.0/13", "192.168.0.0/16")
+
+
+def free(port: int, subnet: str) -> bool:
+    return False
+
+
+def test_a82_web_port_and_front_subnet_come_from_the_stack_name() -> None:
+    """A82, третья строка: у двух имён стека — разные порт web и подсеть `front`, оба из ряда от
+    имени; занятый кандидат — следующий; пять занятых — отказ словами, шестой не пробуется.
+    Подсети — частные и вне пулов докера: чужая сеть без своей подсети их не займёт."""
+    names = ("ai-geo-audit-oracle-0123456789", "ai-geo-audit-oracle-9876543210")
+    (port_a, net_a), (port_b, net_b) = (compose.web_slot(name, free) for name in names)
+    assert port_a != port_b and net_a != net_b
+    assert compose.web_slot(names[0], free) == (port_a, net_a)
+    tried: list[tuple[int, str]] = []
+    third = compose.web_slot(names[0], lambda *slot: tried.append(slot) or len(tried) < 3)
+    assert third == tried[2] and tried[0] == (port_a, net_a) and len(set(tried)) == 3
+    tried.clear()
+    with pytest.raises(compose.StepError, match="заняты все 5 кандидатов"):
+        compose.web_slot(names[0], lambda *slot: tried.append(slot) or True)
+    assert len(set(tried)) == len(tried) == 5
+    pools = [ipaddress.ip_network(pool) for pool in POOLS]
+    for port, net in tried:
+        subnet = ipaddress.ip_network(net)
+        assert port > 1024 and subnet.is_private and not any(map(subnet.overlaps, pools)), net
+
+
+def test_a82_candidate_is_taken_by_a_bound_port_or_an_overlapping_docker_net() -> None:
+    """A82, третья строка: кандидат занят, если его порт на петле держит другой процесс или его
+    подсеть пересекает сеть докера на машине; иначе свободен."""
+    busy = compose.busy_on(["172.16.0.0/24", "fd00::/64"])
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        port = holder.getsockname()[1]
+        assert busy(port, "172.16.9.0/28")
+    assert busy(port, "172.16.0.16/28")
+    assert not busy(port, "172.16.9.0/28")
+
+
+class Networks:
+    """Подставной исполнитель для `slot`: сети докера на машине — по подсети на сеть; вызовы —
+    в счёт."""
+
+    def __init__(self, subnets: list[str]) -> None:
+        self.subnets = subnets
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str, limit: str) -> str:
+        self.calls.append(args)
+        if args[:2] == ("network", "ls"):
+            return "".join(f"net{index}\n" for index in range(len(self.subnets)))
+        return "".join(f"{subnet} \n" for subnet in self.subnets)
+
+
+@pytest.mark.parametrize("taken", [False, True])
+def test_a82_slot_reads_docker_nets_once_and_skips_a_candidate_in_one(taken: bool) -> None:
+    """A82, третья строка: порт и подсеть прогона выбираются один раз; без сетей докера их подсети
+    не читаются; подсеть первого кандидата у сети докера — берётся следующий (L88)."""
+    name = "ai-geo-audit-oracle-0123456789"
+    first = compose.web_slot(name, free)
+    docker = Networks([first[1]] if taken else [])
+    run = SimpleNamespace(name=name, facts={}, docker=docker)
+    got = compose.slot(run)
+    assert compose.slot(run) == got
+    expected = [("network", "ls"), ("network", "inspect")][: 1 + taken]
+    assert [call[:2] for call in docker.calls] == expected
+    assert got == compose.web_slot(name, compose.busy_on(docker.subnets))
+    assert not taken or (docker.calls[1][-1] == "net0" and got[1] != first[1])
+
+
+@pytest.mark.parametrize("subnet", ["172.16.0.0/28", "172.16.15.240/28"])
+def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet: str) -> None:
+    """A83, первая строка: адрес web — последний адрес узла подсети front прогона, не шлюз и не
+    широковещательный; он же — `WEB_ADDRESS` окружения compose, то есть доверенный прокси api."""
+    net = ipaddress.ip_network(subnet)
+    address = compose.web_address(subnet)
+    assert ipaddress.ip_address(address) == net.broadcast_address - 1
+    run = SimpleNamespace(
+        name="ai-geo-audit-oracle-0123456789",
+        facts={"slot": (18100, subnet)},
+        image="backend:oracle",
+        password="p",
+        jwt="j",
+        copy=Path("/work/copy"),
+    )
+    env = compose.stack_env(run)
+    assert (env["FRONT_SUBNET"], env["WEB_ADDRESS"]) == (subnet, address)
 
 
 class Clean(oracle.Docker):
@@ -300,33 +397,38 @@ def test_a76_docker_down_is_code_2_not_a_green_run(
     assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
 
 
+#: Строка журнала web: проверка здоровья смотрит не туда, nginx ответил 404.
+WEB_LOG = 'web-1  | 127.0.0.1 - - "GET /api/health HTTP/1.1" 404 153 "-" "Wget"\n'
+
+
 class MigrateFails(oracle.Docker):
     """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — строки с
-    паролем и секретом стека, ошибка alembic и две строки после неё."""
+    паролем и секретом стека, ошибка alembic и две строки после неё; журнал web — `WEB_LOG`."""
 
     secrets: tuple[str, str] = ("", "")
-    logs_args: tuple[str, ...] = ()
+    logs_calls: tuple[tuple[str, ...], ...] = ()
 
     def result(self, *args: str, limit: str = "run", **kw: object) -> subprocess.CompletedProcess:
         if "up" in args:
             stderr = b'service "migrate" didn\'t complete successfully: exit 255\n'
             return subprocess.CompletedProcess(["docker", *args], 1, b"", stderr)
         if "logs" in args:
-            self.logs_args = args
+            self.logs_calls += (args,)
             password, jwt = self.secrets
             log = (
                 f"migrate-1  | url={password}\nmigrate-1  | jwt={jwt}\n"
                 "migrate-1  | FAILED: Path doesn't exist: 'x'.\n"
                 "migrate-1  | exit code 255\nmigrate-1  | done\n"
             )
+            log = log if args[-1] == "migrate" else WEB_LOG
             return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
         return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
 
 
 def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
-    """A76, третья строка: подъём упал на migrate — в причине шага хвост журнала migrate
-    (`--tail 20`, шесть последних строк) с причиной от alembic («FAILED: …»); пароля и секрета
-    стека в причине нет."""
+    """A76, третья строка: подъём упал — в причине шага хвосты журналов migrate и web
+    (`--tail 20`, шесть последних строк): причина от alembic («FAILED: …») и ответ nginx на
+    проверку здоровья web (L89); пароля и секрета стека в причине нет."""
     docker = MigrateFails()
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
     docker.secrets = (run.password, run.jwt)
@@ -334,5 +436,7 @@ def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: P
         compose.step_up(run)
     reason = str(failure.value)
     assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
+    assert '"GET /api/health HTTP/1.1" 404' in reason
     assert run.password not in reason and run.jwt not in reason
-    assert docker.logs_args[-4:] == ("--no-color", "--tail", "20", "migrate")
+    tails = [call[-4:] for call in docker.logs_calls]
+    assert tails == [("--no-color", "--tail", "20", service) for service in ("migrate", "web")]
