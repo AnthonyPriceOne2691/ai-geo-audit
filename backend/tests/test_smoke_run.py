@@ -282,6 +282,36 @@ def test_a377_postgres_down_before_scenarios_counts_none(
     assert lines[1].endswith(dbtools.START)
 
 
+def test_a377_foreign_package_stops_the_run_before_scenarios(tmp_path: Path) -> None:
+    """A377: прогон на пакете не из этой копии — код 1 «судится чужой пакет: <путь>» сразу после
+    строки пути пакета; ни один сценарий не засчитан."""
+    lines: list[str] = []
+    ran: list[str] = []
+    only = scenario("S3", lambda _run, _deadline: ran.append("S3"))
+    other = fake_package(tmp_path / "other")
+    code = smoke_run.smoke(make_run(tmp_path, lines), (only,), {}, other)
+    where = other.parent.resolve()
+    assert (code, ran, lines) == (1, [], [f"пакет: {where}", f"{smoke_run.FOREIGN}: {where}"])
+
+
+def test_a376_skip_only_by_name_from_the_table_and_with_a_reason() -> None:
+    """A376: пропуск — `--skip ID=причина`: id из таблицы и причина словами; чужой id, пустая
+    причина или другой флаг — отказ до прогона."""
+    reason = "набор прошёл шагом «Тесты с покрытием» этой джобы"
+    found = smoke_run.parse_skip(["--skip", f"S2={reason}"], smoke_run.SCENARIOS)
+    refused = {}
+    for case, args in {
+        "чужой id": ["--skip", "S9=проба"],
+        "без причины": ["--skip", "S2= "],
+        "другой флаг": ["--only", "S2=проба"],
+        "без значения": ["--skip"],
+    }.items():
+        with pytest.raises(SystemExit) as stop:
+            smoke_run.parse_skip(args, smoke_run.SCENARIOS)
+        refused[case] = str(stop.value).startswith("run.sh [--skip ID=причина]")
+    assert (found, refused) == ({"S2": reason}, dict.fromkeys(refused, True))
+
+
 def test_a377_run_sh_without_backend_venv_refuses(tmp_path: Path) -> None:
     """A377: нет `backend/.venv` — `run.sh` выходит с кодом 1 строкой «окружение: …» до
     сценариев."""
