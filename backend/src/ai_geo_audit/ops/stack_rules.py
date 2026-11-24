@@ -8,8 +8,9 @@
 вида. Форма вывода зависит от содержимого файла — порты объектами или сырыми строками,
 переменные отображением или списком; правила читают обе (замер compose 5.7.0, decisions Ч1.5а).
 
-Запуск — внутри собранного образа: `python -m ai_geo_audit.ops.stack_rules < config.json`;
-код 0 — нарушений нет, 1 — нарушения, 2 — отказ. Предел мягкой остановки api правило
+Запуск — внутри собранного образа: `python -m ai_geo_audit.ops.stack_rules < config.json`; с
+флагом `--prod` — ещё три боевых правила над выводом основного файла с боевым наложением (A89,
+`stack_prod`); код 0 — нарушений нет, 1 — нарушения, 2 — отказ. Предел мягкой остановки api правило
 `stop-grace` берёт из настроек uvicorn — `server_settings()` (A88), а не из своей копии числа.
 """
 
@@ -19,7 +20,7 @@ import ipaddress
 import json
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, get_args
 from urllib.parse import urlsplit
@@ -30,6 +31,7 @@ from ai_geo_audit import config
 from ai_geo_audit.api.app import server_settings
 from ai_geo_audit.config import startup_checks
 from ai_geo_audit.ops import stack_hardening as hard
+from ai_geo_audit.ops import stack_prod as prod_rules
 
 STACK_NAME = "ai-geo-audit"
 #: Образы из реестра: имя и тег линии (слово владельца 2026-11-19T10:40Z, дайджесты — срез 0).
@@ -426,34 +428,44 @@ CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("stop-grace", _stop_grace),
 )
 RULES = tuple(code for code, _ in CHECKS)
+#: Боевой набор (A89, флаг `--prod`): основной и три правила наложения.
+PROD_CHECKS = CHECKS + prod_rules.CHECKS
+PROD_RULES = tuple(code for code, _ in PROD_CHECKS)
 
 
-def check(raw: object) -> list[Violation]:
-    """Нарушения стека в порядке перечня; негодный ввод — `InputRefusedError`."""
+def check(raw: object, *, prod: bool = False) -> list[Violation]:
+    """Нарушения стека в порядке перечня; `prod` — с боевыми правилами; негодный ввод —
+    `InputRefusedError`."""
     stack = parse(raw)
-    return [Violation(code, *finding) for code, rule in CHECKS for finding in rule(stack)]
+    checks = PROD_CHECKS if prod else CHECKS
+    return [Violation(code, *finding) for code, rule in checks for finding in rule(stack)]
 
 
-def run(text: str) -> tuple[int, list[str]]:
+def run(text: str, *, prod: bool = False) -> tuple[int, list[str]]:
     """Код выхода и строки вывода: нарушения и итог либо одна строка отказа."""
     if not text.strip():
         return 2, ["отказ: пустой ввод"]
     try:
         raw = json.loads(text)
-        found = check(raw)
+        found = check(raw, prod=prod)
     except InputRefusedError as refusal:
         return 2, [f"отказ: {refusal}"]
     except json.JSONDecodeError:
         return 2, ["отказ: ввод не JSON"]
-    total = f"итог: сервисов {len(raw['services'])}, правил {len(RULES)}, нарушений {len(found)}"
+    rules = len(PROD_RULES if prod else RULES)
+    total = f"итог: сервисов {len(raw['services'])}, правил {rules}, нарушений {len(found)}"
     return (1 if found else 0), [violation.line() for violation in found] + [total]
 
 
-def main() -> int:
-    code, lines = run(sys.stdin.read())
+def main(argv: Sequence[str] = ()) -> int:
+    """Вход модуля: JSON на stdin; флаг `--prod` добавляет боевые правила (A89), другой — отказ."""
+    if list(argv) not in ([], ["--prod"]):
+        sys.stdout.write("отказ: флаг — только --prod\n")
+        return 2
+    code, lines = run(sys.stdin.read(), prod=bool(argv))
     sys.stdout.write("\n".join(lines) + "\n")
     return code
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

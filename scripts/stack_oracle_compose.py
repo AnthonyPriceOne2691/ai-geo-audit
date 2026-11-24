@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 COMPOSE = "docker-compose.yml"
 #: Правил основного набора (A87): шестнадцать кодов Ч1.5а, семь A87 и `stop-grace` A88.
 MAIN_RULES = 24
+#: Боевое наложение и правил с флагом `--prod` (A89): 24 основного и три боевых.
+PROD, PROD_RULES = "docker-compose.prod.yml", 27
 
 
 DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
@@ -214,24 +216,37 @@ def alembic(run: Run, command: str) -> list[str]:
     return sorted(re.findall(r"(?m)^(\w+)(?: \(head\))?\s*$", out))
 
 
-def step_rules_on_file(run: Run) -> str:
-    """A73, A87: правила на настоящем файле внутри собранного образа — «сервисов 5, правил 24»,
-    нарушений 0. Файл назван явно — чужой
-    `docker-compose.override.yml` не подмешается; профили включены все; без `-p`."""
+def rules_on(run: Run, files: list[str], extra: list[str], count: int) -> str:
+    """Правила внутри собранного образа на выводе compose по `files` — «сервисов N, правил
+    `count`, нарушений 0». Файлы названы явно — чужой `docker-compose.override.yml` не
+    подмешается; профили включены все; без `-p`. `extra` — флаги правил."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
-    base = ["compose", "-f", str(run.copy / COMPOSE), "--env-file", os.devnull, "--profile", "*"]
+    named = [part for file in files for part in ("-f", str(run.copy / file))]
+    base = ["compose", *named, "--env-file", os.devnull, "--profile", "*"]
     raw = run.docker(*base, "config", "--no-interpolate", "--format", "json", env=env)
     services = run.docker(*base, "config", "--no-interpolate", "--services", env=env).split()
-    container = f"{run.name}-rules"
+    container = f"{run.name}-rules{len(files)}"
     run.docker.containers.append(container)
     flags = ["--rm", "-i", "--name", container, "--network", "none", "--entrypoint", "python"]
-    rules = ["-m", "ai_geo_audit.ops.stack_rules"]
+    rules = ["-m", "ai_geo_audit.ops.stack_rules", *extra]
     done = run.docker.result("run", *flags, run.image, *rules, stdin=raw.encode())
     lines = output(done).strip().splitlines()
-    total = f"итог: сервисов {len(services)}, правил {MAIN_RULES}, нарушений 0"
+    total = f"итог: сервисов {len(services)}, правил {count}, нарушений 0"
     if done.returncode or lines[-1:] != [total]:
         raise StepError(f"правила — код {done.returncode}: {' | '.join(lines[-5:])}")
     return f"{lines[-1]}; config --services — {len(services)}"
+
+
+def step_rules_on_file(run: Run) -> str:
+    """A73, A87: правила на настоящем основном файле — «сервисов 5, правил 24», нарушений 0."""
+    return rules_on(run, [COMPOSE], [], MAIN_RULES)
+
+
+def step_rules_on_prod(run: Run) -> str:
+    """A89, вторая строка: правила с флагом `--prod` на основном файле с боевым наложением —
+    «сервисов 5, правил 27», нарушений 0. Наложение оракул не поднимает: драйвера journald может
+    не быть на машине; первый подъём — Ч1.6."""
+    return rules_on(run, [COMPOSE, PROD], ["--prod"], PROD_RULES)
 
 
 def service_log(run: Run, service: str) -> str:
@@ -359,6 +374,7 @@ def step_bad_migrate(run: Run) -> str:
 #: отдельно и последним: шаги на живом стеке встают до него.
 STACK_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A73 A87", "правила на настоящем docker-compose.yml", step_rules_on_file, False),
+    ("A89", "правила на основном файле с боевым наложением", step_rules_on_prod, False),
     ("A65 A63", "подъём стека и migrate", step_up, True),
     ("A69", "здоровье api после старта", step_health, False),
     ("A66", "повтор migrate", step_repeat, False),
