@@ -117,6 +117,11 @@ REFUSED: dict[str, tuple[str, Callable[[str], str], str]] = {
     "space-last": ("openai", lambda m: f"{m} ", f"OpenAI — {EDGES}"),
     "newline-first": ("openai", lambda m: f"\n{m}", f"OpenAI — {EDGES}"),
     "newline-last": ("openai", lambda m: f"{m}\n", f"OpenAI — {EDGES}"),
+    "cr-inside": ("openai", lambda m: f"{m}\rx", f"OpenAI — {INSIDE}"),
+    "cr-first": ("openai", lambda m: f"\r{m}", f"OpenAI — {EDGES}"),
+    "cr-last": ("openai", lambda m: f"{m}\r", f"OpenAI — {EDGES}"),
+    "vt-inside": ("openai", lambda m: f"{m}\x0bx", f"OpenAI — {VISIBLE}"),
+    "ff-inside": ("openai", lambda m: f"{m}\x0cx", f"OpenAI — {VISIBLE}"),
 }
 
 
