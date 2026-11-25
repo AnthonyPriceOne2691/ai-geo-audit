@@ -41,7 +41,7 @@ Derived from spec acceptance. Run during verify. Числа прогонов —
 - [x] A243 — здоровье и Redis (`test_api_health.py`):
       `test_a243_health_sees_redis_by_a_probe_write`,
       `test_a243_redis_refusal_is_unavailable_with_one_record` (закрытый порт, пароль, полный),
-      `test_a243_silent_redis_is_cut_by_the_limit`,
+      `test_a243_silent_redis_is_cut_by_the_limit`, `test_a243_lost_probe_write_is_not_repeated`,
       `test_a243_database_and_redis_down_is_one_answer_and_two_records`,
       `test_a243_paths_without_a_pass_do_not_touch_redis`. В стеке — живой оракул A65 и A69
 - [x] A23 — сканер правила LOGIC-10 (рабочий инструмент сессии, вне репозитория): отчёт, «Product
