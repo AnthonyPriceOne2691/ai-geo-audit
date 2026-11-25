@@ -37,6 +37,10 @@ QUEUE_VAR = "REDIS_PASSWORD"
 IN_CONTAINER = "$$REDIS_PASSWORD"
 #: Короткая запись тома: двоеточие внутри ссылки `${…}` — не разделитель.
 _REF = re.compile(r"\$\{[^}]*\}")
+#: Начало here-doc словом без кавычек: в слове с кавычками оболочка не раскрывает `$…`.
+_HERE_DOC = re.compile(r"<<-?\s*\w+\s*$")
+#: Пароль очереди у проверки здоровья — раскрытие в контейнере, без одинарных кавычек.
+_HEALTH_AUTH = re.compile(r'REDISCLI_AUTH="?\$\$REDIS_PASSWORD"?(?=\s|$)')
 
 
 def _strict(value: object) -> str | None:
@@ -113,16 +117,19 @@ def _auth_command(service: dict[str, Any]) -> bool:
     if script is None:
         return False
     first, _, rest = script.partition("\n")
-    head, here_doc, _ = first.partition("<<")
-    words = _shell(head)
+    here_doc = _HERE_DOC.search(first)
+    if here_doc is None:
+        return False
+    words = _shell(first[: here_doc.start()])
     lines = [line.split() for line in rest.splitlines()]
     passes = [line for line in lines if line[:1] == ["requirepass"]]
-    started = words[:3] == ["exec", "redis-server", "-"] and "--requirepass" not in words
-    return bool(here_doc) and started and passes == [["requirepass", IN_CONTAINER]]
+    by_argument = any(word.startswith("--requirepass") for word in words)
+    started = words[:3] == ["exec", "redis-server", "-"] and not by_argument
+    return started and passes == [["requirepass", IN_CONTAINER]]
 
 
-def _health(service: dict[str, Any]) -> list[str] | None:
-    """Слова проверки здоровья; нет её, выключена или `NONE` — None: судит правило `healthcheck`."""
+def _health(service: dict[str, Any]) -> str | None:
+    """Проверка здоровья одной строкой; нет её, выключена или `NONE` — None: судит `healthcheck`."""
     check = service.get("healthcheck") or {}
     test = check.get("test")
     if check.get("disable") or not test:
@@ -130,19 +137,21 @@ def _health(service: dict[str, Any]) -> list[str] | None:
     words = [str(word) for word in test] if isinstance(test, list) else [str(test)]
     if words[0] in ("CMD", "CMD-SHELL"):
         words = words[1:]
-    return None if words == ["NONE"] else _shell(" ".join(words))
+    return None if words == ["NONE"] else " ".join(words)
 
 
 def _auth_health(service: dict[str, Any]) -> bool:
-    """Проверка здоровья redis: `REDISCLI_AUTH` из `$$REDIS_PASSWORD` перед `redis-cli` и сверка
-    ответа с `PONG` после `|`."""
-    words = _health(service)
-    if words is None:
+    """Проверка здоровья redis: `REDISCLI_AUTH` раскрытием `$$REDIS_PASSWORD` перед `redis-cli` и
+    сверка ответа с `PONG` после `|`."""
+    text = _health(service)
+    if text is None:
         return True
-    auth = f"REDISCLI_AUTH={IN_CONTAINER}"
-    asked = auth in words and "redis-cli" in words and words.index(auth) < words.index("redis-cli")
+    auth = _HEALTH_AUTH.search(text)
+    if auth is None or auth.start() > text.find("redis-cli"):
+        return False
+    words = _shell(text)
     answered = words[words.index("|") + 1 :] if "|" in words else []
-    return asked and "grep" in answered and "PONG" in answered
+    return "grep" in answered and "PONG" in answered
 
 
 def _has_password(url: str) -> bool:
@@ -157,7 +166,7 @@ def _password_flag(service: dict[str, Any]) -> bool:
     `-u` с паролем в адресе."""
     command = service.get("command") or []
     parts = [command] if isinstance(command, str) else [str(part) for part in command]
-    words = [word for part in parts for word in _shell(part)] + (_health(service) or [])
+    words = [word for part in parts for word in _shell(part)] + _shell(_health(service) or "")
     flagged = any(word in ("-a", "--pass") or word.startswith("--pass=") for word in words)
     by_url = any(flag == "-u" and _has_password(url) for flag, url in itertools.pairwise(words))
     return ("redis-cli" in words and flagged) or by_url
