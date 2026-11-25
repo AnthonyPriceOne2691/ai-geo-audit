@@ -88,6 +88,17 @@ ROLE_PROBES = [
         volumes(DATA, {**DB_SCRIPT, "target": "/docker-entrypoint-initdb.d-old/roles.sql"}),
         role(None),
     ),
+    (
+        "script-other-target",
+        volumes(DATA, {**DB_SCRIPT, "target": "/docker-entrypoint-initdb.d/other.sql"}),
+        role(None),
+    ),
+    ("script-other-source", volumes(DATA, {**DB_SCRIPT, "source": "/srv/other.sql"}), role(None)),
+    (
+        "script-other-short",
+        volumes("db-data:/var/lib/data", "./other.sql:/docker-entrypoint-initdb.d/roles.sql:ro"),
+        role(None),
+    ),
     ("migrate-from-api", addresses(API_ADDRESS, "migrate"), role("DATABASE_URL", "migrate")),
     ("api-from-migrate", addresses(MIGRATE_ADDRESS, "api"), role("DATABASE_URL", "api")),
     (
@@ -149,7 +160,7 @@ def test_a177_db_password_at_a_process_is_caught_by_both_rules(service: str, var
     "change",
     [
         volumes("db-data:/var/lib/data", f"{SCRIPT_SHORT}:ro"),
-        volumes(DATA, {**DB_SCRIPT, "source": "/srv/other.sql"}),
+        volumes(DATA, {**DB_SCRIPT, "source": "/srv/db/roles.sql"}),
         volumes(DATA, f"{SCRIPT_SHORT}:ro,z"),
         addresses("${MIGRATE_DATABASE_URL:?другая причина}", "migrate"),
         put(env("db"), "POSTGRES_PASSWORD", "${DB_PASSWORD:?пароль}"),
@@ -223,6 +234,35 @@ AUTH_PROBES = [
     ),
     ("no-here-doc", put(svc("redis"), "command", ["sh", "-c", "exec redis-server -\n"]), auth()),
     (
+        "requirepass-after-delimiter",
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<EOF\nport 6379\nEOF\n{PASS_LINE}\n"],
+        ),
+        auth(),
+    ),
+    ("extra-line-on-input", redis_script("exec redis-server -", "port 6379", PASS_LINE), auth()),
+    (
+        "nopass-user-on-input",
+        redis_script("exec redis-server -", "user default on nopass ~* +@all", PASS_LINE),
+        auth(),
+    ),
+    (
+        "no-delimiter",
+        put(svc("redis"), "command", ["sh", "-c", f"exec redis-server - <<EOF\n{PASS_LINE}\n"]),
+        auth(),
+    ),
+    (
+        "text-after-delimiter",
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<EOF\n{PASS_LINE}\nEOF\necho ok\n"],
+        ),
+        auth(),
+    ),
+    (
         "here-doc-quoted",
         put(
             svc("redis"),
@@ -258,6 +298,20 @@ AUTH_PROBES = [
         health(["CMD-SHELL", "REDISCLI_AUTH='$$REDIS_PASSWORD' redis-cli ping | grep -x PONG"]),
         auth(),
     ),
+    *[
+        (f"health-{name}", health(["CMD-SHELL", text]), auth())
+        for name, text in (
+            ("or-true", f"{CLI} || true"),
+            ("and-true", f"{CLI} && true"),
+            ("grep-v", CLI.replace("grep -x", "grep -v")),
+            ("grep-c", CLI.replace("grep -x", "grep -c")),
+            ("echo-pong", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping; echo PONG | grep PONG"),
+            ("true-first", "REDISCLI_AUTH=$$REDIS_PASSWORD true; redis-cli ping | grep -x PONG"),
+            ("only-grep", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -x"),
+            ("only-pong", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | cat PONG"),
+            ("other-host", CLI.replace("redis-cli ping", "redis-cli -h redis ping")),
+        )
+    ],
     (
         "health-literal",
         health(["CMD-SHELL", f"REDISCLI_AUTH={LITERAL} redis-cli ping | grep -x PONG"]),
@@ -278,6 +332,25 @@ AUTH_PROBES = [
         "migrate-pass-flag",
         put(svc("migrate"), "command", ["sh", "-c", "redis-cli --pass x -h redis ping"]),
         auth("migrate"),
+    ),
+    (
+        "web-path-redis-cli",
+        put(
+            svc("web"),
+            "healthcheck",
+            {"test": ["CMD", "/usr/local/bin/redis-cli", "-h", "redis", "-a", "x"]},
+        ),
+        auth("web"),
+    ),
+    (
+        "web-auth-command",
+        put(svc("web"), "healthcheck", {"test": ["CMD", "redis-cli", "AUTH", "x"]}),
+        auth("web"),
+    ),
+    (
+        "api-pass-equals",
+        put(svc("api"), "command", ["redis-cli", "--pass=x", "ping"]),
+        auth("api"),
     ),
     ("db-password", put(env("db"), "REDIS_PASSWORD", QUEUE_REF), auth("db", "REDIS_PASSWORD")),
     (
@@ -319,6 +392,11 @@ def test_a178_queue_password_at_a_process_is_caught_by_both_rules(service: str) 
         redis_script(
             "exec redis-server - --maxmemory 100mb --maxmemory-policy noeviction", PASS_LINE
         ),
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<-EOF\n\t{PASS_LINE}\n\tEOF\n"],
+        ),
         put(svc("redis"), "command", f'sh -c "exec redis-server - <<EOF\n{PASS_LINE}\nEOF\n"'),
         health(["CMD-SHELL", CLI.replace("grep -x", "grep -q")]),
         health(CLI),
@@ -329,7 +407,15 @@ def test_a178_queue_password_at_a_process_is_caught_by_both_rules(service: str) 
         ),
         put(svc("web"), "healthcheck", {"test": ["CMD", "grep", "-a", "x", "/dev/null"]}),
     ],
-    ids=["flags", "command-string", "grep-q", "test-string", "u-no-password", "a-no-cli"],
+    ids=[
+        "flags",
+        "here-doc-dash",
+        "command-string",
+        "grep-q",
+        "test-string",
+        "u-no-password",
+        "a-no-cli",
+    ],
 )
 def test_a178_neighbour_cases_are_not_violations(change: Callable) -> None:
     """A178, соседние случаи (L53): флаги наложения после `-`, команда строкой, `grep -q`, проверка
