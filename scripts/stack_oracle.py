@@ -34,6 +34,7 @@ from stack_oracle_docker import LIMITS, Docker
 from stack_oracle_hardening import HARDENING_STEPS
 from stack_oracle_redis import REDIS_STEPS
 from stack_oracle_roles import ROLE_STEPS
+from stack_oracle_start import START_STEPS
 from stack_oracle_stop import STOP_STEPS
 from stack_oracle_web import WEB_BUILD_STEPS, WEB_STACK_STEPS
 
@@ -381,6 +382,7 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     *HARDENING_STEPS,
     *STOP_STEPS,
     *ROLE_STEPS,
+    *START_STEPS,
     *BREAKING_STEPS,
     *REDIS_STEPS,
 ]
