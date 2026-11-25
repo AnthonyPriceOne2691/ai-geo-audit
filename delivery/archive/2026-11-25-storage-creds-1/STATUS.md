@@ -12,7 +12,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** implement
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:reviewer3-session
 - **human_ok_spec:** yes (by=human:owner at=2026-11-24T13:40Z)
@@ -89,6 +89,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния «Учёток-1» (`quality`, `ubuntu-24.04`): джоба `stack` — шагов 36, красных 0; шаги ролей A85 (три), A170 (четыре) и A172 (вторая строка) — «ок», снимок A170 — 23 строки
+- **observe_until:** 2026-12-02 — первые прогоны CI на main после «Учёток-1»: джоба `stack`, шаги ролей
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
