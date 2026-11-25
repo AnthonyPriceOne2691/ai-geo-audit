@@ -33,6 +33,8 @@ WRONGPASS = done(
     "AUTH failed: WRONGPASS invalid username-password pair or user is disabled.\n",
 )
 PONG = done("PONG\n")
+#: Redis не ответил: `redis-cli` пишет отказ соединения в stderr, в stdout пусто.
+REFUSED = done("", "Could not connect to Redis at redis:6379\n", 1)
 
 
 class Cli:
@@ -78,6 +80,13 @@ def test_a171_auth_step_without_wrong_and_right_password(cli_run: Callable) -> N
     ("answers", "reason"),
     [
         ({"none": PONG}, "без пароля — ответ «PONG», а не NOAUTH"),
+        ({"none": REFUSED}, "без пароля — ответ «», а не NOAUTH"),
+        ({"none": done("NOAUTH PONG\n")}, "без пароля — ответ «NOAUTH PONG», а не NOAUTH"),
+        (
+            {"wrong": REFUSED},
+            "неверный пароль — ответ «», stderr «Could not connect to Redis at redis:6379»: нужен"
+            " WRONGPASS без PONG",
+        ),
         (
             {"wrong": done("PONG\n")},
             "неверный пароль — ответ «PONG», stderr «»: нужен WRONGPASS без PONG",
@@ -89,7 +98,15 @@ def test_a171_auth_step_without_wrong_and_right_password(cli_run: Callable) -> N
         ),
         ({"right": NOAUTH}, "верный пароль — ответ «NOAUTH Authentication required.», а не PONG"),
     ],
-    ids=["no-password-pong", "wrong-no-wrongpass", "wrong-but-pong", "right-noauth"],
+    ids=[
+        "no-password-pong",
+        "no-password-refused",
+        "no-password-noauth-and-pong",
+        "wrong-refused",
+        "wrong-no-wrongpass",
+        "wrong-but-pong",
+        "right-noauth",
+    ],
 )
 def test_a171_auth_step_is_red_on_each_wrong_answer(
     cli_run: Callable, answers: dict[str, Done], reason: str
@@ -177,8 +194,10 @@ def test_a171_process_step_line_and_commands(stack: Callable[..., Redis]) -> Non
     `top redis` и `stop redis` последней."""
     fake = stack()
     line = redis.step_process(SimpleNamespace())
-    assert line.startswith("healthy, записи — PONG; пользователь redis; PID 1 — redis-server, uid")
-    assert line.endswith("процессы — redis-server *:6379; остановка — код 0 за 0.0 с")
+    assert line == (
+        "healthy, записи — PONG; пользователь redis; PID 1 — redis-server, uid 999, вход — канал;"
+        " процессы — redis-server *:6379; остановка — код 0 за 0.0 с"
+    )
     assert fake.calls == [
         ("exec", "-T", "redis", "sh", "-c", redis.INSIDE),
         ("top", "redis"),

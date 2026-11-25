@@ -223,7 +223,7 @@ def test_a21_db_password_of_11_signs_is_refused_and_12_starts(
     "url",
     [
         db("ab%40cdefghij"),
-        db(quote("пароль-длин")),
+        db(quote("парольдлина")),
         db(None),
         # pragma: allowlist nextline secret
         "postgresql+asyncpg://audit:audit@localhost:5462/audit",
@@ -349,7 +349,7 @@ SHORT_QUEUES = {
     "no-password": queue(None),
     "11-signs": queue("a" * 11),
     "percent-13-is-11": queue("ab%40cdefghij"),
-    "cyrillic-11-is-22-bytes": queue(quote("пароль-длин")),
+    "cyrillic-11-is-22-bytes": queue(quote("парольдлина")),
     "password-in-name-place": f"redis://{NAME_PLACE}@redis:6379/0",
 }
 GOOD_QUEUES = {
@@ -377,7 +377,7 @@ def test_a175_short_queue_password_is_refused_counted_after_decoding(
     with pytest.raises(sc.ConfigError) as refusal:
         sc.check_startup(process, found)
     assert str(refusal.value).splitlines()[1:] == [f"  REDIS_URL — {QUEUE_SHORT.why}"]
-    for piece in ("redis:6379", "aaaaaaaaaaa", "cdefghij", "пароль-длин", "%D0", NAME_PLACE):
+    for piece in ("redis:6379", "aaaaaaaaaaa", "cdefghij", "парольдлин", "%D0", NAME_PLACE):
         assert piece not in str(refusal.value)
 
 

@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from test_stack_rules import CODES, drop, put, svc, valid
+from test_stack_rules import CODES, PASS_LINE, drop, put, svc, valid
 
 from ai_geo_audit.ops import stack_prod as prod_rules
 from ai_geo_audit.ops import stack_rules as sr
@@ -308,6 +308,29 @@ def test_a89_redis_memory_judges_the_sh_c_line(first_line: str) -> None:
     config = prod()
     sh_c(first_line)(config)
     assert found(config) == {("redis-memory", "redis", None)}
+
+
+@pytest.mark.parametrize(
+    "lines",
+    [(FLAGS_LINE, PASS_LINE), (PASS_LINE, "--maxmemory 100mb", "--maxmemory-policy noeviction")],
+    ids=["flags-in-second-line", "flags-after-requirepass"],
+)
+def test_a89_redis_memory_reads_only_the_first_line(lines: tuple[str, ...]) -> None:
+    """A89, первая строка: флаги потолка — только из первой строки `sh -c` до here-doc; такие же
+    слова на его входе — настройки файла Redis, а не аргументы: ровно `redis-memory`."""
+    script = "\n".join(("exec redis-server - <<EOF", *lines, "EOF")) + "\n"
+    config = prod()
+    put(svc("redis"), "command", ["sh", "-c", script])(config)
+    assert found(config) == {("redis-memory", "redis", None)}
+
+
+def test_a89_a178_here_doc_on_a_later_line_is_red_in_both_rules() -> None:
+    """A89, A178: here-doc начинается не в первой строке `sh -c` — флаги потолка из неё не
+    читаются, а пароль на входе не тот: красное и `redis-memory`, и `redis-auth`."""
+    config = prod()
+    script = f"exec redis-server -\n{FLAGS_LINE} <<EOF\n{PASS_LINE}\nEOF\n"
+    put(svc("redis"), "command", ["sh", "-c", script])(config)
+    assert found(config) == {("redis-memory", "redis", None), ("redis-auth", "redis", None)}
 
 
 def test_a89_reference_in_a_flag_of_the_sh_c_line_is_refused(
