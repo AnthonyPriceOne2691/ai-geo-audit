@@ -1,4 +1,5 @@
-"""Исполнитель команд Docker оракула стека: предел на каждую команду и учёт своего для уборки.
+"""Исполнитель команд Docker оракула стека: предел на каждую команду, учёт своего для уборки,
+сырой захват вывода и маска выдуманных секретов (A172).
 
 Вынесен из `stack_oracle.py` («Учётки-1», срез 2): файл оракула упёрся в предел 500 строк.
 Импорт в одну сторону: `stack_oracle.py` берёт отсюда `Docker` и `LIMITS`.
@@ -18,18 +19,23 @@ LIMITS = {"docker": 30, "build": 1200, "run": 120, "export": 300, "up": 300}
 
 @dataclass
 class Docker:
-    """Один исполнитель команд Docker: предел на каждую команду и учёт своего для уборки."""
+    """Один исполнитель команд Docker: предел на каждую команду и учёт своего для уборки. Вывод
+    каждой команды — в сыром захвате до маски; в причинах отказа выдуманные секреты из маски —
+    звёздочками (A172)."""
 
     containers: list[str] = field(default_factory=list)
     images: list[str] = field(default_factory=list)
+    mask: list[str] = field(default_factory=list)
+    raw: list[tuple[tuple[str, ...], str]] = field(default_factory=list)
 
     def result(
         self, *args: str, limit: str = "run", **kw: Any
     ) -> subprocess.CompletedProcess[bytes]:
-        """Команда Docker под пределом; `stdin` — байты на вход, `env` — окружение команды."""
+        """Команда Docker под пределом; `stdin` — байты на вход, `env` — окружение команды. Вывод —
+        stdout и stderr, и то, что успела вывести команда до предела, — в сырой захват."""
         seconds, stdin = LIMITS[limit], kw.pop("stdin", None)
         try:
-            return subprocess.run(  # noqa: S603 -- docker и аргументы оракула, без оболочки
+            done = subprocess.run(  # noqa: S603 -- docker и аргументы оракула, без оболочки
                 ["docker", *args],
                 input=stdin,
                 capture_output=True,
@@ -37,14 +43,25 @@ class Docker:
                 check=False,
                 **kw,
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as late:
+            said = bytes(late.stdout or b"") + bytes(late.stderr or b"")
+            self.raw.append((args, said.decode("utf-8", "replace")))
             raise StepError(f"docker {' '.join(args[:2])} не уложился в {seconds} с") from None
+        self.raw.append((args, (done.stdout + done.stderr).decode("utf-8", "replace")))
+        return done
+
+    def masked(self, text: str) -> str:
+        """Текст для причины: каждый секрет маски — звёздочками."""
+        for secret in self.mask:
+            text = text.replace(secret, "***")
+        return text
 
     def __call__(self, *args: str, limit: str = "run", check: bool = True, **kw: Any) -> str:
         done = self.result(*args, limit=limit, **kw)
         if check and done.returncode:
             tail = done.stderr.decode("utf-8", "replace").strip().splitlines()[-6:]
-            raise StepError(f"docker {args[0]} — код {done.returncode}: {' | '.join(tail)}")
+            reason = f"docker {args[0]} — код {done.returncode}: {' | '.join(tail)}"
+            raise StepError(self.masked(reason))
         return done.stdout.decode("utf-8", "replace")
 
     def cleanup(self) -> list[str]:

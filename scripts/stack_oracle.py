@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
+from urllib.parse import quote
 
 from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, start_cleanup
 from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError
@@ -198,6 +199,21 @@ class Run:
     #: старта в бою их принимает (A21, A3).
     password: str = field(default_factory=lambda: secrets.token_hex(12))
     jwt: str = field(default_factory=lambda: secrets.token_hex(32))
+    #: Пароли ролей базы (A85): у роли миграций — с «@», в адресе он идёт как `%40`.
+    migrate_password: str = field(
+        default_factory=lambda: f"{secrets.token_hex(6)}@{secrets.token_hex(6)}"
+    )
+    app_password: str = field(default_factory=lambda: secrets.token_hex(12))
+
+    def __post_init__(self) -> None:
+        """Выдуманные секреты — в маске исполнителя с созданием прогона, до его команд (A172)."""
+        self.docker.mask.extend(self.invented)
+
+    @property
+    def invented(self) -> tuple[str, ...]:
+        """Выдуманные секреты прогона; пароль роли миграций — и в процентной записи."""
+        encoded = quote(self.migrate_password, safe="")
+        return (self.password, self.jwt, self.migrate_password, encoded, self.app_password)
 
     @property
     def image(self) -> str:
