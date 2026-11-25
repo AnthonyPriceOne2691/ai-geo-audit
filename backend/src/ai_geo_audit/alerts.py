@@ -18,8 +18,8 @@
 Запись исходящих — договор с Ч1.14а2: JSON только из ASCII, одной строкой, ровно с ключами `id` (32
 знака hex из `uuid4`), `ts` и `text`. Постановка — `WATCH` и `MULTI`: запись в начало списка,
 список не длиннее 1 000, отброшенное с хвоста — в счётчик для хоста и строкой журнала. Срок всей
-постановки — 2 с; повторов у клиента нет: повтор `EXEC` после потерянного ответа положил бы
-тревогу дважды (decisions, срез 0).
+постановки — 2 с, что бы ни держало клиента: она идёт в своём потоке. Повторов у клиента нет: повтор
+`EXEC` после потерянного ответа положил бы тревогу дважды (decisions, срез 0 и находка 3).
 """
 
 from __future__ import annotations
@@ -27,15 +27,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from collections.abc import Sequence
+from concurrent.futures import Future
 from datetime import UTC, datetime
 from typing import Literal
 
 import redis.asyncio as aredis
 from redis import exceptions
+from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
-from redis.retry import Retry
 
 from ai_geo_audit import config
 from ai_geo_audit.logs import redact, register_config_secrets
@@ -49,8 +51,8 @@ MAX_ALERTS = 1000
 MAX_UNITS = 4096
 TITLE_UNITS, TODO_UNITS, LINE_UNITS = 200, 500, 1000
 DEADLINE_SECONDS = 2.0
-#: Закрытие соединения после постановки — не дольше: вежливое закрытие не растягивает вызов.
-CLOSE_SECONDS = 0.5
+#: Сколько сверх срока вызов ждёт уборки соединения: вежливое закрытие его не растягивает.
+CLOSE_SECONDS = 0.25
 ELLIPSIS = "…"
 _log = logging.getLogger(__name__)
 
@@ -78,6 +80,13 @@ def cut(text: str, limit: int) -> str:
     return "".join(kept) + ELLIPSIS
 
 
+def part(text: str, limit: int) -> str:
+    """Часть текста: секреты настроек — маской вычистки журнала, одинокий суррогат (имя файла не в
+    UTF-8) — знаком замены: из-за одного знака тревога не пропадает; длиннее `limit` — обрезана."""
+    whole = redact(text).encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
+    return cut(whole, limit)
+
+
 def more_lines(count: int) -> str:
     """«…ещё N строк» с формой слова по числу: 1 строка, 2 строки, 5 строк."""
     if count % 10 == 1 and count % 100 != 11:
@@ -99,9 +108,9 @@ def compose(level: Level, title: str, lines: Sequence[str], todo: str, now: date
     register_config_secrets(config.storage, config.access, config.keys)
     env = config.app.env
     name = SERVICE if env == "prod" else f"{SERVICE} · {env}"
-    head = [f"[{name}] {level}: {cut(redact(title), TITLE_UNITS)}", f"Время: {stamp(now)}"]
-    tail = f"Что делать: {cut(redact(todo), TODO_UNITS)}"
-    kept = [cut(redact(line), LINE_UNITS) for line in lines]
+    head = [f"[{name}] {level}: {part(title, TITLE_UNITS)}", f"Время: {stamp(now)}"]
+    tail = f"Что делать: {part(todo, TODO_UNITS)}"
+    kept = [part(line, LINE_UNITS) for line in lines]
     text, dropped = "\n".join([*head, *kept, tail]), 0
     while units(text) > MAX_UNITS and kept:
         kept.pop()
@@ -117,7 +126,7 @@ KINDS: tuple[tuple[type[BaseException] | tuple[type[BaseException], ...], str], 
     ((TimeoutError, exceptions.TimeoutError), f"Redis не ответил за {DEADLINE_SECONDS:g} с"),
     (exceptions.AuthenticationError, "Redis не пустил: нужен верный пароль в адресе"),
     (exceptions.OutOfMemoryError, "Redis полон: запись отвергнута"),
-    (exceptions.ConnectionError, "Redis не принимает соединение"),
+    (exceptions.ConnectionError, "соединение с Redis не открылось или оборвалось"),
     (exceptions.RedisError, "Redis ответил ошибкой"),
 )
 
@@ -130,7 +139,7 @@ def kind(failure: BaseException) -> str:
 async def _push(client: aredis.Redis, record: str) -> int:
     """Запись в начало, список не длиннее `MAX_ALERTS`, отброшенное — в счётчик; число
     отброшенных. Чужая правка списка между `LLEN` и `EXEC` — `WatchError`: транзакция не
-    применилась, круг заново."""
+    применилась, круг заново. Обрыв соединения `WatchError` не даёт — см. `_queue`."""
     while True:
         async with client.pipeline(transaction=True) as pipe:
             try:
@@ -147,19 +156,43 @@ async def _push(client: aredis.Redis, record: str) -> int:
             return over
 
 
-async def _queue(record: str) -> int:
-    """Постановка под общим сроком; соединение — своё, закрытие ограничено отдельно."""
+async def _queue(record: str, outcome: Future[int]) -> None:
+    """Постановка под общим сроком; итог — сразу, закрытие своего соединения — после него.
+
+    Повторов нет ни на какой ошибке: с `supported_errors` по умолчанию клиент и без повторов
+    превращает обрыв под `WATCH` в `WatchError`, и `_push` повторил бы круг, в котором потерян
+    только ответ `EXEC`."""
     url = config.storage.redis_url.get_secret_value()
-    client = aredis.Redis.from_url(url, retry=Retry(NoBackoff(), 0))
+    client = aredis.Redis.from_url(url, retry=Retry(NoBackoff(), 0, supported_errors=()))
     try:
         async with asyncio.timeout(DEADLINE_SECONDS):
-            return await _push(client, record)
+            outcome.set_result(await _push(client, record))
     finally:
         try:
             async with asyncio.timeout(CLOSE_SECONDS):
                 await client.aclose()
         except (TimeoutError, exceptions.RedisError, OSError):
             _log.debug("соединение Redis исходящих закрыто без ожидания")
+
+
+def _in_time(record: str) -> int:
+    """Постановка в своём потоке: вызов не дольше срока, что бы ни держало клиента. Сброс `WATCH`
+    у оборванного соединения открывает новое и ждёт замерший Redis 5 с, а имя, которое не
+    разрешается, держит конец `asyncio.run` (decisions, находка 3). Не дождались —
+    `TimeoutError`."""
+    outcome: Future[int] = Future()
+
+    def run() -> None:
+        try:
+            asyncio.run(_queue(record, outcome))
+        except Exception as failure:  # silent-ok: сбой — вызывающему через итог, ERROR — его
+            if not outcome.done():
+                outcome.set_exception(failure)
+
+    thread = threading.Thread(target=run, name="alerts", daemon=True)
+    thread.start()
+    thread.join(DEADLINE_SECONDS + CLOSE_SECONDS)
+    return outcome.result(timeout=0)
 
 
 def _in_loop() -> bool:
@@ -171,16 +204,17 @@ def _in_loop() -> bool:
 
 
 def queue_alert(level: Level, title: str, lines: Sequence[str], todo: str) -> bool:
-    """Поставить тревогу в исходящие. `True` — запись в списке; `False` — нет, и строка ERROR
-    «ТРЕВОГА НЕ ПОСТАВЛЕНА» с видом сбоя словами. Исключений вызывающий не видит (3-resume:22).
-    Вызов синхронный: из работающего цикла событий — `False` (асинхронный вариант — Ч1.14б)."""
+    """Поставить тревогу в исходящие. `True` — запись в списке; `False` — нет или неизвестно (ответ
+    потерян), и строка ERROR «ТРЕВОГА НЕ ПОСТАВЛЕНА» с видом сбоя словами. Исключений вызывающий не
+    видит (3-resume:22). Вызов синхронный: из работающего цикла событий — `False` (асинхронный
+    вариант — Ч1.14б)."""
     try:
         if _in_loop():
             raise InLoopError
         now = datetime.now(UTC)
         text = compose(level, title, lines, todo, now)
         record = json.dumps({"id": uuid.uuid4().hex, "ts": stamp(now), "text": text})
-        dropped = asyncio.run(_queue(record))
+        dropped = _in_time(record)
     except Exception as failure:  # вызывающий исключений не видит: итог и строка ERROR
         _log.error("ТРЕВОГА НЕ ПОСТАВЛЕНА — %s: %s «%s»", kind(failure), level, title)
         return False

@@ -145,7 +145,8 @@ def test_no_free_database_is_one_reason_with_the_holders(monkeypatch: pytest.Mon
 
 def test_redis_url_fixture_gives_the_sessions_database_empty(redis_url: str) -> None:
     """Адрес Redis теста — база сессии на сервере `TEST_REDIS_URL` или стенда, пустая к началу
-    теста; `flush` чистит только её. Адрес в выводе не печатается: в нём пароль."""
+    теста; `flush` чистит только её. Сообщение проверки адреса не печатает: в нём пароль (аргументы
+    упавшего теста pytest печатает сам — пароль стенда публичный)."""
     db = redistools.session_db()
     same = redis_url == redistools.url(db)
     assert same, f"адрес фикстуры — не база сессии {db}"

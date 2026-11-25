@@ -1,11 +1,13 @@
 """Постановка в исходящие (A240): запись по форме — в начало списка, предел 1 000 со счётчиком
-отброшенных; срок 2 с и вид сбоя словами; вызывающий исключений не видит; повторов клиента нет."""
+отброшенных; срок 2 с и вид сбоя словами; вызывающий исключений не видит; повторов клиента нет, и
+транзакция, ответ которой потерян, второй раз не уходит."""
 
 from __future__ import annotations
 
 import json
 import re
 import socket
+import threading
 import time
 
 import pytest
@@ -17,9 +19,9 @@ from ai_geo_audit import alerts, config
 from ai_geo_audit.logs import setup as log_setup
 
 TITLE = "проверка канала"
-#: Ответы подставного Redis на круг `WATCH`–`EXEC`, где первый `EXEC` снят чужой правкой списка:
-#: в RESP3 пустой ответ — `_`, а не `*-1` RESP2 (клиент `redis` 8 говорит RESP3, decisions, срез 0).
-CONFLICT = {
+DONE = b"*2\r\n:1\r\n+OK\r\n"
+#: Ответы подставного Redis на круг `WATCH`–`EXEC`.
+ROUND: dict[bytes, bytes | list[bytes]] = {
     **redis_fakes.FULL,
     b"WATCH": b"+OK\r\n",
     b"UNWATCH": b"+OK\r\n",
@@ -27,8 +29,13 @@ CONFLICT = {
     b"MULTI": b"+OK\r\n",
     b"LPUSH": b"+QUEUED\r\n",
     b"LTRIM": b"+QUEUED\r\n",
-    b"EXEC": [b"_\r\n", b"*2\r\n:1\r\n+OK\r\n"],
+    b"EXEC": DONE,
 }
+#: Первый `EXEC` снят чужой правкой списка: в RESP3 пустой ответ — `_`, а не `*-1` RESP2 (клиент
+#: `redis` 8 говорит RESP3, decisions, срез 0).
+CONFLICT = {**ROUND, b"EXEC": [b"_\r\n", DONE]}
+#: Вид сбоя словами: соединения нет; срок вышел.
+LOST, LATE = "соединение с Redis не открылось или оборвалось", "Redis не ответил за 2 с"
 
 
 def use(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
@@ -54,6 +61,30 @@ def closed_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
+
+
+def timed_refusal(capsys: pytest.CaptureFixture[str], kind: str) -> float:
+    """Постановка, которой не быть: `False`, одна строка ERROR с видом сбоя `kind`; сколько шла."""
+    log_setup.setup_logging(fmt="json")
+    start = time.monotonic()
+    assert alerts.queue_alert("ПРОВЕРКА", TITLE, [], "ничего") is False
+    elapsed = time.monotonic() - start
+    expected = f"ТРЕВОГА НЕ ПОСТАВЛЕНА — {kind}: ПРОВЕРКА «{TITLE}»"
+    assert journal(capsys.readouterr().err, "ERROR") == [expected]
+    return elapsed
+
+
+def leftover() -> list[threading.Thread]:
+    """Потоки постановки, которые после срока ещё убирают за собой; процесс они не держат."""
+    threads = [thread for thread in threading.enumerate() if thread.name == "alerts"]
+    assert all(thread.daemon for thread in threads)
+    return threads
+
+
+def settle(threads: list[threading.Thread]) -> None:
+    for thread in threads:
+        thread.join(5)
+        assert not thread.is_alive()
 
 
 def test_a240_alert_lands_first_as_one_ascii_json_line(outbox: redis.Redis) -> None:
@@ -97,6 +128,19 @@ def test_a240_full_outbox_keeps_1000_and_counts_the_dropped(
     assert journal(capsys.readouterr().err, "WARNING") == ["исходящие полны — отброшено 1"]
 
 
+def test_a240_overlong_outbox_counts_every_dropped(
+    outbox: redis.Redis, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A240: в исходящих 1 005 — постановка оставляет 1 000, счётчик отброшенных — 6: по одной на
+    каждую отброшенную, а не на постановку (договор с Ч1.14а2)."""
+    log_setup.setup_logging(fmt="json")
+    outbox.rpush(alerts.OUTBOX, *[f"old-{n}" for n in range(1005)])
+    assert alerts.queue_alert("ВНИМАНИЕ", "сверх", [], "ничего") is True
+    assert (outbox.llen(alerts.OUTBOX), outbox.get(alerts.DROPPED)) == (1000, b"6")
+    assert outbox.lindex(alerts.OUTBOX, -1) == b"old-998"
+    assert journal(capsys.readouterr().err, "WARNING") == ["исходящие полны — отброшено 6"]
+
+
 def test_a240_longest_record_fits_32_kib(outbox: redis.Redis) -> None:
     """A240: самая длинная запись — 4 096 единиц не-ASCII записью `\\uXXXX` — до 32 КиБ."""
     assert alerts.queue_alert("СБОЙ", "ж" * 300, ["ж" * 1000] * 6, "ж" * 600) is True
@@ -107,7 +151,7 @@ def test_a240_longest_record_fits_32_kib(outbox: redis.Redis) -> None:
 @pytest.mark.parametrize(
     ("case", "kind"),
     [
-        ("closed", "Redis не принимает соединение"),
+        ("closed", LOST),
         ("oom", "Redis полон: запись отвергнута"),
         ("noauth", "Redis не пустил: нужен верный пароль в адресе"),
     ],
@@ -133,18 +177,86 @@ def test_a240_silent_redis_is_cut_at_two_seconds_once(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A240: Redis принял соединение и молчит — `False` и строка ERROR не позже 2,5 с; соединение
-    одно: повторов у клиента нет (decisions, срез 0)."""
-    log_setup.setup_logging(fmt="json")
-    with redis_fakes.running(silent=True) as fake:
+    одно: повторов у клиента нет (decisions, срез 0). Ответил после срока — поздно: тревога, о
+    которой сказано «не поставлена», не ставится."""
+    with redis_fakes.running(replies=ROUND, silent=True) as fake:
         use(monkeypatch, fake.url)
-        start = time.monotonic()
-        assert alerts.queue_alert("ПРОВЕРКА", TITLE, [], "ничего") is False
-        elapsed = time.monotonic() - start
-        accepted = fake.accepted
+        elapsed = timed_refusal(capsys, LATE)
+        threads = leftover()
+        fake.thaw()
+        settle(threads)
+        accepted, commands = fake.accepted, list(fake.commands)
     assert alerts.DEADLINE_SECONDS <= elapsed <= 2.5
-    assert accepted == 1
-    expected = f"ТРЕВОГА НЕ ПОСТАВЛЕНА — Redis не ответил за 2 с: ПРОВЕРКА «{TITLE}»"
-    assert journal(capsys.readouterr().err, "ERROR") == [expected]
+    assert (accepted, commands.count(b"EXEC")) == (1, 0)
+
+
+@pytest.mark.parametrize(
+    ("command", "reply", "execs", "kind"),
+    [
+        (b"EXEC", redis_fakes.LOST, 1, LOST),
+        (b"EXEC", redis_fakes.FROZEN, 1, LATE),
+        (b"LLEN", redis_fakes.LOST, 0, LOST),
+        (b"LLEN", redis_fakes.FROZEN, 0, LATE),
+    ],
+    ids=["exec-lost", "exec-frozen", "llen-lost", "llen-frozen"],
+)
+def test_a240_lost_reply_is_false_in_time_and_never_repeated(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: bytes,
+    reply: bytes,
+    execs: int,
+    kind: str,
+) -> None:
+    """A240, вопрос 2 «Прогонов»: ответ посреди круга потерян — соединение оборвано или Redis замер:
+    `False` и строка ERROR не позже 2,5 с. Легла ли транзакция, неизвестно: `EXEC` второй раз не
+    уходит — повтор положил бы тревогу дважды."""
+    with redis_fakes.running(replies={**ROUND, command: reply}) as fake:
+        use(monkeypatch, fake.url)
+        elapsed = timed_refusal(capsys, kind)
+        threads = leftover()
+        fake.thaw()
+        settle(threads)
+        commands = list(fake.commands)
+    assert elapsed <= 2.5
+    assert (commands.count(b"EXEC"), commands.count(b"WATCH")) == (execs, 1)
+    assert len(threads) == (reply == redis_fakes.FROZEN)
+
+
+def test_a240_name_that_does_not_resolve_is_cut_in_time(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A240: имя Redis в адресе не разрешается и держит поток разрешения имён — `False` и строка
+    ERROR не позже 2,5 с: вызов не ждёт того, что держит клиента."""
+    answered = threading.Event()
+    real = socket.getaddrinfo
+
+    def held(host: object, *args: object, **kwargs: object) -> object:
+        if host != "redis-probe":
+            return real(host, *args, **kwargs)  # type: ignore[arg-type]
+        answered.wait(10)
+        raise socket.gaierror(socket.EAI_NONAME, "имя не разрешилось")
+
+    monkeypatch.setattr(socket, "getaddrinfo", held)
+    use(monkeypatch, "redis://redis-probe:6379/0")
+    elapsed = timed_refusal(capsys, LATE)
+    threads = leftover()
+    answered.set()
+    settle(threads)
+    assert (elapsed <= 2.5, len(threads)) == (True, 1)
+
+
+def test_a240_unforeseen_failure_is_words_and_false(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A240: сбой не из перечня — тоже `False` и строка ERROR словами, без текста и класса
+    исключения: вызывающий исключений не видит."""
+
+    def broken(*args: object) -> str:
+        raise LookupError("probe-failure-text")
+
+    monkeypatch.setattr(alerts, "compose", broken)
+    timed_refusal(capsys, "сбой постановки")
 
 
 def test_a240_watch_conflict_is_retried_and_queued_once(monkeypatch: pytest.MonkeyPatch) -> None:

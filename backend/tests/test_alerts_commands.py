@@ -93,17 +93,20 @@ def run(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str
 def test_a242_check_queues_one_alert_after_logs_and_hooks(
     redis_url: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A242: Redis теста отвечает — одна тревога ПРОВЕРКА в исходящих, вывод «поставлено в
-    исходящие», код 0; журналы и крючки процесса — до постановки (L55)."""
+    """A242: Redis теста отвечает — одна тревога ПРОВЕРКА в исходящих, текст целиком, вывод
+    «поставлено в исходящие», код 0; журналы и крючки процесса — до постановки (L55)."""
     use(monkeypatch, redis_url)
     calls = traced(monkeypatch)
     assert command.main(["check"]) == 0
     assert capsys.readouterr().out == "поставлено в исходящие\n"
     assert calls == ["logs", "guard", "queue"]
     outbox = redistools.client(redistools.session_db())
-    texts = [json.loads(raw)["text"] for raw in outbox.lrange(alerts.OUTBOX, 0, -1)]
-    assert [text.split("\n")[0] for text in texts] == [
-        "[ai-geo-audit · dev] ПРОВЕРКА: канал тревог"
+    [record] = [json.loads(raw) for raw in outbox.lrange(alerts.OUTBOX, 0, -1)]
+    assert record["text"].split("\n") == [
+        "[ai-geo-audit · dev] ПРОВЕРКА: канал тревог",
+        f"Время: {record['ts']}",
+        "Проверочная тревога: исходящие сервиса принимают записи.",
+        "Что делать: ничего — это проверка",
     ]
 
 
@@ -121,7 +124,8 @@ def test_a242_check_without_redis_is_code_1_and_one_reason(
     lines = [line for line in (out + err).splitlines() if line]
     assert len(lines) == 1 and json.loads(lines[0])["level"] == "ERROR"
     assert json.loads(lines[0])["message"].startswith(
-        "ТРЕВОГА НЕ ПОСТАВЛЕНА — Redis не принимает соединение: ПРОВЕРКА «канал тревог»"
+        "ТРЕВОГА НЕ ПОСТАВЛЕНА — соединение с Redis не открылось или оборвалось: "
+        "ПРОВЕРКА «канал тревог»"
     )
 
 

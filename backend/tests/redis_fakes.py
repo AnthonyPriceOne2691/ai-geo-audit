@@ -1,9 +1,10 @@
 """Подставные серверы Redis на петле — для отказов, которых нельзя добиться у общего Redis теста,
-не задев соседние копии: молчащий, полный (`OOM`), без входа (`NOAUTH`).
+не задев соседние копии: молчащий, полный (`OOM`), без входа (`NOAUTH`), потерявший ответ.
 
 Сервер — в своём потоке: его зовут и синхронная постановка со своим циклом событий (A240), и
 асинхронное здоровье в цикле теста (A243). Отвечает по имени команды, остальным — `default`;
-список ответов команды идёт по очереди, последний повторяется.
+список ответов команды идёт по очереди, последний повторяется. `LOST` вместо ответа — соединение
+оборвано, `FROZEN` — с этой команды сервер замер: молчит всем, и новым соединениям, до `thaw()`.
 """
 
 from __future__ import annotations
@@ -16,6 +17,8 @@ from collections.abc import Iterator, Mapping
 #: Ответы Redis 7.4 дословно (проба среза 0 на образе стека).
 OOM = b"-OOM command not allowed when used memory > 'maxmemory'.\r\n"
 NOAUTH = b"-NOAUTH Authentication required.\r\n"
+#: Ответа нет: соединение оборвано; сервер замер.
+LOST, FROZEN = b"", b"\0"
 #: Рукопожатие RESP3 и ответы полного Redis: `PING` и служебные команды проходят, запись — нет.
 FULL = {
     b"HELLO": b"%1\r\n$5\r\nproto\r\n:3\r\n",
@@ -59,8 +62,8 @@ def take(buf: bytes) -> tuple[list[bytes] | None, bytes]:
 
 
 class FakeRedis:
-    """Сервер на петле: принимает соединения и отвечает по `replies`, прочим — `default`; без
-    ответов (`silent=True`) молчит. Считает принятые соединения и команды."""
+    """Сервер на петле: принимает соединения и отвечает по `replies`, прочим — `default`; с
+    `silent=True` молчит с начала. Считает принятые соединения и команды."""
 
     def __init__(
         self,
@@ -71,8 +74,11 @@ class FakeRedis:
         self.replies = {
             name: [r] if isinstance(r, bytes) else list(r) for name, r in (replies or {}).items()
         }
-        self.default, self.silent = default, silent
+        self.default = default
         self.accepted = 0
+        self._awake = threading.Event()
+        if not silent:
+            self._awake.set()
         self.commands: list[bytes] = []
         self._conns: list[socket.socket] = []
         self._sock = socket.create_server(("127.0.0.1", 0))
@@ -88,8 +94,7 @@ class FakeRedis:
                 return
             self.accepted += 1
             self._conns.append(conn)
-            if not self.silent:
-                threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
+            threading.Thread(target=self._serve, args=(conn,), daemon=True).start()
 
     def reply(self, name: bytes) -> bytes:
         queue = self.replies.get(name)
@@ -108,12 +113,24 @@ class FakeRedis:
                         break
                     name = command[0].upper()
                     self.commands.append(name)
-                    conn.sendall(self.reply(name))
+                    reply = self.reply(name)
+                    if reply.startswith(FROZEN):
+                        self._awake.clear()
+                    self._awake.wait()
+                    if reply == LOST:
+                        conn.close()
+                        return
+                    conn.sendall(reply.removeprefix(FROZEN))
+
+    def thaw(self) -> None:
+        """Отмереть: ответить тем, кто ждёт, и новым."""
+        self._awake.set()
 
     def close(self) -> None:
         self._sock.close()
         for conn in self._conns:
             conn.close()
+        self.thaw()
 
 
 @contextlib.contextmanager

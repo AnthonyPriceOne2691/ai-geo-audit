@@ -28,8 +28,8 @@ import redis.asyncio as aredis
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from redis import exceptions as redis_errors
+from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
-from redis.retry import Retry
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 

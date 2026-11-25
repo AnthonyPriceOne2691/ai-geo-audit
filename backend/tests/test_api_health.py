@@ -18,6 +18,7 @@ import httpx
 import pytest
 import redis_fakes
 import redistools
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from ai_geo_audit.api import contract, health
@@ -56,12 +57,13 @@ async def silent_db() -> AsyncIterator[Silent]:
 @dataclass
 class Relay:
     """Посредник TCP перед тестовой базой: по флагу перестаёт пересылать байты, соединений не
-    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; `delay` — задержка нового
-    соединения до первой пересылки; считает открытые соединения."""
+    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; с `cut_on` — рвёт соединение;
+    `delay` — задержка нового соединения до первой пересылки; считает открытые соединения."""
 
     url: str = ""
     frozen: bool = False
     freeze_on: bytes = b""
+    cut_on: bytes = b""
     delay: float = 0.0
     open: int = 0
 
@@ -77,6 +79,8 @@ async def relay() -> AsyncIterator[Relay]:
     ) -> None:
         with contextlib.suppress(ConnectionError):
             while data := await reader.read(65536):
+                if watch and found.cut_on and found.cut_on in data:
+                    break
                 if watch and found.freeze_on and found.freeze_on in data:
                     found.frozen = True
                 while found.frozen:  # noqa: ASYNC110 -- проба держит ответ, пока поднят флаг
@@ -222,6 +226,51 @@ async def test_a40_one_deadline_covers_the_connection_and_the_query(
     assert took <= 1.5, took
     records = list(warnings_of(capsys.readouterr().err))
     assert [(r["error"], r["limit_seconds"]) for r in records] == [("TimeoutError", 1.0)]
+
+
+async def test_a40_failure_before_the_limit_keeps_its_own_class(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], relay: Relay
+) -> None:
+    """A40: соединение с базой рвётся на `SELECT 1` раньше предела — 503 и запись WARNING с классом
+    сбоя, а не с `TimeoutError`: срок не вышел."""
+    probes.use_database(monkeypatch, relay.url)
+    relay.cut_on = b"SELECT 1"
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http, asyncio.timeout(5):
+        response = await http.get("/api/health")
+    assert (response.status_code, response.json()["kind"]) == (503, "unavailable")
+    records = list(warnings_of(capsys.readouterr().err))
+    assert [(r["message"], r["error"]) for r in records] == [
+        ("здоровье: база не ответила", "DBAPIError")
+    ]
+
+
+async def test_a40_health_connection_is_named_in_the_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A40: соединение здоровья видно в `pg_stat_activity` своим именем — `ai-geo-audit:health`."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    who = "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid()"
+    async with health._engine().connect() as connection:
+        assert await connection.scalar(text(who)) == "ai-geo-audit:health"
+
+
+@pytest.mark.parametrize("opened", [False, True], ids=["не открыто", "закрыто"])
+async def test_a40_cut_of_a_missing_connection_is_harmless(
+    monkeypatch: pytest.MonkeyPatch, opened: bool
+) -> None:
+    """A40: обрыв в срок, когда рвать нечего — соединение ещё не открыто или уже закрыто, — не
+    падает: исключение обратного вызова ушло бы мимо ответа."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    connection = health._engine().connect()
+    if opened:
+        await connection.start()
+        await connection.close()
+    cut = health._Cut(connection)
+    assert cut.fired is False
+    cut()
+    assert cut.fired is True
 
 
 async def test_a41_requests_without_database_need_do_not_touch_it(
