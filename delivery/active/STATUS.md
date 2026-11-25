@@ -18,10 +18,21 @@
        чтение; код — после подписи владельца: спека, план, пакет `redis`. -->
 - **builder:** agent:front-session
 - **verifier:** agent:reviewer2-session
-- **human_ok_spec:** pending
-- **human_ok_plan:** pending
-  <!-- Строка `new_dependency` для `redis` 8.1.0 — после слова владельца, с `by=human:owner`
-       (L93). -->
+- **human_ok_spec:** yes (by=human:owner at=2026-11-25T12:03Z)
+  <!-- Слово владельца 2026-11-25T12:03:52Z — «все оптимально» на список ведущей из восьми
+       пунктов (показ — `docs/deliveries/ch1-14a1-owner-show.md`). К этой поставке — пункты 5–8:
+       5) подпись спеки и плана, класс L: примеры A240–A243 и A23 на `969c9ed` — файл спеки
+       sha256 `0079cd27d8d6`, SHA-1 `50efdff5fcfd`; строк `| A` — 6, sha256 `de61370b2599`, SHA-1
+       `a5e94e5e1329`; план — sha256 `b677a7995b40`, SHA-1 `f61bcd552132`; окно подписи
+       необратимого — следом, касанием владельца; 6) пакет `redis` 8.1.0 — строка
+       `new_dependency` ниже; 7) «было — станет» П1, 15 строк (`decisions.md`): живые спеки
+       правит ведущая, архивы в main не правим (В12); 8) чистые клоны T5 и сдачи (T6) — ведущая
+       (L137). Внесла ведущая. -->
+- **human_ok_plan:** yes (by=human:owner at=2026-11-25T12:03Z)
+- **new_dependency:** redis reason=клиент Redis в api — исходящие тревог и Redis в здоровье — 8.1.0, выпуск 2026-07-30 (тег `v8.1.0` и PyPI), последний старше 14 суток, колесо py3-none-any, косвенных для Python 3.12 нет; свой клиент протокола не пишем by=human:owner at=2026-11-25T12:03Z
+  <!-- Слово владельца 2026-11-25T12:03:52Z, пункт 6 списка ведущей. Версию на день кода сверить
+       ещё раз по первоисточнику (L49, T0): иная версия или лишний пакет в замке — снова словом
+       владельца. Внесла ведущая. -->
 - **shape-oracles:** cqg-deployed
 - **behavior-oracles:** tests-present — pytest на настоящих Postgres 16 и Redis 7.4; сценарии smoke — `delivery/evals/smoke/run.sh` (S3, S1, S2)
 - **artifact_oracle:** `scripts/stack_oracle.py` — образ с новым пакетом, api со здоровьем, где есть Redis, — healthy (A65, A69 Ч1.5а)
