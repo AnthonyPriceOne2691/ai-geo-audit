@@ -28,10 +28,11 @@ if TYPE_CHECKING:
     from stack_oracle import Run
 
 COMPOSE = "docker-compose.yml"
-#: Правил основного набора (A87): шестнадцать кодов Ч1.5а, семь A87 и `stop-grace` A88.
-MAIN_RULES = 24
-#: Боевое наложение и правил с флагом `--prod` (A89): 24 основного и три боевых.
-PROD, PROD_RULES = "docker-compose.prod.yml", 27
+#: Правил основного набора (A87, A179): шестнадцать кодов Ч1.5а, семь A87, `stop-grace` A88 и
+#: `db-roles`, `redis-auth` «Учёток хранилищ».
+MAIN_RULES = 26
+#: Боевое наложение и правил с флагом `--prod` (A89, A179): 26 основного и три боевых.
+PROD, PROD_RULES = "docker-compose.prod.yml", 29
 
 
 #: Адрес базы процесса — роль и пароль (A65). Пароли выдумывает оракул: hex, у роли миграций —
@@ -256,13 +257,14 @@ def rules_on(run: Run, files: list[str], extra: list[str], count: int) -> str:
 
 
 def step_rules_on_file(run: Run) -> str:
-    """A73, A87: правила на настоящем основном файле — «сервисов 5, правил 24», нарушений 0."""
+    """A73, A87, A179: правила на настоящем основном файле — «сервисов 5, правил 26», нарушений
+    0."""
     return rules_on(run, [COMPOSE], [], MAIN_RULES)
 
 
 def step_rules_on_prod(run: Run) -> str:
     """A89, вторая строка: правила с флагом `--prod` на основном файле с боевым наложением —
-    «сервисов 5, правил 27», нарушений 0. Наложение оракул не поднимает: драйвера journald может
+    «сервисов 5, правил 29», нарушений 0. Наложение оракул не поднимает: драйвера journald может
     не быть на машине; первый подъём — Ч1.6."""
     return rules_on(run, [COMPOSE, PROD], ["--prod"], PROD_RULES)
 

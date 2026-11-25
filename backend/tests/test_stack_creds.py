@@ -297,7 +297,7 @@ def test_a178_queue_password_at_a_process_is_caught_by_both_rules(service: str) 
         ),
         put(svc("redis"), "command", f'sh -c "exec redis-server - <<EOF\n{PASS_LINE}\nEOF\n"'),
         health(["CMD-SHELL", CLI.replace("grep -x", "grep -q")]),
-        health(f"CMD-SHELL {CLI}"),
+        health(CLI),
         put(
             svc("web"),
             "healthcheck",

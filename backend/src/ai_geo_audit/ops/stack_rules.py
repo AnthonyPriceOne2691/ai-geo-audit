@@ -10,8 +10,9 @@
 
 Запуск — внутри собранного образа: `python -m ai_geo_audit.ops.stack_rules < config.json`; с
 флагом `--prod` — ещё три боевых правила над выводом основного файла с боевым наложением (A89,
-`stack_prod`); код 0 — нарушений нет, 1 — нарушения, 2 — отказ. Предел мягкой остановки api правило
-`stop-grace` берёт из настроек uvicorn — `server_settings()` (A88), а не из своей копии числа.
+`stack_prod`); код 0 — нарушений нет, 1 — нарушения, 2 — отказ. Правила учёток хранилищ —
+`stack_creds` (A177, A178). Предел мягкой остановки api правило `stop-grace` берёт из настроек
+uvicorn — `server_settings()` (A88), а не из своей копии числа.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from pydantic import SecretStr
 from ai_geo_audit import config
 from ai_geo_audit.api.app import server_settings
 from ai_geo_audit.config import startup_checks
+from ai_geo_audit.ops import stack_creds as creds
 from ai_geo_audit.ops import stack_hardening as hard
 from ai_geo_audit.ops import stack_prod as prod_rules
 from ai_geo_audit.ops.stack_refusal import InputRefusedError
@@ -423,6 +425,8 @@ CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("segments", hard.segments),
     ("internal", hard.internal),
     ("stop-grace", _stop_grace),
+    ("db-roles", creds.db_roles),
+    ("redis-auth", creds.redis_auth),
 )
 RULES = tuple(code for code, _ in CHECKS)
 #: Боевой набор (A89, флаг `--prod`): основной и три правила наложения.
