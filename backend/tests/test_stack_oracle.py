@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import ipaddress
+import os
 import socket
 import subprocess
 import sys
@@ -17,6 +18,8 @@ from types import SimpleNamespace
 
 import dbtools
 import pytest
+
+from ai_geo_audit.config import master_key
 
 sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 _spec = importlib.util.spec_from_file_location(
@@ -454,13 +457,15 @@ def test_a76_docker_down_is_code_2_not_a_green_run(
     assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
 
 
-#: Строка журнала web: проверка здоровья смотрит не туда, nginx ответил 404.
+#: Строка журнала web: проверка здоровья смотрит не туда, nginx ответил 404. Строка журнала api:
+#: проверка старта в бою отказала (A221, Ч1.12а; наблюдение на живой порче L126).
 WEB_LOG = 'web-1  | 127.0.0.1 - - "GET /api/health HTTP/1.1" 404 153 "-" "Wget"\n'
+API_LOG = "api-1  | KEYS_MASTER_KEY_FILE: строка 1 — не 64 знака hex\n"
 
 
 class MigrateFails(oracle.Docker):
     """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — строки с
-    паролем и секретом стека, ошибка alembic и две строки после неё; журнал web — `WEB_LOG`."""
+    паролем и секретом стека, ошибка alembic и две строки после неё; api и web — свои строки."""
 
     secrets: tuple[str, str] = ("", "")
     logs_calls: tuple[tuple[str, ...], ...] = ()
@@ -477,15 +482,15 @@ class MigrateFails(oracle.Docker):
                 "migrate-1  | FAILED: Path doesn't exist: 'x'.\n"
                 "migrate-1  | exit code 255\nmigrate-1  | done\n"
             )
-            log = log if args[-1] == "migrate" else WEB_LOG
+            log = {"migrate": log, "api": API_LOG}.get(args[-1], WEB_LOG)
             return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
         return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
 
 
 def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
-    """A76, третья строка: подъём упал — в причине шага хвосты журналов migrate и web
-    (`--tail 20`, шесть последних строк): причина от alembic («FAILED: …») и ответ nginx на
-    проверку здоровья web (L89); пароля и секрета стека в причине нет."""
+    """A76, третья строка: подъём упал — в причине шага хвосты журналов migrate, api и web
+    (`--tail 20`, шесть последних строк): причина от alembic («FAILED: …»), отказ проверки старта
+    api и ответ nginx на проверку здоровья web (L89); пароля и секрета стека в причине нет."""
     docker = MigrateFails()
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
     docker.secrets = (run.password, run.jwt)
@@ -493,10 +498,11 @@ def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: P
         compose.step_up(run)
     reason = str(failure.value)
     assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
-    assert '"GET /api/health HTTP/1.1" 404' in reason
+    assert '"GET /api/health HTTP/1.1" 404' in reason and "строка 1 — не 64 знака hex" in reason
     assert run.password not in reason and run.jwt not in reason
     tails = [call[-4:] for call in docker.logs_calls]
-    assert tails == [("--no-color", "--tail", "20", service) for service in ("migrate", "web")]
+    services = ("migrate", "api", "web")
+    assert tails == [("--no-color", "--tail", "20", service) for service in services]
 
 
 class RulesAnswer(oracle.Docker):
@@ -586,3 +592,25 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
     assert compose.PROD == "docker-compose.prod.yml"
     assert compose.PROD_RULES == 27
+
+
+def test_a65_a220_oracle_master_key_passes_the_startup_parse(tmp_path: Path) -> None:
+    """A65 Ч1.5а, A220: оракул пишет выдуманный мастер-ключ в формате файла A220 — одна строка из
+    64 знаков hex и перевод строки, права 644 (читает uid 10001); тот же разбор, что у проверки
+    старта api в бою, даёт ключ 1; у двух прогонов ключи разные. Без Docker: порча «назад к
+    `token_urlsafe`» краснеет здесь, а не только в джобе `stack` (находка 5 проверяющей). Маска
+    процесса — строгая: права 644 ставит сама запись, а не умолчание машины."""
+    first, second = tmp_path / "first.key", tmp_path / "second.key"
+    mask = os.umask(0o077)
+    try:
+        compose.write_master_key(first)
+        compose.write_master_key(second)
+    finally:
+        os.umask(mask)
+    assert oracle.write_master_key is compose.write_master_key
+    keys = [master_key.parse(path.read_bytes()) for path in (first, second)]
+    assert [len(found) for found in keys] == [1, 1]
+    assert keys[0][0].raw != keys[1][0].raw
+    assert first.read_bytes().count(b"\n") == 1
+    assert first.read_bytes().endswith(b"\n")
+    assert (first.stat().st_mode & 0o777, second.stat().st_mode & 0o777) == (0o644, 0o644)

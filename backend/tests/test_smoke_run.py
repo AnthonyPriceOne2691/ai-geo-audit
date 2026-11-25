@@ -529,8 +529,8 @@ def test_a370_head_revision_without_schema_tables_is_red(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A370, копия: ревизия базы — head, а таблицы схемы нет — S3 красный «нет таблиц схемы»:
-    судятся таблицы метаданных моделей, а не одна ревизия (L28). Таблиц у сервиса пока нет
-    (`models.Base.metadata` пуста), поэтому метаданные — подставные, с одной таблицей."""
+    судятся таблицы метаданных моделей, а не одна ревизия (L28). Метаданные — подставные, с одной
+    таблицей, которой ревизия не создаёт: настоящие таблицы `alembic upgrade head` создал бы."""
     metadata = SimpleNamespace(tables={"smoke_probe": None})
     monkeypatch.setattr(
         smoke_run, "models", SimpleNamespace(Base=SimpleNamespace(metadata=metadata))
@@ -545,6 +545,30 @@ def test_a370_head_revision_without_schema_tables_is_red(
     finally:
         asyncio.run(smoke_run.drop(run.db))
     assert (code, "S3: нет таблиц схемы: smoke_probe" in lines) == (1, True), lines
+
+
+def test_a370_s3_judges_the_settings_tables_too() -> None:
+    """A370, L121: S3 судит все таблицы `models.Base.metadata`, и среди них — таблицы ключей и
+    настроек. Проверка — в свежем процессе, как в `run.sh` (`PYTHONPATH` на `backend/src` корня):
+    в процессе pytest `schema` уже импортирован модулями тестов, и тест здесь не держал бы ничего
+    (находка 6 проверяющей). Подпроцесс — не часть прогона порч: под mutmut пакет `mutants/src`
+    с батутами и `MUTANT_UNDER_TEST=stats` звали бы `config()` mutmut от `tests/`, и сбор
+    статистики падал (CI на `a7a2211`); поэтому путь — исходный, а переменной mutmut нет."""
+    tables_of = "sorted(smoke_run.models.Base.metadata.tables)"
+    code = f"import json, smoke_run; print(json.dumps({tables_of}))"
+    env = {name: value for name, value in os.environ.items() if name != mutation_db.MUTANT}
+    run = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=TESTS,
+        env=env | {"PYTHONPATH": str(ROOT / "backend" / "src")},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr[-1500:]
+    tables = json.loads(run.stdout.strip().splitlines()[-1])
+    assert {"service_keys", "setting_versions"} <= set(tables)
 
 
 def test_a370_a371_real_s3_then_s1_on_a_fresh_base(tmp_path: Path) -> None:

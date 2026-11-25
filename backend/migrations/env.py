@@ -34,7 +34,7 @@ from sqlalchemy.exc import DBAPIError
 from ai_geo_audit.refusal import invalid_settings
 
 try:
-    from ai_geo_audit import config
+    from ai_geo_audit import config, schema
     from ai_geo_audit.config import startup_checks
     from ai_geo_audit.logs import setup as logs
     from ai_geo_audit.storage import build_engine, locks, models
@@ -64,7 +64,7 @@ def _lock_timeout(connection: Connection, seconds: int) -> None:
 def _migrate(connection: Connection) -> None:
     context.configure(
         connection=connection,
-        target_metadata=models.Base.metadata,
+        target_metadata=schema.metadata,
         **models.COMPARE,
     )
     limit = config.storage.migration_lock_wait_seconds

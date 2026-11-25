@@ -28,6 +28,7 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ai_geo_audit import schema
 from ai_geo_audit.storage import models, session_scope
 
 NAMES = """
@@ -267,33 +268,30 @@ def test_a15_rules_refuse_empty_metadata() -> None:
 
 
 def test_a15_service_models_follow_the_rules() -> None:
-    """A15: модели сервиса. Пока таблиц нет — ждём отказа; первая таблица Части 3 сама переводит
-    тест на настоящую проверку. Печатает, какой ветвью прошёл."""
-    tables = models.Base.metadata.tables
-    if not tables:
-        print("ветвь: у сервиса таблиц нет — ждём отказа")
-        with pytest.raises(models.NothingToCheck):
-            models.model_problems(models.Base.metadata)
-        return
+    """A15, A236: модели сервиса из `schema.py` — правила без ветки «таблиц нет»: первые таблицы
+    пришли с Ч1.12а, нарушений нет. Метаданные мимо `schema.py` пусты — тест красный. Печатает,
+    сколько просмотрено."""
+    tables = schema.metadata.tables
     keys = sum(len(t.foreign_keys) for t in tables.values())
     print(
-        f"ветвь: таблиц {len(tables)}, колонок {sum(len(t.columns) for t in tables.values())}, "
+        f"таблиц {len(tables)}, колонок {sum(len(t.columns) for t in tables.values())}, "
         f"ключей {keys}"
     )
-    assert models.model_problems(models.Base.metadata) == []
+    assert {"service_keys", "setting_versions"} <= set(tables)
+    assert models.model_problems(schema.metadata) == []
 
 
 async def test_a16_service_enum_columns_match_the_database(engine: AsyncEngine) -> None:
-    """A16: сверка перечислений на моделях сервиса. Колонок-перечислений нет — ждём отказа;
-    первая такая колонка Части 3 сама переводит тест на сверку с базой после `upgrade head`.
-    Печатает, какой ветвью прошёл."""
-    tables = models.Base.metadata.tables.values()
+    """A16, A236: сверка перечислений на моделях сервиса из `schema.py`. Колонок-перечислений нет —
+    ждём отказа: в таблицах ключей и настроек их нет, первая придёт с Ч1.7в и сама переведёт тест
+    на сверку с базой после `upgrade head`. Печатает, какой ветвью прошёл."""
+    tables = schema.metadata.tables.values()
     enums = [c for t in tables for c in t.columns if isinstance(c.type, SqlEnum)]
     async with engine.connect() as conn:
         if not enums:
             print("ветвь: колонок-перечислений у сервиса нет — ждём отказа")
             with pytest.raises(models.NothingToCheck):
-                await models.enum_drift(conn, models.Base.metadata)
+                await models.enum_drift(conn, schema.metadata)
             return
         print(f"ветвь: колонок-перечислений {len(enums)}")
-        assert await models.enum_drift(conn, models.Base.metadata) == []
+        assert await models.enum_drift(conn, schema.metadata) == []

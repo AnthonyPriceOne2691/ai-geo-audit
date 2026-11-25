@@ -26,9 +26,13 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from ai_geo_audit import schema
 from ai_geo_audit.storage import build_engine, models
 
 PREFIX = "audit_test_"
+#: Голова настоящей цепочки ревизий: на неё пробы A18–A20 возвращают базу, поверх неё — их номера.
+#: Новая ревизия сервиса — правка здесь и в номерах `probe_revisions/`.
+HEAD = "0002"
 # pragma: allowlist nextline secret
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
 START = "docker compose -f docker-compose.dev.yml up -d db"
@@ -325,8 +329,9 @@ PROBE_TABLES = ("probe_rev", "probe_half", "probe_target", "probe_setting")
 
 
 async def back_to_start(ini: Path) -> None:
-    """Вернуть цепочку на `0001` и снести таблицы проб, что бы ни случилось в тесте."""
-    alembic("downgrade", "0001", config=ini)
+    """Вернуть цепочку на голову настоящей (`HEAD`) и снести таблицы проб, что бы ни случилось в
+    тесте: откат ниже головы снёс бы таблицы сервиса."""
+    alembic("downgrade", HEAD, config=ini)
     conn = await asyncpg.connect(_raw(own_url()))
     try:
         await conn.execute(f"DROP TABLE IF EXISTS {', '.join(PROBE_TABLES)}")
@@ -343,16 +348,29 @@ async def rows(engine: AsyncEngine, key: str | None = None) -> int:
         return (await conn.execute(query)).scalar_one()
 
 
+def service_tables() -> list[str]:
+    """Таблицы сервиса из `schema.py` — их чистит фикстура с фиксациями, как и пробу."""
+    return [f"public.{table.name}" for table in schema.metadata.sorted_tables]
+
+
 async def truncate(engine: AsyncEngine) -> None:
+    """После теста с фиксациями: проба и таблицы сервиса пусты, счётчики — с начала."""
+    tables = ", ".join(["probe.probe", "probe.owner", *service_tables()])
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE probe.probe, probe.owner RESTART IDENTITY"))
+        await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY"))
 
 
 async def require_empty(engine: AsyncEngine) -> None:
-    """Перед тестом с фиксациями проба пуста: иначе прошлый тест не убрал за собой."""
+    """Перед тестом с фиксациями проба и таблицы сервиса пусты: иначе прошлый тест не убрал за
+    собой."""
     left = await rows(engine)
     if left:
         raise AssertionError(f"в пробе {left} строк(и): прошлый тест не убрал за собой")
+    async with engine.connect() as conn:
+        for table in service_tables():
+            count = (await conn.execute(text(f"SELECT count(*) FROM {table}"))).scalar_one()
+            if count:
+                raise AssertionError(f"в {table} {count} строк(и): прошлый тест не убрал за собой")
 
 
 @contextlib.asynccontextmanager
