@@ -446,6 +446,28 @@ def test_a76_red_step_is_counted_named_and_an_unneeded_one_goes_on(
     assert "A1 второй — ок: сделано" in out
 
 
+def test_a172_step_lines_hide_invented_secrets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A172 (A67): строки шагов — «ок» и «КРАСНОЕ» — через маску исполнителя: выдуманный секрет в
+    итоге шага или в причине красного, которую шаг собрал сам из вывода команд, — звёздочками."""
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    encoded = run.migrate_password.replace("@", "%40")
+
+    def green(_run: object) -> str:
+        return f"вывод с {run.app_password}"
+
+    def red(_run: object) -> str:
+        raise oracle.StepError(f"журнал db: {run.migrate_password} и {encoded}")
+
+    steps = [("A0", "зелёный", green, False), ("A1", "красный", red, False)]
+    assert oracle.run_steps(run, steps) == 1
+    out = capsys.readouterr().out
+    assert "A0 зелёный — ок: вывод с ***" in out
+    assert "A1 красный — КРАСНОЕ: журнал db: *** и ***" in out
+    assert not [secret for secret in run.invented if secret in out]
+
+
 def test_a76_red_needed_step_stops_the_rest(tmp_path: Path) -> None:
     """A76: нужный шаг красный — следующие не идут: судить их не на чем."""
     steps, ran = steps_log(("нужный", True, True), ("следующий", False, False))

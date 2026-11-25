@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import dbtools
 import pytest
@@ -465,7 +466,8 @@ def test_oracle_step_with_a_long_result_prints_lines_of_at_most_100_signs(
         + ("uv, pytest, uvloop — ModuleNotFoundError; " * 5).strip()
     )
     steps = [("A60", "Python и инструменты", lambda _run: detail, False)]
-    assert oracle.run_steps(None, steps) == 0
+    run = SimpleNamespace(docker=oracle.Docker())  # строки шагов — через маску исполнителя
+    assert oracle.run_steps(run, steps) == 0
     out = capsys.readouterr().out
     assert all(len(line) <= guard.WIDTH for line in out.splitlines()), out
     assert f"A60 Python и инструменты — ок: {detail}" in joined(out)
