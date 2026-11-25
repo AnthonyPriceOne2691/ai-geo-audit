@@ -153,6 +153,12 @@ def session_end() -> None:
             release(holder.db, holder.who)
 
 
+def current_url() -> str:
+    """Адрес Redis для кода под тестом и для сервера сценариев: база сессии pytest; вне сессии
+    (smoke `run.sh`) — база 0, где живут только метки и ключ пробы здоровья."""
+    return url(SESSION[-1].db if SESSION else 0)
+
+
 def session_db() -> int:
     if not SESSION:
         raise RuntimeError("база Redis сессии не занята: conftest не звал session_start()")

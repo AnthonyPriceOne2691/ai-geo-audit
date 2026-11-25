@@ -352,9 +352,11 @@ def cors_headers(response: httpx.Response) -> list[str]:
     return [name for name in response.headers if name.lower().startswith("access-control-")]
 
 
-async def test_a50_no_cors_headers_on_answers() -> None:
+async def test_a50_no_cors_headers_on_answers(monkeypatch: pytest.MonkeyPatch) -> None:
     """A50: `Origin` чужого сайта — `GET /api/health` и с пропуском `GET` закрытой пробы: 200 и 200,
-    ни одного заголовка, имя которого начинается с `access-control-`."""
+    ни одного заголовка, имя которого начинается с `access-control-`. База и Redis — теста: со
+    срезом 3 Ч1.14а1 здоровье ходит и в Redis (A243), а умолчание конфига — не он."""
+    probes.use_database(monkeypatch, dbtools.own_url())
     async with probes.client(probes.build()) as http:
         health = await http.get("/api/health", headers=EVIL)
         closed = await http.get(probes.CLOSED, headers=EVIL | PASS)

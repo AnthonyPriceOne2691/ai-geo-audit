@@ -27,6 +27,13 @@ FULL = {
 PASSWORD = "fake-redis-pass-123456"  # pragma: allowlist secret
 
 
+def closed_port() -> int:
+    """Порт на петле, где никто не слушает: отказ соединения сразу."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
 def url(port: int) -> str:
     """Адрес подставного сервера с тестовым паролем; пароль ищут во всём выводе."""
     return f"redis://:{PASSWORD}@127.0.0.1:{port}/0"

@@ -10,11 +10,15 @@ import re
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
 
 import api_probes as probes
 import dbtools
 import httpx
 import pytest
+import redis
+import redis_fakes
+import redistools
 from sqlalchemy.engine import make_url
 
 from ai_geo_audit.api import contract, health
@@ -322,3 +326,117 @@ async def test_a43_every_answer_is_its_sample(monkeypatch: pytest.MonkeyPatch, k
     if kind == "invalid":
         assert [sorted(item) for item in body["errors"]] == [sorted(sample["errors_item_keys"])]
     assert body == sample["body"]
+
+
+# --- A243: здоровье видит Redis ------------------------------------------------------------------
+
+
+def wrong_password_url() -> str:
+    """Адрес Redis теста с неверным паролем: сервер тот же, пароль — тестовое значение."""
+    parts = urlsplit(redistools.current_url())
+    netloc = ":" + redis_fakes.PASSWORD + f"@{parts.hostname}:{parts.port}"
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
+async def test_a243_health_sees_redis_by_a_probe_write(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str
+) -> None:
+    """A243: база и Redis теста отвечают — 200 `{"status": "ok"}`, как A38; проба Redis — запись
+    своего ключа со сроком 60 с, а не `PING`."""
+    probes.use_database(monkeypatch, dbtools.own_url(), redis=redis_url)
+    async with probes.client(probes.build()) as http:
+        response = await http.get("/api/health")
+    assert (response.status_code, response.json()) == (200, {"status": "ok"})
+    stand = redis.Redis.from_url(redis_url)
+    assert stand.get(health.REDIS_PROBE_KEY) == b"1"
+    assert 0 < stand.pttl(health.REDIS_PROBE_KEY) <= health.REDIS_PROBE_TTL_MS == 60_000
+
+
+@pytest.mark.parametrize(
+    ("case", "error"),
+    [
+        ("closed", "ConnectionRefusedError"),
+        ("password", "AuthenticationError"),
+        ("full", "OutOfMemoryError"),
+    ],
+)
+async def test_a243_redis_refusal_is_unavailable_with_one_record(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], case: str, error: str
+) -> None:
+    """A243: порт Redis закрыт; в адресе неверный пароль; Redis полон — рукопожатие и `PING`
+    отвечают, на запись — `OOM` (`noeviction`): 503 тело `unavailable` образца договора, одна
+    запись WARNING «здоровье: Redis не ответил» с классом; ни адреса, ни пароля нет ни в ответе,
+    ни в записи."""
+    with redis_fakes.running(replies=redis_fakes.FULL) as full:
+        urls = {
+            "closed": redis_fakes.url(redis_fakes.closed_port()),
+            "password": wrong_password_url(),
+            "full": full.url,
+        }
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=urls[case])
+        app = probes.build()
+        log_setup.setup_logging(fmt="json")
+        async with probes.client(app) as http:
+            response = await http.get("/api/health")
+        commands = list(full.commands)
+    err = capsys.readouterr().err
+    records = list(warnings_of(err))
+    assert (response.status_code, response.json()) == (503, UNAVAILABLE["body"])
+    assert [(r["message"], r["error"]) for r in records] == [("здоровье: Redis не ответил", error)]
+    said = response.text + err
+    assert redis_fakes.PASSWORD not in said and f":{urlsplit(urls[case]).port}" not in said
+    assert (b"SET" in commands, b"PING" in commands) == (
+        (True, False) if case == "full" else (False, False)
+    )
+
+
+async def test_a243_silent_redis_is_cut_by_the_limit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A243: Redis теста принимает соединение и молчит, граница подменена на 0,5 с — 503 не позже
+    1 с, `error` — `TimeoutError`, `limit_seconds` — 0.5."""
+    with redis_fakes.running(silent=True) as silent:
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=silent.url)
+        monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
+        app = probes.build()
+        log_setup.setup_logging(fmt="json")
+        async with probes.client(app) as http:
+            started = time.monotonic()
+            response = await asyncio.wait_for(http.get("/api/health"), 2)
+            took = time.monotonic() - started
+    records = list(warnings_of(capsys.readouterr().err))
+    assert (response.status_code, response.json()["kind"]) == (503, "unavailable")
+    assert took <= 1.0, took
+    assert [(r["message"], r["error"], r["limit_seconds"]) for r in records] == [
+        ("здоровье: Redis не ответил", "TimeoutError", 0.5)
+    ]
+
+
+async def test_a243_database_and_redis_down_is_one_answer_and_two_records(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A243: база и Redis лежат разом — один ответ 503 и две записи: база и Redis."""
+    closed = redis_fakes.url(redis_fakes.closed_port())
+    probes.use_database(monkeypatch, probes.closed_port_url(), redis=closed)
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http:
+        response = await http.get("/api/health")
+    records = list(warnings_of(capsys.readouterr().err))
+    assert (response.status_code, response.json()) == (503, UNAVAILABLE["body"])
+    assert [(r["message"], r["error"]) for r in records] == [
+        ("здоровье: база не ответила", "ConnectionRefusedError"),
+        ("здоровье: Redis не ответил", "ConnectionRefusedError"),
+    ]
+
+
+async def test_a243_paths_without_a_pass_do_not_touch_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A243: без пропуска `GET /api/nope` — 403, Redis теста не принял ни одного соединения."""
+    with redis_fakes.running(replies=redis_fakes.FULL) as fake:
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=fake.url)
+        async with probes.client(probes.build()) as http:
+            response = await http.get("/api/nope")
+        accepted = fake.accepted
+    assert (response.status_code, accepted) == (403, 0)

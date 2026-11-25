@@ -37,6 +37,7 @@ import asyncpg
 import dbtools
 import httpx
 import live_server
+import redistools
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
@@ -307,6 +308,12 @@ async def postgres_problem() -> str | None:
     return f"окружение: Postgres не отвечает ({reason}) — {dbtools.START}" if reason else None
 
 
+def redis_problem() -> str | None:
+    """S1 судит здоровье, а оно ходит в Redis (A243): без Redis — причина до сценариев."""
+    reason = redistools.unreachable()
+    return f"окружение: Redis не отвечает ({reason}) — {redistools.START}" if reason else None
+
+
 def url_of(db: str) -> str:
     """Адрес базы `db` на сервере тестов — как у базы рабочей копии (`dbtools.own_url`)."""
     with dbtools.active(db):
@@ -506,7 +513,9 @@ def prepared(
     notes: list[str] = []
     try:
         notes += leftover_group(run.state)
-        problem = package_problem(run.root, package) or asyncio.run(postgres_problem())
+        problem = (
+            package_problem(run.root, package) or asyncio.run(postgres_problem()) or redis_problem()
+        )
         run.reached = problem is None
         if run.reached and asyncio.run(drop(run.db)):
             notes.append("база снята")
