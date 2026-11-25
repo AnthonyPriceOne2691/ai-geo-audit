@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import socket
 import threading
 import time
+from collections.abc import Coroutine
 
 import pytest
 import redis
@@ -221,6 +223,25 @@ def test_a240_lost_reply_is_false_in_time_and_never_repeated(
     assert elapsed <= 2.5
     assert (commands.count(b"EXEC"), commands.count(b"WATCH")) == (execs, 1)
     assert len(threads) == (reply == redis_fakes.FROZEN)
+
+
+def test_a240_thread_that_starts_after_the_deadline_queues_nothing(
+    outbox: redis.Redis, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A240 (находка 13): поток постановки получил процессор после срока — заморозка контейнера,
+    остановка процесса: срок идёт от вызова, и тревога, о которой сказано «не поставлена», не
+    ставится."""
+    real = asyncio.run
+
+    def late(work: Coroutine[object, object, None]) -> None:
+        time.sleep(2.5)
+        real(work)
+
+    monkeypatch.setattr(asyncio, "run", late)
+    elapsed = timed_refusal(capsys, LATE)
+    threads = leftover()
+    settle(threads)
+    assert (elapsed <= 2.5, len(threads), outbox.llen(alerts.OUTBOX)) == (True, 1, 0)
 
 
 def test_a240_name_that_does_not_resolve_is_cut_in_time(

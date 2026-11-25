@@ -28,6 +28,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 import uuid
 from collections.abc import Sequence
 from concurrent.futures import Future
@@ -156,8 +157,8 @@ async def _push(client: aredis.Redis, record: str) -> int:
             return over
 
 
-async def _queue(record: str, outcome: Future[int]) -> None:
-    """Постановка под общим сроком; итог — сразу, закрытие своего соединения — после него.
+async def _queue(record: str, deadline: float, outcome: Future[int]) -> None:
+    """Постановка до `deadline` (`monotonic`); итог — сразу, закрытие своего соединения — после.
 
     Повторов нет ни на какой ошибке: с `supported_errors` по умолчанию клиент и без повторов
     превращает обрыв под `WATCH` в `WatchError`, и `_push` повторил бы круг, в котором потерян
@@ -165,7 +166,7 @@ async def _queue(record: str, outcome: Future[int]) -> None:
     url = config.storage.redis_url.get_secret_value()
     client = aredis.Redis.from_url(url, retry=Retry(NoBackoff(), 0, supported_errors=()))
     try:
-        async with asyncio.timeout(DEADLINE_SECONDS):
+        async with asyncio.timeout(deadline - time.monotonic()):
             outcome.set_result(await _push(client, record))
     finally:
         try:
@@ -179,12 +180,13 @@ def _in_time(record: str) -> int:
     """Постановка в своём потоке: вызов не дольше срока, что бы ни держало клиента. Сброс `WATCH`
     у оборванного соединения открывает новое и ждёт замерший Redis 5 с, а имя, которое не
     разрешается, держит конец `asyncio.run` (decisions, находка 3). Не дождались —
-    `TimeoutError`."""
+    `TimeoutError`. Срок — от вызова: поток, получивший процессор позже, уже ничего не ставит."""
     outcome: Future[int] = Future()
+    deadline = time.monotonic() + DEADLINE_SECONDS
 
     def run() -> None:
         try:
-            asyncio.run(_queue(record, outcome))
+            asyncio.run(_queue(record, deadline, outcome))
         except Exception as failure:  # silent-ok: сбой — вызывающему через итог, ERROR — его
             if not outcome.done():
                 outcome.set_exception(failure)
