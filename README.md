@@ -198,6 +198,30 @@ React с Vite и Mantine, pytest, docker compose.
     -c 'DROP OWNED BY audit_migrate' -c 'DROP ROLE audit_app' -c 'DROP ROLE audit_migrate'
   ```
 
+## Очередь Redis
+
+- Очередь — redis с паролем. `REDIS_PASSWORD` — в окружении контейнера redis; сервер берёт её
+  строкой `requirepass` со входа — here-doc команды `sh -c`, а не аргументом: ни в списке
+  процессов, ни в команде контейнера (`Config.Cmd` в `docker inspect`), ни в журнале пароля нет; в
+  `Config.Env` он есть — как пароли у db. Проверка здоровья — ответ `PONG` при `REDISCLI_AUTH`, а
+  не код `redis-cli`: без пароля `redis-cli` выходит с кодом 0. Других сервисов с `REDIS_PASSWORD`
+  нет — правило `redis-auth`.
+- Адрес очереди api — `REDIS_URL` из переменной сервера `API_REDIS_URL`, вида
+  `redis://:<пароль>@redis:6379/0`: пароль тот же, что в `REDIS_PASSWORD`; знаки `@ / ? #` в
+  пароле — кодом (`%40`, `%2F`, `%3F`, `%23`). Проверка старта в бою: пароль короче 12 знаков,
+  заглушка `CHANGE_ME` и незакодированные знаки — отказ с именем `REDIS_URL`, api не стартует.
+- Смена пароля: новый пароль — в `REDIS_PASSWORD` и в `API_REDIS_URL` файла окружения сервера, в
+  адресе — закодированным; затем `docker compose up -d --wait`. Redis читает настройки только на
+  старте: правка файла без пересоздания контейнера ничего не меняет.
+- Стенд, поднятый до пароля: `REDIS_PASSWORD` и `API_REDIS_URL` — в файл окружения сервера (блок в
+  `.env.example`): без них compose стек не поднимает — обе переменные обязательны; затем
+  `docker compose up -d --wait`.
+- Проверка — ответ `PONG`; без пароля — `NOAUTH`:
+
+  ```
+  docker compose exec -T redis sh -c 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping'
+  ```
+
 ## Фронт
 
 - Node 24 (`frontend/.nvmrc`); пакеты — `cd frontend && npm ci`: только по lock, скрипты
