@@ -12,6 +12,10 @@ React с Vite и Mantine, pytest, docker compose.
 ## Разработка
 
 - База разработки и тестов — `docker compose -f docker-compose.dev.yml up -d db` (127.0.0.1:5462).
+- Redis разработки и тестов — `docker compose -f docker-compose.dev.yml up -d redis`
+  (127.0.0.1:6462, публичный пароль стенда `audit-dev-redis`): без него тесты не стартуют одной
+  строкой. У процесса pytest своя база Redis из 1–15 под меткой со сроком; свой Redis —
+  `TEST_REDIS_URL` без номера базы.
 - Тесты — `cd backend && uv run pytest -q`; база копии — `audit_test_` + 10 знаков sha256 пути
   корня. Снятую копию — `docker compose -f docker-compose.dev.yml exec db dropdb -U audit <база>`.
 

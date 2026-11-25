@@ -127,8 +127,9 @@ def test_a33_wide_or_bad_proxies_break_the_config_in_any_mode(
         config.ApiSettings()
     [error] = refusal.value.errors(include_url=False, include_input=False)
     assert error["loc"] == ("API_TRUSTED_PROXIES",)
-    assert why in error["msg"]
-    assert element in error["msg"]
+    # Текст отказа целиком: подстрока не убивает порч строк mutmut (L124, долг по пути Ч1.14а1).
+    whole = {STAR: STAR, EMPTY: f"{EMPTY} — назовите адреса прокси через запятую"}
+    assert error["msg"] == "Value error, " + whole.get(why, f"«{element}» — {why}")
 
 
 def entry(extra: dict[str, str]) -> subprocess.CompletedProcess[str]:

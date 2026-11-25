@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 import dbtools
 import pytest
+import redistools
 from pydantic import Field, SecretStr
 
 from ai_geo_audit import config
@@ -18,11 +19,15 @@ ENV_EXAMPLE = dbtools.ROOT / ".env.example"
 
 
 def test_a1_dev_works_out_of_the_box() -> None:
-    """A1: без `.env` и переменных — рабочий набор разработчика; адрес Redis — секрет (A21)."""
+    """A1: без `.env` и переменных — рабочий набор разработчика; адрес Redis — секрет (A21), с
+    Ч1.14а1 — Redis стенда на 6462 с паролем стенда, а не 6379 без пароля."""
     storage = config.StorageSettings()
     assert config.AppSettings().env == "dev"
     assert storage.database_url.get_secret_value().startswith("postgresql+asyncpg://")
-    assert storage.redis_url.get_secret_value() == "redis://localhost:6379/0"
+    assert (
+        storage.redis_url.get_secret_value()
+        == "redis://:" + redistools.PASSWORD + "@127.0.0.1:6462/0"
+    )
     assert config.AccessSettings().jwt_ttl_hours == 12
     assert config.LogSettings().format == "text"
 
@@ -171,6 +176,14 @@ def test_a8_setting_named_as_a_secret_must_be_secret_str() -> None:
 
 
 COMPOSE = dbtools.ROOT / "docker-compose.dev.yml"
+
+
+def test_a13_dev_redis_is_the_compose_one_on_6462_with_the_stand_password() -> None:
+    """A13, Ч1.14а1: Redis разработки по умолчанию — из docker-compose.dev.yml на 6462 с публичным
+    паролем стенда: умолчание и стенд — один и тот же Redis."""
+    expected = "redis://:" + redistools.PASSWORD + "@127.0.0.1:6462/0"
+    assert config.StorageSettings().redis_url.get_secret_value() == expected
+    assert '"127.0.0.1:6462:6379"' in COMPOSE.read_text(encoding="utf-8")
 
 
 def test_a13_dev_database_is_the_compose_one_on_5462() -> None:
