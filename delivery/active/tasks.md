@@ -26,7 +26,7 @@
       (L95) — долями порч на вершине среза 2: без правки `backend/src` доли mutmut не зовут.
 
 ## Slice 2 — исходящие, текст, `check` (A240, A241, A242)
-- [ ] T2: `alerts.py`; `ops/alerts.py` — `check` с `setup_logging()` и `guard_process()`, класс
+- [x] T2: `alerts.py`; `ops/alerts.py` — `check` с `setup_logging()` и `guard_process()`, класс
       отказа входа — вне модуля входа (L123); `.importlinter` — слой `alerts`; тесты —
       `test_alerts_text.py`, `test_alerts_queue.py`, `test_alerts_commands.py` (подпроцесс — проба
       под `mutants/`, L95). Знаки вне основной плоскости — кодами, скриптом (L128). Сначала
