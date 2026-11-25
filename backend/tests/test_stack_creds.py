@@ -222,6 +222,20 @@ AUTH_PROBES = [
         auth(),
     ),
     ("no-here-doc", put(svc("redis"), "command", ["sh", "-c", "exec redis-server -\n"]), auth()),
+    (
+        "here-doc-quoted",
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<'EOF'\n{PASS_LINE}\nEOF\n"],
+        ),
+        auth(),
+    ),
+    (
+        "requirepass-argument-equals",
+        redis_script("exec redis-server - --requirepass=$$REDIS_PASSWORD", PASS_LINE),
+        auth(),
+    ),
     ("health-no-auth", health(["CMD-SHELL", "redis-cli ping | grep -x PONG"]), auth()),
     (
         "health-no-pong",
@@ -232,6 +246,16 @@ AUTH_PROBES = [
     (
         "health-compose-substitution",
         health(["CMD-SHELL", 'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -x PONG']),
+        auth(),
+    ),
+    (
+        "health-compose-substitution-braces",
+        health(["CMD-SHELL", 'REDISCLI_AUTH="${REDIS_PASSWORD}" redis-cli ping | grep -x PONG']),
+        auth(),
+    ),
+    (
+        "health-single-quotes",
+        health(["CMD-SHELL", "REDISCLI_AUTH='$$REDIS_PASSWORD' redis-cli ping | grep -x PONG"]),
         auth(),
     ),
     (
