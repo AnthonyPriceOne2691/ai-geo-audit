@@ -332,7 +332,7 @@ def test_a221_prod_api_and_worker_refuse_a_bad_master_key_file(
             sc.check_startup(process, found)
         assert str(refusal.value).splitlines()[1:] == [f"  KEYS_MASTER_KEY_FILE — {reason}"]
         assert row not in str(refusal.value)
-    assert prod(monkeypatch, "migrate", **env) == []
+    assert prod(monkeypatch, "migrate", **env | {"DATABASE_URL": DSN_MIGRATE}) == []
 
 
 def test_a221_good_master_key_file_gives_no_reason(
@@ -340,7 +340,8 @@ def test_a221_good_master_key_file_gives_no_reason(
 ) -> None:
     """A221: годный файл — у api и worker причины нет; вне боя проверка молчит."""
     for process in ("api", "worker", "migrate"):
-        assert prod(monkeypatch, process, **full_env(master_key)) == []
+        env = full_env(master_key) | {"DATABASE_URL": db(LONG, user=ROLE[process])}
+        assert prod(monkeypatch, process, **env) == []
     monkeypatch.setenv("APP_ENV", "dev")
     assert sc.problems("worker", app=config.AppSettings()) == []
 
