@@ -5,8 +5,10 @@ Derived from spec acceptance. Run during verify. Живой оракул сте�
 повтор на `70134a1` (пин `libzstd1` из Ч1.12а), 08:53:59–08:57:30Z: шагов 36, красных 0, своего
 не осталось; повтор на `85a900a` (находка 5: отзыв от настоящего выдавшего и с `CASCADE`),
 09:05:02–09:08:33Z: шагов 36, красных 0, своего не осталось. Строки шагов ролей — ниже, из
-прогона на `5f39992`; в обоих повторах они те же слово в слово. Порчи шагов и полная приёмка — у
-третьей проверяющей; скан A23 и отчёт сверки — на verify (T3).
+прогона на `5f39992`; в обоих повторах они те же слово в слово. Порчи строк живьём — у третьей
+проверяющей на `85a900a`, 2026-11-25T09:05–09:12Z, стек на порчу: красные 14 из 14, двенадцать —
+там и так, как сказано в строке, две — иначе (ниже, у первой строки A85 и третьей A170;
+decisions 09:19Z). Скан A23 и отчёт сверки — на verify (T3).
 
 - [x] A85, первая строка — шаг «A85 роль сервиса: отказ на схему и alembic_version»:
       «current_user audit_app; команд 5 — у каждой 42501; alembic current = heads» (08:52:59Z).
@@ -21,7 +23,12 @@ Derived from spec acceptance. Run during verify. Живой оракул сте�
       `test_a85_probe_from_python_stdin_prints_one_json_line`,
       `test_a85_main_in_process_prints_one_json_line`,
       `test_a85_probe_file_as_main_exits_with_the_code_of_main`,
-      `test_a85_probe_file_is_self_contained`
+      `test_a85_probe_file_is_self_contained`. Порчи живьём (третья, `85a900a`): «`CREATE` на
+      `public`» — коды `['ok', 42501 × 4]`, красное на шаге; «роль сервиса — владелец базы» —
+      красное раньше шага, на подъёме (A65): migrate — код выхода 1, в его журнале
+      `permission denied for schema public`, api не стартует, до A85 не доходит (пробы третьей
+      09:14Z и 09:19Z). Строка спеки ждёт «проходят `CREATE TABLE` и `CREATE SCHEMA`» — «было —
+      станет» у ведущей
 - [x] A85, вторая строка — шаг «A85 роль миграций: владелец базы, без особых прав»: «current_user
       audit_migrate; создание и удаление в транзакции с откатом — ok; владелец базы и
       alembic_version — audit_migrate; у обеих ролей вход, особых прав нет» (08:53:00Z); пароль
@@ -54,7 +61,12 @@ Derived from spec acceptance. Run during verify. Живой оракул сте�
       таблицу» (08:53:06Z). Тесты `test_a170_legacy_table_goes_to_the_migrate_role`,
       `test_a170_legacy_step_is_red_and_still_clears_the_table`,
       `test_a170_legacy_step_clears_the_table_after_a_failed_probe`,
-      `test_a170_legacy_step_clears_the_table_when_making_it_fails`
+      `test_a170_legacy_step_clears_the_table_when_making_it_fails`. Порча «таблицы
+      суперпользователя не передаются роли миграций» живьём (третья, `85a900a`) — красное на
+      владельцах: «oracle_legacy audit», «oracle_legacy_id_seq audit»; `DROP TABLE` у роли
+      миграций проходит — она владелец базы, а схема `public` — у владельца базы;
+      `ALTER TABLE … ADD COLUMN` у неё — `must be owner` (проба третьей 09:14Z). Строка спеки ждёт
+      `DROP TABLE` — `42501` — «было — станет» у ведущей
 - [x] A170, четвёртая строка — шаг «A170 лишнее у роли сервиса снимается»: «лишнее снято:
       TRUNCATE — 42501; CREATE на public и базу — нет; права по умолчанию — четыре и два; членств
       0» (08:53:08Z). Тесты `test_a170_extra_grants_are_revoked_by_the_script`,
