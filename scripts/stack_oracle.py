@@ -398,14 +398,15 @@ def copy_head(target: Path) -> None:
 
 
 def run_steps(run: Run, steps: list[tuple[str, str, Callable[[Run], str], bool]]) -> int:
-    """Шаги по порядку; нужный шаг красный — дальше не идём. Число красных."""
+    """Шаги по порядку; нужный шаг красный — дальше не идём. Число красных. Строки «ок» и
+    «КРАСНОЕ» — через маску исполнителя: причины шаги собирают и сами из вывода команд (A172)."""
     red = 0
     for examples, title, step, needed in steps:
         try:
-            say(f"{examples} {title} — ок: {step(run)}")
+            say(run.docker.masked(f"{examples} {title} — ок: {step(run)}"))
         except (StepError, KeyError, TypeError, ValueError) as failure:
             red += 1
-            say(f"{examples} {title} — КРАСНОЕ: {failure}")
+            say(run.docker.masked(f"{examples} {title} — КРАСНОЕ: {failure}"))
             if needed:
                 break
     return red
