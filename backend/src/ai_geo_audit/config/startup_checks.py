@@ -16,6 +16,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
 from ai_geo_audit import config
+from ai_geo_audit.config import master_key
 
 #: Значения-заглушки в `.env.example` начинаются с этой метки.
 PLACEHOLDER = "CHANGE_ME"
@@ -128,11 +129,17 @@ def _database(storage: config.StorageSettings, process: Process) -> Problem | No
 
 
 def _master_key(path: str) -> Problem | None:
+    """Файл мастер-ключа есть и годен по формату (A221): тот же разбор, что у шифра, — причина
+    с номером строки, без содержимого."""
     purpose = "мастер-ключ шифрования ключей сервисов"
-    if missing := _missing("KEYS_MASTER_KEY_FILE", path, purpose):
+    if missing := _missing(master_key.ENV_NAME, path, purpose):
         return missing
     if not Path(path).is_file():
-        return Problem("KEYS_MASTER_KEY_FILE", f"файла нет: {path}")
+        return Problem(master_key.ENV_NAME, f"файла нет: {path}")
+    try:
+        master_key.read(path)
+    except master_key.MasterKeyError as refusal:
+        return Problem(master_key.ENV_NAME, refusal.reason)
     return None
 
 

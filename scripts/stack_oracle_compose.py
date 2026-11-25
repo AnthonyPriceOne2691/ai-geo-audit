@@ -23,6 +23,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from stack_oracle import Run
 
 COMPOSE = "docker-compose.yml"
@@ -160,6 +162,14 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
     }
 
 
+def write_master_key(path: Path) -> None:
+    """Выдуманный мастер-ключ прогона в формате файла A220 (Ч1.12а): строка из 64 знаков hex — 32
+    случайных байта — и перевод строки; проверка старта api в бою его разбирает (A65). Права 644:
+    файл читает uid 10001 в контейнере, права машины переходят как есть."""
+    path.write_text(f"{secrets.token_hex(32)}\n", encoding="ascii")
+    path.chmod(0o644)
+
+
 def compose_base(run: Run) -> list[str]:
     """Своё имя стека, файл назван явно, `.env` копии с канарейками не читается."""
     return ["compose", "-p", run.name, "-f", str(run.copy / COMPOSE), "--env-file", os.devnull]
@@ -266,10 +276,11 @@ def service_log(run: Run, service: str) -> str:
 
 def step_up(run: Run) -> str:
     """A65, A63: стек одной командой — migrate вышел 0 до старта api, api healthy; ревизия в базе
-    равна голове, обе — из образа; migrate и процессы api — от uid 10001."""
+    равна голове, обе — из образа; migrate и процессы api — от uid 10001. Сбой — хвосты журналов
+    migrate, api и web: отказ проверки старта api виден только в журнале api (Ч1.12а, L126)."""
     done = compose_result(run, "up", "--detach", "--wait", "--wait-timeout", "240", limit="up")
     if done.returncode:
-        logs = "; ".join(service_log(run, service) for service in ("migrate", "web"))
+        logs = "; ".join(service_log(run, service) for service in ("migrate", "api", "web"))
         raise StepError(f"up --wait — код {done.returncode}: {output(done)[-500:]}; {logs}")
     migrate, api = inspect(run, "migrate"), inspect(run, "api")
     finished, started = (

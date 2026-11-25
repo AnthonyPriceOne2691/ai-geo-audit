@@ -19,15 +19,17 @@ root_packages =
     ai_geo_audit
 
 # --------------------------------------------------------------------
-# Контракт: слои пакета сверху вниз — вход API, хранилище, логи, настройки, отказ.
-# Верхний слой импортирует нижние, обратно нельзя. Слой `api` обязательный (A95): слой
-# назван, а пакета нет — красный «Missing layer in container».
+# Контракт: слои пакета сверху вниз — вход API, настройки из базы, хранилище, логи, конфиг
+# окружения, отказ. Верхний слой импортирует нижние, обратно нельзя. Слой `api` обязательный
+# (A95): слой назван, а пакета нет — красный «Missing layer in container». Слой `settings`
+# (Ч1.12а) — между `api` и `storage`: разбор файла мастер-ключа поэтому лежит в `config`.
 # --------------------------------------------------------------------
 [importlinter:contract:ai-geo-audit-layered]
-name = ai_geo_audit: api -> storage -> logs -> config -> refusal
+name = ai_geo_audit: api -> settings -> storage -> logs -> config -> refusal
 type = layers
 layers =
     api
+    settings
     storage
     logs
     config

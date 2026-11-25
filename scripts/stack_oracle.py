@@ -28,7 +28,7 @@ from typing import IO, Any
 from urllib.parse import quote
 
 from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, start_cleanup
-from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError
+from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError, write_master_key
 from stack_oracle_compose import cleanup as stack_cleanup
 from stack_oracle_docker import LIMITS, Docker
 from stack_oracle_hardening import HARDENING_STEPS
@@ -455,9 +455,7 @@ def run_oracle(name: str, docker: Docker) -> int:
             return 2
         label = f"oracle-canary-{secrets.token_hex(8)}"
         plant(copy, label)
-        key = Path(tmp) / "master.key"
-        key.write_text(secrets.token_urlsafe(32), encoding="utf-8")
-        key.chmod(0o644)  # читает uid 10001 в контейнере; права машины переходят как есть
+        write_master_key(Path(tmp) / "master.key")
         values = {n: f"oracle-build-{n.lower()}-{secrets.token_hex(6)}" for n in BUILD_ARG_NAMES}
         return finish(Run(docker, copy, name, label, values))
 

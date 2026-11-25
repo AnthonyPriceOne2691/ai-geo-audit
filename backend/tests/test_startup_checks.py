@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import dbtools
+import masterkeys
 import pytest
 
 from ai_geo_audit import config
@@ -24,10 +25,9 @@ DSN_MIGRATE = "postgresql+asyncpg://audit_migrate:pw-1234567890@db:5432/audit"
 
 
 @pytest.fixture
-def master_key(tmp_path: Path) -> str:
-    path = tmp_path / "master.key"
-    path.write_text("k" * 44, encoding="utf-8")
-    return str(path)
+def master_key(master_file: masterkeys.MasterFile) -> str:
+    """Путь к годному файлу мастер-ключа — общей фикстуры (b1:457)."""
+    return str(master_file.path)
 
 
 def full_env(master_key: str) -> dict[str, str]:
@@ -311,3 +311,51 @@ def test_a174_outside_prod_a_foreign_role_is_silent(monkeypatch: pytest.MonkeyPa
 def test_a174_process_roles_come_from_one_table() -> None:
     """A174: роли процессов — одна таблица `startup_checks.DB_ROLES`; её же сверяет A179."""
     assert sc.DB_ROLES == ROLE
+
+
+@pytest.mark.parametrize("case", list(masterkeys.BAD_FILES))
+def test_a221_prod_api_and_worker_refuse_a_bad_master_key_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, master_key: str, case: str
+) -> None:
+    """A221: в бою у api и worker негодный файл мастер-ключа (любой случай A220) — причина с именем
+    `KEYS_MASTER_KEY_FILE` и номером строки, без содержимого файла; у migrate причины нет:
+    мастер-ключ ему не нужен."""
+    row = masterkeys.line()
+    reason, content = masterkeys.bad_file(case, row)
+    bad = tmp_path / "bad.key"
+    bad.write_bytes(content)
+    env = full_env(master_key) | {"KEYS_MASTER_KEY_FILE": str(bad)}
+    for process in ("api", "worker"):
+        found = prod(monkeypatch, process, **env)
+        assert found == [sc.Problem("KEYS_MASTER_KEY_FILE", reason)]
+        with pytest.raises(sc.ConfigError) as refusal:
+            sc.check_startup(process, found)
+        assert str(refusal.value).splitlines()[1:] == [f"  KEYS_MASTER_KEY_FILE — {reason}"]
+        assert row not in str(refusal.value)
+    assert prod(monkeypatch, "migrate", **env) == []
+
+
+def test_a221_good_master_key_file_gives_no_reason(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A221: годный файл — у api и worker причины нет; вне боя проверка молчит."""
+    for process in ("api", "worker", "migrate"):
+        assert prod(monkeypatch, process, **full_env(master_key)) == []
+    monkeypatch.setenv("APP_ENV", "dev")
+    assert sc.problems("worker", app=config.AppSettings()) == []
+
+
+def test_a221_closed_file_and_folder_are_reasons_in_words(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, master_key: str
+) -> None:
+    """A221, соседние случаи: файл без прав на чтение (на сервере — uid 10001) — причина словами
+    «файл не читается», каталог вместо файла — «файла нет»: вход ловит только `ConfigError`
+    (L123), голая ошибка ОС ушла бы трассировкой."""
+    closed = masterkeys.write(tmp_path / "closed.key", [masterkeys.line()])
+    closed.chmod(0)
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    cases = {closed: f"файл не читается: {closed}", folder: f"файла нет: {folder}"}
+    for path, reason in cases.items():
+        env = full_env(master_key) | {"KEYS_MASTER_KEY_FILE": str(path)}
+        assert prod(monkeypatch, "worker", **env) == [sc.Problem("KEYS_MASTER_KEY_FILE", reason)]
