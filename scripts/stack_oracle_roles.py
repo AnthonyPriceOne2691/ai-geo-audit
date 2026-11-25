@@ -280,8 +280,8 @@ def step_new_password(run: Run) -> str:
     команды с ним; возврат идёт и после красной пробы."""
     new = secrets.token_hex(12)
     run.docker.mask.append(new)
-    changed = rerun(run, {"POSTGRES_APP_PASSWORD": new})
     try:
+        changed = rerun(run, {"POSTGRES_APP_PASSWORD": new})
         old = probe(run, "api", "login")
         fresh = probe(run, "api", "login", url=DB_URL.format(APP, new))
     finally:
@@ -305,8 +305,8 @@ def step_legacy_table(run: Run) -> str:
     """A170, третья строка: база стенда до поставки — суперпользователь заводит `oracle_legacy` со
     строкой; после скрипта ролей владелец таблицы и её последовательности — `audit_migrate`, роль
     сервиса читает и пишет таблицу, роль миграций её удаляет. Таблица снимается и при отказе."""
-    superuser(run, LEGACY)
     try:
+        superuser(run, LEGACY)
         done = rerun(run)
         owners = superuser(run, LEGACY_OWNERS)
         used = probe(run, "api", "legacy")

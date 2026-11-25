@@ -483,7 +483,8 @@ def test_a170_new_password_step_returns_the_old_password_when_the_change_fails(
     monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace
 ) -> None:
     """A170, вторая строка: сама смена пароля не уложилась в предел — красное с причиной, а запуск
-    с прежним паролем всё равно идёт: смена могла пройти в контейнере (замечание ведущей 08:43Z)."""
+    с прежним паролем всё равно идёт: смена могла пройти в контейнере (замечание ведущей
+    2026-11-25T08:42:08Z)."""
     late = "docker compose exec не уложился в 120 с"
     fake = stack(monkeypatch, {"api:login": REFUSED}, codes=(late, 0))
     assert red(roles.step_new_password, run) == late
