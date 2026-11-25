@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 import dbtools
 import pytest
-import redis
+import redistools
 
 from ai_geo_audit import alerts, config
 from ai_geo_audit.ops import alerts as command
@@ -100,7 +100,7 @@ def test_a242_check_queues_one_alert_after_logs_and_hooks(
     assert command.main(["check"]) == 0
     assert capsys.readouterr().out == "поставлено в исходящие\n"
     assert calls == ["logs", "guard", "queue"]
-    outbox = redis.Redis.from_url(redis_url)
+    outbox = redistools.client(redistools.session_db())
     texts = [json.loads(raw)["text"] for raw in outbox.lrange(alerts.OUTBOX, 0, -1)]
     assert [text.split("\n")[0] for text in texts] == [
         "[ai-geo-audit · dev] ПРОВЕРКА: канал тревог"

@@ -53,11 +53,29 @@ def url(db: int) -> str:
     return urlunsplit(parts._replace(path=f"/{db}"))
 
 
+#: Клиенты оснастки по адресу — один на адрес за сессию.
+_CLIENTS: dict[str, redis.Redis] = {}
+
+
 def client(db: int = 0) -> redis.Redis:
-    """Клиент оснастки: без повторов, со сроком — как у кода под тестом (decisions, срез 0)."""
-    return redis.Redis.from_url(
-        url(db), socket_timeout=TIMEOUT, socket_connect_timeout=TIMEOUT, retry=Retry(NoBackoff(), 0)
-    )
+    """Клиент оснастки: без повторов, со сроком — как у кода под тестом (decisions, срез 0). Один
+    на адрес за сессию, закрывает его `session_end()`, а не сборщик мусора: незакрытый сокет,
+    собранный в `pytest_unconfigure`, ронял долю порч (CI 45626254595, срез 3)."""
+    address = url(db)
+    if address not in _CLIENTS:
+        _CLIENTS[address] = redis.Redis.from_url(
+            address,
+            socket_timeout=TIMEOUT,
+            socket_connect_timeout=TIMEOUT,
+            retry=Retry(NoBackoff(), 0),
+        )
+    return _CLIENTS[address]
+
+
+def close_clients() -> None:
+    """Закрыть соединения клиентов оснастки: после сессии сокетов к Redis теста не остаётся."""
+    while _CLIENTS:
+        _CLIENTS.popitem()[1].close()
 
 
 def unreachable() -> str | None:
@@ -145,12 +163,13 @@ def session_start() -> int:
 
 
 def session_end() -> None:
-    """Остановить продление и снять метки сессий этого процесса."""
+    """Остановить продление, снять метки сессий этого процесса и закрыть клиентов оснастки."""
     while SESSION:
         holder = SESSION.pop()
         holder.stop()
         with contextlib.suppress(redis.RedisError):
             release(holder.db, holder.who)
+    close_clients()
 
 
 def current_url() -> str:

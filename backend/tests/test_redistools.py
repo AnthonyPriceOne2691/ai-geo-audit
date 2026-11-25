@@ -28,6 +28,22 @@ class Spy:
 test = "tests/test_config.py::test_a13_dev_database_is_the_compose_one_on_5462"
 sys.exit(pytest.main(["-p", "no:cacheprovider", test], plugins=[Spy()]))
 """
+#: Короткая сессия подпроцессом: берёт клиента оснастки, а после её конца печатает, сколько
+#: клиентов осталось незакрытыми.
+CLOSED = """
+import sys
+import pytest
+seen = []
+class Spy:
+    def pytest_collection_finish(self, session):
+        import redistools
+        redistools.client(redistools.session_db()).ping()
+        seen.append(redistools)
+test = "tests/test_config.py::test_a13_dev_database_is_the_compose_one_on_5462"
+code = pytest.main(["-p", "no:cacheprovider", test], plugins=[Spy()])
+print("helper-clients-left", len(seen[0]._CLIENTS), flush=True)
+sys.exit(code)
+"""
 
 
 def services(name: str) -> dict[str, dict[str, object]]:
@@ -157,6 +173,26 @@ def test_a_finished_session_releases_its_label() -> None:
     assert run.returncode == 0 and found, run.stdout[-1500:] + run.stderr[-1500:]
     db, who = int(found.group(1)), found.group(2)
     assert redistools.client().get(redistools.label(db)) != who.encode()
+
+
+def test_helper_clients_are_one_per_address_and_closed_at_session_end() -> None:
+    """Клиент оснастки — один на адрес за сессию, конец сессии его закрывает: сокет не уходит
+    сборщику мусора. В CI 45626254595 незакрытый сокет к Redis всплыл в `pytest_unconfigure` и
+    уронил долю порч (срез 3): клиент создавался на каждый вызов и не закрывался."""
+    db = redistools.session_db()
+    assert redistools.client(db) is redistools.client(db)
+    env = {k: v for k, v in os.environ.items() if k != "MUTANT_UNDER_TEST"}
+    run = subprocess.run(
+        [sys.executable, "-c", CLOSED],
+        cwd=dbtools.BACKEND,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout[-1500:] + run.stderr[-1500:]
+    assert "helper-clients-left 0" in run.stdout.splitlines(), run.stdout[-1500:]
 
 
 def test_without_redis_the_run_stops_once() -> None:

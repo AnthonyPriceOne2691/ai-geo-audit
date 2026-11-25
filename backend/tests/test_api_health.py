@@ -16,7 +16,6 @@ import api_probes as probes
 import dbtools
 import httpx
 import pytest
-import redis
 import redis_fakes
 import redistools
 from sqlalchemy.engine import make_url
@@ -347,7 +346,7 @@ async def test_a243_health_sees_redis_by_a_probe_write(
     async with probes.client(probes.build()) as http:
         response = await http.get("/api/health")
     assert (response.status_code, response.json()) == (200, {"status": "ok"})
-    stand = redis.Redis.from_url(redis_url)
+    stand = redistools.client(redistools.session_db())
     assert stand.get(health.REDIS_PROBE_KEY) == b"1"
     assert 0 < stand.pttl(health.REDIS_PROBE_KEY) <= health.REDIS_PROBE_TTL_MS == 60_000
 

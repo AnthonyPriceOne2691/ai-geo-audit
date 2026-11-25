@@ -41,7 +41,7 @@ def outbox(redis_url: str, monkeypatch: pytest.MonkeyPatch) -> redis.Redis:
     """Redis теста для кода под тестом. Журнал тест настраивает сам, в теле: обработчик из фикстуры
     до вызова теста не доживает."""
     use(monkeypatch, redis_url)
-    return redis.Redis.from_url(redis_url)
+    return redistools.client(redistools.session_db())
 
 
 def journal(err: str, level: str) -> list[str]:
