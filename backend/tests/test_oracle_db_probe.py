@@ -9,7 +9,6 @@ from __future__ import annotations
 import ast
 import importlib
 import json
-import os
 import runpy
 import secrets
 import subprocess
@@ -110,15 +109,16 @@ async def test_a170_failed_login_gives_only_its_sqlstate() -> None:
 
 
 def run_stdin(name: str, url: str) -> subprocess.CompletedProcess[str]:
-    """Как оракул: файл пробы на вход `python -`, имя набора — аргументом, адрес — окружением."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("DATABASE_URL", "APP_"))}
+    """Как оракул: файл пробы на вход `python -`, имя набора — аргументом, адрес — окружением.
+    Окружение — `dbtools.alembic_env`, с нуля: без `MUTANT_UNDER_TEST` батуты mutmut зовут
+    исходные функции, `ENV_FILE` — пустой файл, `.env` рабочего каталога не читается."""
     return subprocess.run(
         [sys.executable, "-", name],
         input=SCRIPT.read_text(encoding="utf-8"),
         capture_output=True,
         text=True,
         timeout=60,
-        env=env | {"DATABASE_URL": url},
+        env=dbtools.alembic_env({"DATABASE_URL": url}),
         check=False,
     )
 
