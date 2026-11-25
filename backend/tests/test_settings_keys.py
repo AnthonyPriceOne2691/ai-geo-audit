@@ -93,6 +93,21 @@ async def test_a224_rows_hold_only_ciphertext_and_put_key_does_not_commit(
     assert await count(engine) == 0
 
 
+def test_a224_key_row_repr_shows_the_name_and_master_id_only() -> None:
+    """A224, находка 9 проверяющей: `repr` строки ключа — имя и номер мастер-ключа, без
+    шифротекста и подсказки («Безопасность», п. 2). Строка — без базы: тело `__repr__` иначе не
+    исполнял ни один тест, а порч mutmut на `models.py` не строит."""
+    marker = masterkeys.marker()
+    row = ServiceKey(
+        name="openai",
+        ciphertext=marker,
+        master_id="0a1b2c3d",
+        fingerprint="0123456789ab",
+        hint=marker[-4:],
+    )
+    assert repr(row) == "ServiceKey(name='openai', master_id='0a1b2c3d')"
+
+
 VISIBLE = "только видимые знаки ASCII: значение уходит в заголовок запроса"
 INSIDE = "без пробелов и переводов строки"
 EDGES = "в начале или в конце пробел или перевод строки — уберите"
