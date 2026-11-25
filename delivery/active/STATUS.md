@@ -48,7 +48,10 @@
 - **runtime_paths:** backend/src/ai_geo_audit/alerts.py
 - **irreversible_surfaces:** публикация репозитория (публичный GitHub — создание и push), выкат на общий сервер, любая трата на платных сервисах, выпуск отчёта клиенту
   <!-- Строка — как в `delivery/CONSTITUTION.md` и STATUS Ч1.12а. Подпись объявления — окном
-       `scripts/sign_irreversible.sh` касанием владельца, по поставке, после слова на спеку. -->
+       `scripts/sign_irreversible.sh` касанием владельца 2026-11-25T12:07Z, по его слову
+       12:03:52Z (пункт 5 списка ведущей). Первое окно, 12:07:16Z, — «Отложено»; второе — по его
+       слову «давай еще раз» 12:07:33Z. Сверка `check_irreversible_signature.sh` — код 0.
+       Запустила ведущая. -->
 - **model_surface:** n/a reason=модель продукт не вызывает; поверхность объявляется с первым вызовом модели — волна В3 (§14)
 - **rule_enforcers:** n/a reason=model_surface не объявлена
 - **canon_drift_waiver:** no
