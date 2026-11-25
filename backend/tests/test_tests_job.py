@@ -24,7 +24,7 @@ POSTGRES = (
 )
 IGNORED = (".coverage.*", "coverage.json", "coverage.json.head", "mutants/")
 #: Redis тестов в CI — как Redis стенда: строка образа стека, пароль стенда, петля 6462.
-REDIS_READY = "redis-cli -h 127.0.0.1 -e ping"
+REDIS_READY = '--health-cmd "redis-cli -h 127.0.0.1 -e ping"'
 
 
 def stack_redis_image() -> str:
@@ -71,7 +71,8 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
         ),
         (
             REDIS_READY in str(redis.get("options", "")),
-            "служба Redis: готовность не `redis-cli -e` — без -e ответ-ошибка даёт код 0 (L60)",
+            "служба Redis: готовность не `redis-cli -e ping` целиком — без -e ответ-ошибка даёт"
+            " код 0 (L60)",
         ),
         (bool(step(job, "Diff base")), "нет шага Diff base"),
         ("pytest --cov --cov-report=json:coverage.json" in run, "покрытие: не src и migrations"),
@@ -226,6 +227,7 @@ COPIES = [
         "redis-cli -h 127.0.0.1 ping",
         "-e",
     ),
+    ("redis-ready-or-true", r'-e ping"', '-e ping || true"', "-e ping"),
     ("redis-ready-no-auth", r"\n {10}REDISCLI_AUTH: \S+", "", "REDISCLI_AUTH"),
     (
         "A289-step-back-in-tests",

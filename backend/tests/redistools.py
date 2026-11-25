@@ -75,12 +75,11 @@ def flush(db: int) -> None:
 
 
 def claim(who: str | None = None, ttl_ms: int = TTL_MS) -> int:
-    """Занять свободную базу меткой со сроком и очистить её; свободной нет —
-    `NoFreeDatabaseError`."""
+    """Занять свободную базу меткой со сроком; свободной нет — `NoFreeDatabaseError`. Базу чистит
+    фикстура `redis_url` до и после теста, поэтому здесь не чистим."""
     admin, me = client(), who or owner()
     for db in DATABASES:
         if admin.set(label(db), me, nx=True, px=ttl_ms):
-            flush(db)
             return db
     holders = [value.decode() for value in admin.mget([label(db) for db in DATABASES]) if value]
     raise NoFreeDatabaseError(

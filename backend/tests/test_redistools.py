@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import time
@@ -16,6 +17,17 @@ import yaml
 ROOT = dbtools.ROOT
 #: Порт, где Redis нет: отказ соединения сразу. Пароль адресу не нужен (A122).
 DEAD = "redis://127.0.0.1:1"
+#: Короткая сессия pytest подпроцессом: после занятия базы печатает её номер и владельца метки.
+SPY = """
+import sys
+import pytest
+class Spy:
+    def pytest_collection_finish(self, session):
+        import redistools
+        print("redis-session", redistools.session_db(), redistools.owner(), flush=True)
+test = "tests/test_config.py::test_a13_dev_database_is_the_compose_one_on_5462"
+sys.exit(pytest.main(["-p", "no:cacheprovider", test], plugins=[Spy()]))
+"""
 
 
 def services(name: str) -> dict[str, dict[str, object]]:
@@ -46,6 +58,7 @@ def test_dev_redis_is_the_stack_image_with_the_stand_password() -> None:
     assert dev["command"] == ["redis-server", "--requirepass", redistools.PASSWORD]
     assert dev["environment"] == {"REDISCLI_AUTH": redistools.PASSWORD}
     assert dev["healthcheck"]["test"] == ["CMD", "redis-cli", "-h", "127.0.0.1", "-e", "ping"]
+    assert dev["tmpfs"] == ["/data"]
     assert f":{redistools.PASSWORD}@127.0.0.1:6462" in redistools.SERVER
 
 
@@ -115,14 +128,35 @@ def test_no_free_database_is_one_reason_with_the_holders(monkeypatch: pytest.Mon
 
 
 def test_redis_url_fixture_gives_the_sessions_database_empty(redis_url: str) -> None:
-    """Адрес Redis теста — база сессии, пустая к началу теста; `flush` чистит только её."""
+    """Адрес Redis теста — база сессии на сервере `TEST_REDIS_URL` или стенда, пустая к началу
+    теста; `flush` чистит только её. Адрес в выводе не печатается: в нём пароль."""
     db = redistools.session_db()
-    assert redis_url.endswith(f"@127.0.0.1:6462/{db}")
+    same = redis_url == redistools.url(db)
+    assert same, f"адрес фикстуры — не база сессии {db}"
     assert redistools.client(db).dbsize() == 0
     redistools.client(db).set("ai-geo-audit:alerts:out", "x")
     redistools.flush(db)
     assert redistools.client(db).dbsize() == 0
     assert redistools.client().exists(redistools.label(db))
+
+
+def test_a_finished_session_releases_its_label() -> None:
+    """Конец сессии снимает её метку: под mutmut каждая порча — своя сессия pytest, и без снятия 15
+    баз кончились бы за срок метки (находка 2 второй проверяющей, срез 1)."""
+    env = {k: v for k, v in os.environ.items() if k != "MUTANT_UNDER_TEST"}
+    run = subprocess.run(
+        [sys.executable, "-c", SPY],
+        cwd=dbtools.BACKEND,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    found = re.search(r"^redis-session (\d+) (.+)$", run.stdout, re.MULTILINE)
+    assert run.returncode == 0 and found, run.stdout[-1500:] + run.stderr[-1500:]
+    db, who = int(found.group(1)), found.group(2)
+    assert redistools.client().get(redistools.label(db)) != who.encode()
 
 
 def test_without_redis_the_run_stops_once() -> None:
