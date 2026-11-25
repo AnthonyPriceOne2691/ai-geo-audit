@@ -162,6 +162,42 @@ React с Vite и Mantine, pytest, docker compose.
   `docker save`. Только на раннере — джоба `image-scan`; после ручного прогона на Linux —
   `docker image rm ai-geo-audit-scan:backend ai-geo-audit-scan:web` и каталог `--work`.
 
+## Роли базы
+
+- Процессы ходят в базу ролями: migrate — `audit_migrate`, владелец базы и таблиц; api и worker —
+  `audit_app`: `SELECT`, `INSERT`, `UPDATE`, `DELETE` на таблицы, `USAGE` и `SELECT` на
+  последовательности. Суперпользователь `audit` — только у db; чужая роль в адресе процесса в бою
+  не даёт старта.
+- Роли заводит `deploy/db/roles.sql` суперпользователем образа: на пустом томе — сам образ, на
+  поднятом — команда ниже. Пароли — `POSTGRES_MIGRATE_PASSWORD` и `POSTGRES_APP_PASSWORD` из
+  окружения db, в файле их нет. Каждый запуск сводит роли к одному виду: лишнее у роли сервиса
+  отзывается, нужное выдаётся заново. Команда для поднятого тома — до подъёма migrate и api; её
+  позовёт выкат (6а-2), до тех пор — руками:
+
+  ```
+  docker compose exec -T db sh -c \
+    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -f /docker-entrypoint-initdb.d/roles.sql'
+  ```
+
+- Стенд, поднятый до ролей: пароли ролей и адреса с ролями — в файл окружения сервера (блок в
+  `.env.example`); `docker compose up -d --no-deps db` — db получает пароли и скрипт; команда для
+  поднятого тома — таблицы суперпользователя переходят роли миграций; `docker compose up -d
+  --wait` — migrate и api с новыми адресами.
+- Смена пароля роли — тем же порядком: новый пароль — в файл окружения, в пароль роли и в адрес её
+  процесса; `up -d --no-deps db`, команда для поднятого тома, `up -d --wait`. Между командой и
+  подъёмом процесс с прежним адресом новых соединений не открывает.
+- Проверка — `docker compose exec -T db psql -X -U audit -d audit -c '\du' -c '\l' -c '\dn+' -c
+  '\dp' -c '\ddp'`: роли и атрибуты, владелец базы, схема `public`, права и права по умолчанию.
+- Снятие ролей — только с откатом сервиса на поставку без ролей: проверка старта требует роль
+  процесса. Адреса процессов — снова на `audit`, затем:
+
+  ```
+  docker compose exec -T db psql -X -1 -v ON_ERROR_STOP=1 -U audit -d audit \
+    -c 'DROP OWNED BY audit_app' -c 'REASSIGN OWNED BY audit_migrate TO audit' \
+    -c 'DROP OWNED BY audit_migrate' -c 'DROP ROLE audit_app' -c 'DROP ROLE audit_migrate'
+  ```
+
 ## Фронт
 
 - Node 24 (`frontend/.nvmrc`); пакеты — `cd frontend && npm ci`: только по lock, скрипты

@@ -34,7 +34,9 @@ MAIN_RULES = 24
 PROD, PROD_RULES = "docker-compose.prod.yml", 27
 
 
-DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
+#: Адрес базы процесса — роль и пароль (A65). Пароли выдумывает оракул: hex, у роли миграций —
+#: и «@», в адресе он идёт как `%40`.
+DB_URL = "postgresql+asyncpg://{}:{}@db:5432/audit"
 
 
 APP_UID = "10001"
@@ -148,8 +150,12 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
         "WEB_PORT": str(port),
         "FRONT_SUBNET": subnet,
         "DB_PASSWORD": run.password,
-        "MIGRATE_DATABASE_URL": DB_URL.format(wrong or run.password),
-        "API_DATABASE_URL": DB_URL.format(run.password),
+        "POSTGRES_MIGRATE_PASSWORD": run.migrate_password,
+        "POSTGRES_APP_PASSWORD": run.app_password,
+        "MIGRATE_DATABASE_URL": DB_URL.format(
+            "audit_migrate", (wrong or run.migrate_password).replace("@", "%40")
+        ),
+        "API_DATABASE_URL": DB_URL.format("audit_app", run.app_password),
         "JWT_SECRET": run.jwt,
         "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
@@ -261,13 +267,11 @@ def step_rules_on_prod(run: Run) -> str:
 
 def service_log(run: Run, service: str) -> str:
     """Хвост журнала сервиса для причины отказа: alembic пишет «FAILED: …» в вывод migrate, nginx
-    — отказ конфига и ответы проверке здоровья в вывод web, а не в вывод `up` (L89). Пароль и
-    секрет стека заменены звёздочками (A67: пароля нет в выводе)."""
+    — отказ конфига и ответы проверке здоровья в вывод web, а не в вывод `up` (L89). Выдуманные
+    секреты прогона — по маске исполнителя — звёздочками (A67, A172: пароля нет в выводе)."""
     log = compose(run, "logs", "--no-color", "--tail", "20", service, limit="docker", check=False)
     tail = " | ".join(log.strip().splitlines()[-6:])
-    for secret in (run.password, run.jwt):
-        tail = tail.replace(secret, "***")
-    return f"журнал {service}: {tail}"
+    return f"журнал {service}: {run.docker.masked(tail)}"
 
 
 def step_up(run: Run) -> str:

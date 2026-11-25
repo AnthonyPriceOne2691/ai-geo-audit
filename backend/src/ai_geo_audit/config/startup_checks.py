@@ -29,6 +29,16 @@ DB_URL_UNENCODED_CHARS = "в пароле незакодированные зн�
 
 Process = Literal["api", "worker", "migrate"]
 
+#: Роль базы у каждого процесса (A174): в бою адрес с чужой ролью не даёт старта. Те же имена
+#: заводит `deploy/db/roles.sql`; их равенство держит A179.
+DB_ROLES: dict[Process, str] = {
+    "migrate": "audit_migrate",
+    "api": "audit_app",
+    "worker": "audit_app",
+}
+#: Причина чужой роли — с нужной ролью, без найденного имени: на месте имени бывает пароль.
+DB_ROLE_FOREIGN = "в адресе чужая роль базы — нужна {}"
+
 #: Миграциям не нужен секрет входа, воркеру — тоже; адреса прокси нужны только api.
 _NEEDS: dict[Process, frozenset[str]] = {
     "api": frozenset(
@@ -102,8 +112,9 @@ def _read_by_both(url: str) -> tuple[object, ...] | None:
     return (*by_driver, driver.database)
 
 
-def _database(storage: config.StorageSettings) -> Problem | None:
-    """Адрес базы в бою: задан явно, без заглушки, читается одинаково, пароль не короче 12."""
+def _database(storage: config.StorageSettings, process: Process) -> Problem | None:
+    """Адрес базы в бою: задан явно, без заглушки, читается одинаково, пароль не короче 12, имя
+    после раскодирования — роль процесса (A174). Одна причина на переменную, роль — последней."""
     if problem := _explicit("DATABASE_URL", storage, "database_url"):
         return problem
     parts = _read_by_both(storage.database_url.get_secret_value())
@@ -112,6 +123,8 @@ def _database(storage: config.StorageSettings) -> Problem | None:
     password = parts[1] if isinstance(parts[1], str) else ""
     if len(password) < MIN_DB_PASSWORD:
         return Problem("DATABASE_URL", f"пароль базы короче {MIN_DB_PASSWORD} знаков")
+    if parts[0] != DB_ROLES[process]:
+        return Problem("DATABASE_URL", DB_ROLE_FOREIGN.format(DB_ROLES[process]))
     return None
 
 
@@ -145,7 +158,7 @@ def problems(
     storage = storage or config.storage
     secret = (access or config.access).jwt_secret.get_secret_value()
     checks = {
-        "DATABASE_URL": _database(storage),
+        "DATABASE_URL": _database(storage, process),
         "REDIS_URL": _explicit("REDIS_URL", storage, "redis_url"),
         "JWT_SECRET": _secret("JWT_SECRET", secret, "подпись пропусков: openssl rand -hex 32"),
         "KEYS_MASTER_KEY_FILE": _master_key((keys or config.keys).master_key_file),

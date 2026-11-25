@@ -264,7 +264,7 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     key = masterkeys.write(tmp_path / "master.key", [masterkeys.line()])
     env = {
         "APP_ENV": "prod",
-        "DATABASE_URL": f"postgresql+asyncpg://audit:{PROD_DB_WORDS}@db:5432/audit",
+        "DATABASE_URL": f"postgresql+asyncpg://audit_app:{PROD_DB_WORDS}@db:5432/audit",
         "REDIS_URL": "redis://redis:6379/0",
         "JWT_SECRET": PROD_JWT_WORDS,
         "KEYS_MASTER_KEY_FILE": str(key),

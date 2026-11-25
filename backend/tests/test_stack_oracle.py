@@ -181,10 +181,11 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
 #: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
-#: Ч1.5в, срез 3 — A88, срез 4 — A89.
+#: Ч1.5в, срез 3 — A88, срез 4 — A89; «Учётки-1», срез 2 — A85, A170 и A172 (вторая строка).
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
 STEP_EXAMPLES |= {"A88", "A89"}
+STEP_EXAMPLES |= {"A85", "A170", "A172"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -196,19 +197,23 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a84_a86_to_a89() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a89_a170_a172() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
-    A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89."""
+    A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89, с «Учётками-1» — A85, A170 и
+    A172."""
     assert steps_problems(oracle.STEPS) == []
 
 
 def test_a88_stop_steps_go_after_hardening_and_before_a67() -> None:
     """A88: остановка и падение api ломают api — шаги стоят после шагов web и защиты стека и до
-    A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков."""
+    A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков. A170:
+    шаги ролей — после остановки и падения api и до A67: смена пароля роли сервиса на время шага
+    отнимает у api вход в базу, шаги api идут раньше."""
     hard = importlib.import_module("stack_oracle_hardening")
     stop = importlib.import_module("stack_oracle_stop")
-    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *compose.BREAKING_STEPS]
+    roles = importlib.import_module("stack_oracle_roles")
+    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *roles.ROLE_STEPS, *compose.BREAKING_STEPS]
     assert oracle.STEPS[-len(tail) :] == tail
     assert [step.__name__ for _, _, step, _ in stop.STOP_STEPS] == ["step_stop", "step_crash"]
 
@@ -360,16 +365,52 @@ def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet:
     net = ipaddress.ip_network(subnet)
     address = compose.web_address(subnet)
     assert ipaddress.ip_address(address) == net.broadcast_address - 1
-    run = SimpleNamespace(
+    run = stack_run(subnet)
+    env = compose.stack_env(run)
+    assert (env["FRONT_SUBNET"], env["WEB_ADDRESS"]) == (subnet, address)
+
+
+#: Выдуманные значения прогона для окружения compose: у роли миграций — с «@».
+SUPER, MIG, APP = "super-value-123456", "mig@role-value-123456", "app-role-value-123456"
+
+
+def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
+    """Прогон для окружения compose без Docker: слот задан, у каждого секрета своё значение."""
+    return SimpleNamespace(
         name="ai-geo-audit-oracle-0123456789",
         facts={"slot": (18100, subnet)},
         image="backend:oracle",
-        password="p",
+        password=SUPER,
         jwt="j",
+        migrate_password=MIG,
+        app_password=APP,
         copy=Path("/work/copy"),
     )
-    env = compose.stack_env(run)
-    assert (env["FRONT_SUBNET"], env["WEB_ADDRESS"]) == (subnet, address)
+
+
+def test_a65_migrate_and_api_addresses_carry_their_roles() -> None:
+    """A65 — те же строки, вход строится иначе: адрес migrate — роль `audit_migrate`, пароль роли
+    миграций с «@» — в процентной записи; адрес api — роль `audit_app`; пароли ролей — db в
+    окружении compose; пароль суперпользователя — только `DB_PASSWORD`, в адресах его нет."""
+    env = compose.stack_env(stack_run())
+    migrate = f"postgresql+asyncpg://audit_migrate:{MIG.replace('@', '%40')}@db:5432/audit"
+    assert env["MIGRATE_DATABASE_URL"] == migrate
+    assert env["API_DATABASE_URL"] == f"postgresql+asyncpg://audit_app:{APP}@db:5432/audit"
+    assert (env["POSTGRES_MIGRATE_PASSWORD"], env["POSTGRES_APP_PASSWORD"]) == (MIG, APP)
+    assert env["DB_PASSWORD"] == SUPER
+    assert SUPER not in env["MIGRATE_DATABASE_URL"] + env["API_DATABASE_URL"]
+
+
+def test_a67_wrong_password_goes_only_to_the_migrate_role_address() -> None:
+    """A67 — те же строки, вход строится иначе: неверный пароль не короче 12 знаков — только в
+    адресе `audit_migrate`; у db и api всё прежнее: строка снова проверяет отказ входа у драйвера,
+    а не проверку старта."""
+    wrong = "wrong-value-123456"
+    right, broken = compose.stack_env(stack_run()), compose.stack_env(stack_run(), wrong=wrong)
+    assert broken["MIGRATE_DATABASE_URL"] == (
+        f"postgresql+asyncpg://audit_migrate:{wrong}@db:5432/audit"
+    )
+    assert broken | {"MIGRATE_DATABASE_URL": ""} == right | {"MIGRATE_DATABASE_URL": ""}
 
 
 class Clean(oracle.Docker):
@@ -411,6 +452,28 @@ def test_a76_red_step_is_counted_named_and_an_unneeded_one_goes_on(
     out = capsys.readouterr().out
     assert "A0 первый — КРАСНОЕ: порча шага первый" in out
     assert "A1 второй — ок: сделано" in out
+
+
+def test_a172_step_lines_hide_invented_secrets(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A172 (A67): строки шагов — «ок» и «КРАСНОЕ» — через маску исполнителя: выдуманный секрет в
+    итоге шага или в причине красного, которую шаг собрал сам из вывода команд, — звёздочками."""
+    run = oracle.Run(Clean(), tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
+    encoded = run.migrate_password.replace("@", "%40")
+
+    def green(_run: object) -> str:
+        return f"вывод с {run.app_password}"
+
+    def red(_run: object) -> str:
+        raise oracle.StepError(f"журнал db: {run.migrate_password} и {encoded}")
+
+    steps = [("A0", "зелёный", green, False), ("A1", "красный", red, False)]
+    assert oracle.run_steps(run, steps) == 1
+    out = capsys.readouterr().out
+    assert "A0 зелёный — ок: вывод с ***" in out
+    assert "A1 красный — КРАСНОЕ: журнал db: *** и ***" in out
+    assert not [secret for secret in run.invented if secret in out]
 
 
 def test_a76_red_needed_step_stops_the_rest(tmp_path: Path) -> None:
