@@ -4,7 +4,8 @@
 коды 25–27 ведут сюда.
 
 Вход — вывод `--no-interpolate`: значения стоят как в файле — `mem_limit` строкой (`1g`), `cpus`
-числом или строкой, `command` списком или строкой (замер compose 5.7.0, decisions Ч1.5в).
+числом или строкой, `command` списком или строкой (замер compose 5.7.0, decisions Ч1.5в), у redis —
+`sh -c` со строкой и here-doc («Учётки хранилищ», проба 3 среза 0 на compose 5.7.1).
 Модуль берёт `Stack` правил стека только для типов, а класс отказа — из `stack_refusal`, поэтому
 `stack_rules` импортирует отсюда без круга.
 """
@@ -53,21 +54,28 @@ def journald(stack: Stack) -> Iterator[Finding]:
             yield name, None, f"журнал не journald с меткой {tag}"
 
 
-def _command(service: dict[str, Any]) -> list[str]:
-    """Команда сервиса словами: строкой — как в файле, разбор оболочки, как у compose; списком —
-    как есть. Строку не разделить на слова (незакрытая кавычка) — отказ."""
-    raw = service.get("command") or []
-    if not isinstance(raw, str):
-        return [str(word) for word in raw]
+def _words(text: str) -> list[str]:
+    """Слова строки по разбору оболочки, как у compose; не делится (незакрытая кавычка) — отказ."""
     try:
-        return shlex.split(raw)
+        return shlex.split(text)
     except ValueError:
         raise InputRefusedError("сервис redis: command не делится на слова оболочки") from None
 
 
+def _command(service: dict[str, Any]) -> list[str]:
+    """Команда сервиса словами: строкой — как в файле, разбор оболочки; списком — как есть.
+    `sh -c` со строкой — слова её первой строки до here-doc: так «Учётки хранилищ» дают redis
+    пароль на входе, а флаги боевого наложения ставят после `-` (A171, A89)."""
+    raw = service.get("command") or []
+    words = _words(raw) if isinstance(raw, str) else [str(word) for word in raw]
+    if len(words) == 3 and words[:2] == ["sh", "-c"]:
+        return _words(words[2].split("\n", 1)[0].split("<<", 1)[0])
+    return words
+
+
 def redis_memory(stack: Stack) -> Iterator[Finding]:
-    """Судит только два своих флага; ссылки в других словах команды — не отказ: туда «Учётки
-    хранилищ» ставят пароль очереди."""
+    """Судит только два своих флага; ссылки в других словах команды — не отказ. Пароль очереди
+    «Учёток хранилищ» — на входе here-doc, в слова первой строки он не попадает."""
     if "redis" not in stack.services:
         return
     after = dict(itertools.pairwise(_command(stack.services["redis"])))
