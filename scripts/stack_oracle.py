@@ -32,6 +32,7 @@ from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError
 from stack_oracle_compose import cleanup as stack_cleanup
 from stack_oracle_docker import LIMITS, Docker
 from stack_oracle_hardening import HARDENING_STEPS
+from stack_oracle_roles import ROLE_STEPS
 from stack_oracle_stop import STOP_STEPS
 from stack_oracle_web import WEB_BUILD_STEPS, WEB_STACK_STEPS
 
@@ -375,6 +376,7 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     *WEB_STACK_STEPS,
     *HARDENING_STEPS,
     *STOP_STEPS,
+    *ROLE_STEPS,
     *BREAKING_STEPS,
 ]
 
