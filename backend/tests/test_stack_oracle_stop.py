@@ -224,8 +224,10 @@ def test_a88_restart_is_awaited_by_the_counter(monkeypatch: pytest.MonkeyPatch) 
         stop.wait_restart(SimpleNamespace(), 0, 50)
 
 
-#: Прогон шагов: пароль и секрет стека — их не должно быть в причине красного (L89).
+#: Прогон шагов: пароль и секрет стека — их не должно быть в причине красного (L89); в маске
+#: исполнителя — они же, как кладёт прогон с созданием (A172).
 RUN = SimpleNamespace(password="pass-0000-0000", jwt="jwt-0000-0000-0000")
+RUN.docker = importlib.import_module("stack_oracle_docker").Docker(mask=[RUN.password, RUN.jwt])
 #: Хвост журнала api для причины красного: в нём пароль и секрет стека.
 TAIL = f"api-1  | url=postgresql://audit:{RUN.password}@db/audit\napi-1  | jwt={RUN.jwt}\n"
 

@@ -28,8 +28,12 @@ services:
       POSTGRES_USER: audit
       POSTGRES_DB: audit
       POSTGRES_PASSWORD: ${DB_PASSWORD:?задайте пароль базы — .env.example, блок стека}
+      POSTGRES_MIGRATE_PASSWORD: ${POSTGRES_MIGRATE_PASSWORD:?пароль роли миграций — .env.example}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?пароль роли сервиса — .env.example}
     volumes:
       - db-data:/var/lib/postgresql/data
+      # Скрипт ролей базы: на пустом томе его исполняет образ, на поднятом — README, «Роли базы».
+      - ./deploy/db/roles.sql:/docker-entrypoint-initdb.d/roles.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U audit -d audit"]
       interval: 5s
