@@ -2,11 +2,14 @@
 
 Derived from spec acceptance. Run during verify. Живой оракул стека — на машине исполнителя на
 `68fbc32` (код среза 3), 2026-11-25T13:56:39–14:00:36Z, и на `f3e8320` (код среза 4: правила
-`db-roles` и `redis-auth`), 14:40:00–14:43:59Z: оба раза шагов 38, красных 0, своего не осталось.
-Строки шагов — ниже, из прогона на `f3e8320`; у A171 слова те же, что на `68fbc32`, кроме времени
-остановки (0,2 с и 0,3 с). Порчи живьём на своём redis и стеке — у третьей проверяющей на `ee29457`
-(сообщение 14:38:41Z): нет `user:`, нет `exec`, проверка здоровья Ч1.5а, снята `requirepass`,
-пароль аргументом, один `$` — красные. Остальное — срез 5. Полная сверка — T4.
+`db-roles` и `redis-auth`), 14:40:00–14:43:59Z: оба раза шагов 38, красных 0, своего не осталось;
+на `38d7be0` (срез 5: A173 и четыре дыры правил), 14:57:57–15:01:40Z: шагов 39, красных 0. Строки
+A171 и A179 — ниже, из прогона на `f3e8320`; у A171 слова те же, что на `68fbc32`, кроме времени
+остановки (0,2 с и 0,3 с); A173 — из прогона на `38d7be0`. Порчи живьём на своём redis и стеке — у
+третьей проверяющей на `ee29457` (сообщение 14:38:41Z): нет `user:`, нет `exec`, проверка здоровья
+Ч1.5а, снята `requirepass`, пароль аргументом, один `$` — красные. Остаток среза 5 — A172 (первая
+строка) и A380 (первая строка) — завтра здесь же (решение ведущей 14:58:46Z, мера — до 2400).
+Полная сверка — T4.
 
 - [x] A171, первая строка — шаг «A171 очередь: без пароля и с неверным — отказ, с верным — PONG»:
       «без пароля — NOAUTH; неверный — WRONGPASS в stderr, PONG нет; верный — PONG» (14:43:56Z).
@@ -43,3 +46,13 @@ Derived from spec acceptance. Run during verify. Живой оракул сте�
       нарушений 0» (14:40:18Z). Тесты
       `test_a73_a87_a179_rules_step_wants_five_services_and_twenty_six_rules`,
       `test_a89_prod_rules_step_reads_both_files_with_the_flag`
+- [x] A173 — шаг «A173 отказ старта: чужая роль базы и пароль очереди»: «отказ старта: migrate —
+      DATABASE_URL, код 1; api — DATABASE_URL, код 1; api — REDIS_URL, код 1; адресов, паролей и
+      Traceback нет; ревизия прежняя» (15:01:29Z). Тесты
+      `test_a173_step_runs_three_refusals_and_keeps_the_revision`,
+      `test_a173_step_is_red_on_each_branch`,
+      `test_a173_two_problems_of_one_container_are_both_named`, `test_a173_changed_revision_is_red`,
+      `test_a173_step_is_in_the_table_before_the_breaking_step`
+- [x] A380, вторая строка — `test_a380_script_revokes_members_and_rights_with_grantor_and_cascade`,
+      `test_a380_spoiled_command_is_red_with_its_script_line`, `test_a380_missing_command_is_red`
+      (проверка описания, а не исполнения, §12.6)
