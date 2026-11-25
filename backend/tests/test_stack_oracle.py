@@ -372,6 +372,7 @@ def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet:
 
 #: Выдуманные значения прогона для окружения compose: у роли миграций — с «@».
 SUPER, MIG, APP = "super-value-123456", "mig@role-value-123456", "app-role-value-123456"
+QUEUE = "queue-value-123456"
 
 
 def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
@@ -384,8 +385,19 @@ def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
         jwt="j",
         migrate_password=MIG,
         app_password=APP,
+        redis_password=QUEUE,
         copy=Path("/work/copy"),
     )
+
+
+def test_a171_queue_password_goes_to_redis_and_the_api_queue_address() -> None:
+    """A171, A65 — вход строится иначе: окружение compose несёт выдуманный пароль очереди — у
+    redis `REDIS_PASSWORD`, у api адрес `API_REDIS_URL` с тем же паролем (A175: не короче 12);
+    паролей базы в адресе очереди нет."""
+    env = compose.stack_env(stack_run())
+    assert env["REDIS_PASSWORD"] == QUEUE
+    assert env["API_REDIS_URL"] == f"redis://:{QUEUE}@redis:6379/0"
+    assert not [word for word in (SUPER, MIG, APP) if word in env["API_REDIS_URL"]]
 
 
 def test_a65_migrate_and_api_addresses_carry_their_roles() -> None:
