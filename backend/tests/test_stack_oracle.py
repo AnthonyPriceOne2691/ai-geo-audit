@@ -357,16 +357,52 @@ def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet:
     net = ipaddress.ip_network(subnet)
     address = compose.web_address(subnet)
     assert ipaddress.ip_address(address) == net.broadcast_address - 1
-    run = SimpleNamespace(
+    run = stack_run(subnet)
+    env = compose.stack_env(run)
+    assert (env["FRONT_SUBNET"], env["WEB_ADDRESS"]) == (subnet, address)
+
+
+#: Выдуманные значения прогона для окружения compose: у роли миграций — с «@».
+SUPER, MIG, APP = "super-value-123456", "mig@role-value-123456", "app-role-value-123456"
+
+
+def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
+    """Прогон для окружения compose без Docker: слот задан, у каждого секрета своё значение."""
+    return SimpleNamespace(
         name="ai-geo-audit-oracle-0123456789",
         facts={"slot": (18100, subnet)},
         image="backend:oracle",
-        password="p",
+        password=SUPER,
         jwt="j",
+        migrate_password=MIG,
+        app_password=APP,
         copy=Path("/work/copy"),
     )
-    env = compose.stack_env(run)
-    assert (env["FRONT_SUBNET"], env["WEB_ADDRESS"]) == (subnet, address)
+
+
+def test_a65_migrate_and_api_addresses_carry_their_roles() -> None:
+    """A65 — те же строки, вход строится иначе: адрес migrate — роль `audit_migrate`, пароль роли
+    миграций с «@» — в процентной записи; адрес api — роль `audit_app`; пароли ролей — db в
+    окружении compose; пароль суперпользователя — только `DB_PASSWORD`, в адресах его нет."""
+    env = compose.stack_env(stack_run())
+    migrate = f"postgresql+asyncpg://audit_migrate:{MIG.replace('@', '%40')}@db:5432/audit"
+    assert env["MIGRATE_DATABASE_URL"] == migrate
+    assert env["API_DATABASE_URL"] == f"postgresql+asyncpg://audit_app:{APP}@db:5432/audit"
+    assert (env["POSTGRES_MIGRATE_PASSWORD"], env["POSTGRES_APP_PASSWORD"]) == (MIG, APP)
+    assert env["DB_PASSWORD"] == SUPER
+    assert SUPER not in env["MIGRATE_DATABASE_URL"] + env["API_DATABASE_URL"]
+
+
+def test_a67_wrong_password_goes_only_to_the_migrate_role_address() -> None:
+    """A67 — те же строки, вход строится иначе: неверный пароль не короче 12 знаков — только в
+    адресе `audit_migrate`; у db и api всё прежнее: строка снова проверяет отказ входа у драйвера,
+    а не проверку старта."""
+    wrong = "wrong-value-123456"
+    right, broken = compose.stack_env(stack_run()), compose.stack_env(stack_run(), wrong=wrong)
+    assert broken["MIGRATE_DATABASE_URL"] == (
+        f"postgresql+asyncpg://audit_migrate:{wrong}@db:5432/audit"
+    )
+    assert broken | {"MIGRATE_DATABASE_URL": ""} == right | {"MIGRATE_DATABASE_URL": ""}
 
 
 class Clean(oracle.Docker):
