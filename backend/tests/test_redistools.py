@@ -28,20 +28,26 @@ class Spy:
 test = "tests/test_config.py::test_a13_dev_database_is_the_compose_one_on_5462"
 sys.exit(pytest.main(["-p", "no:cacheprovider", test], plugins=[Spy()]))
 """
-#: Короткая сессия подпроцессом: берёт клиента оснастки, а после её конца печатает, сколько
-#: клиентов осталось незакрытыми.
+#: Короткая сессия подпроцессом: держит клиентов оснастки, а после её конца печатает, сколько
+#: их соединений было и сколько осталось открытыми: пустой список клиентов сокетов не закрывает.
 CLOSED = """
 import sys
 import pytest
-seen = []
+held = []
+def sockets():
+    found = []
+    for pool in [client.connection_pool for client in held]:
+        found += [*pool._available_connections, *pool._in_use_connections]
+    return sum(connection._sock is not None for connection in found)
 class Spy:
     def pytest_collection_finish(self, session):
         import redistools
         redistools.client(redistools.session_db()).ping()
-        seen.append(redistools)
+        held.extend(redistools._CLIENTS.values())
+        print("helper-sockets-before", sockets(), flush=True)
 test = "tests/test_config.py::test_a13_dev_database_is_the_compose_one_on_5462"
 code = pytest.main(["-p", "no:cacheprovider", test], plugins=[Spy()])
-print("helper-clients-left", len(seen[0]._CLIENTS), flush=True)
+print("helper-sockets-after", sockets(), flush=True)
 sys.exit(code)
 """
 
@@ -193,7 +199,8 @@ def test_helper_clients_are_one_per_address_and_closed_at_session_end() -> None:
         check=False,
     )
     assert run.returncode == 0, run.stdout[-1500:] + run.stderr[-1500:]
-    assert "helper-clients-left 0" in run.stdout.splitlines(), run.stdout[-1500:]
+    counts = re.findall(r"^helper-sockets-(before|after) (\d+)$", run.stdout, re.MULTILINE)
+    assert counts == [("before", "2"), ("after", "0")], run.stdout[-1500:]
 
 
 def test_without_redis_the_run_stops_once() -> None:

@@ -803,6 +803,8 @@ def test_a371_signal_cleans_up_once_and_a_second_one_does_not_cut_it(
     finally:
         helper.kill()
         helper.wait()
+        if helper.stdout is not None:  # упавший до `communicate` тест потока сборщику не оставляет
+            helper.stdout.close()
         if pgid is not None:
             smoke_run.kill_group(pgid)
         left = asyncio.run(smoke_run.drop(run.db))

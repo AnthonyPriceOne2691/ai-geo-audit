@@ -21,6 +21,7 @@ import os
 import tempfile
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
+from typing import NoReturn
 
 import dbtools
 import masterkeys
@@ -72,23 +73,23 @@ def pytest_report_header() -> str:
     return f"окружение тестов: вычищено имён — {len(CLEANED)}; сеть — только петля"
 
 
+def refuse(message: str) -> NoReturn:
+    """Сервера тестов нет — сессия не идёт: одно сообщение, под mutmut ещё и метка сбоя (A285)."""
+    mutation_db.mark_refused(message)
+    # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
+    raise pytest.UsageError(message)
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
     """A12: нет Postgres или Redis — одно сообщение с командой, а не десятки пропусков. База
     сессии — база рабочей копии, под mutmut — своя копия шаблона (A281); база Redis — своя у
     процесса, под меткой со сроком."""
     reason = asyncio.run(dbtools.unreachable())
     if reason:
-        # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
-        message = f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}"
-        raise pytest.UsageError(message)
-    reason = redistools.unreachable()
+        refuse(f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}")
+    reason = redistools.session_refusal()
     if reason:
-        message = f"Redis для тестов не отвечает ({reason}). Поднять: {redistools.START}"
-        raise pytest.UsageError(message)
-    try:
-        redistools.session_start()
-    except redistools.NoFreeDatabaseError as exc:
-        raise pytest.UsageError(str(exc)) from None
+        refuse(reason)
     mutation_db.session_start()
 
 

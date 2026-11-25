@@ -22,6 +22,8 @@ import conftest
 import dbtools
 import mutation_db
 import pytest
+import redis
+import redistools
 import run_summary
 from hypothesis import given
 from hypothesis import strategies as st
@@ -512,21 +514,78 @@ def test_a106_a281_summary_hook_stays_and_the_copy_ends_last(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A106 (L63), A281: хук итога подключён списком импорта, как был, — пропуск красит прогон;
-    копию сессии под mutmut сносит `pytest_unconfigure`, после итога и развязки фикстур."""
-    ended: list[bool] = []
-    monkeypatch.setattr(mutation_db, "session_end", lambda: ended.append(True))
+    копию сессии под mutmut сносит `pytest_unconfigure`, после итога и развязки фикстур. База Redis
+    сессии, в которой идёт сам тест, цела: конец сессии здесь — подменой (находка 10)."""
+    ended: list[str] = []
+    held = redistools.session_db()
+    monkeypatch.setattr(mutation_db, "session_end", lambda: ended.append("base"))
+    monkeypatch.setattr(redistools, "session_end", lambda: ended.append("redis"))
     conftest.pytest_unconfigure(cast("pytest.Config", SimpleNamespace()))
-    assert ended == [True]
+    assert ended == ["base", "redis"]
+    assert redistools.session_db() == held
     assert conftest.pytest_sessionfinish is run_summary.pytest_sessionfinish
 
 
 def test_a281_session_start_takes_the_copy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     """A281: начало сессии pytest идёт через `mutation_db.session_start` — под mutmut копия
-    шаблона, без него база рабочей копии."""
-    started: list[bool] = []
-    monkeypatch.setattr(mutation_db, "session_start", lambda: started.append(True))
+    шаблона, без него база рабочей копии; перед ней — база Redis. Второй базы Redis тест своему
+    процессу не занимает: начало сессии здесь — подменой (находка 10)."""
+    started: list[str] = []
+    held = list(redistools.SESSION)
+    monkeypatch.setattr(mutation_db, "session_start", lambda: started.append("base"))
+    monkeypatch.setattr(redistools, "session_start", lambda: started.append("redis"))
     conftest.pytest_sessionstart(cast("pytest.Session", SimpleNamespace()))
-    assert started == [True]
+    assert started == ["redis", "base"]
+    assert held == redistools.SESSION
+
+
+NO_DATABASE = redistools.NoFreeDatabaseError("свободной базы Redis для тестов нет: probe")
+
+
+@pytest.mark.parametrize("ours", [True, False], ids=["mutmut", "nested"])
+@pytest.mark.parametrize(
+    ("server", "failure", "reason"),
+    [
+        ("postgres", None, "Postgres для тестов не отвечает (probe). Поднять: " + dbtools.START),
+        (
+            "redis",
+            redis.ConnectionError("probe"),
+            "Redis для тестов не отвечает (ConnectionError: ",
+        ),
+        ("redis", NO_DATABASE, str(NO_DATABASE)),
+    ],
+    ids=["postgres", "redis", "no-database"],
+)
+def test_a285_session_without_a_server_is_not_judged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ours: bool,
+    server: str,
+    failure: Exception | None,
+    reason: str,
+) -> None:
+    """A285 (находка 12): в начале сессии порчи не ответил Postgres или Redis либо заняты все базы
+    Redis — отказ прежней строкой, а в процессе mutmut ещё метка с именем порчи: гейт не судит, а не
+    «убит». Вложенный pytest с унаследованной `MUTANT_UNDER_TEST` метки не кладёт: такие тесты
+    нарочно поднимают его без сервера."""
+
+    async def silent() -> str | None:
+        return "probe" if server == "postgres" else None
+
+    def refused(*args: object, **kwargs: object) -> None:
+        assert failure is not None
+        raise failure
+
+    monkeypatch.setenv(mutation_db.MUTANT, MUTANT)
+    monkeypatch.setattr(mutation_db, "RUN_DIR", tmp_path)
+    monkeypatch.setattr(mutation_db, "mutmut_process", lambda: ours)
+    monkeypatch.setattr(dbtools, "unreachable", silent)
+    monkeypatch.setattr(redistools, "claim", refused)
+    with pytest.raises(pytest.UsageError) as caught:
+        conftest.pytest_sessionstart(cast("pytest.Session", SimpleNamespace()))
+    assert str(caught.value).startswith(reason)
+    marks = {path.name: path.read_text("utf-8") for path in tmp_path.rglob("*.txt")}
+    assert marks == ({f"{MUTANT}.txt": f"{caught.value}\n"} if ours else {})
 
 
 @pytest.mark.parametrize(

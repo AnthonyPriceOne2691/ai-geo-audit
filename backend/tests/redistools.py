@@ -162,6 +162,17 @@ def session_start() -> int:
     return holder.db
 
 
+def session_refusal() -> str | None:
+    """Занять базу сессии; почему не вышло — одной строкой, или None."""
+    try:
+        session_start()
+    except NoFreeDatabaseError as exc:
+        return str(exc)
+    except redis.RedisError as exc:
+        return f"Redis для тестов не отвечает ({type(exc).__name__}: {exc}). Поднять: {START}"
+    return None
+
+
 def session_end() -> None:
     """Остановить продление, снять метки сессий этого процесса и закрыть клиентов оснастки."""
     while SESSION:
