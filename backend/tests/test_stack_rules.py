@@ -1,5 +1,5 @@
 """Правила стека над выводом `docker compose config --no-interpolate --format json` (A71–A73,
-A87, A88).
+A87, A88; A179, вторая строка).
 
 Конфиги вымышленные и в той форме, что дал compose 5.7.0 (замер среза 0 в decisions): порты —
 объектами или, если в списке есть `${…}`, сырыми строками; `environment` — отображением или
@@ -25,6 +25,25 @@ from ai_geo_audit.ops import stack_rules as sr
 DIGEST = "@sha256:" + "0" * 63 + "1"
 BACKEND = "ai-geo-audit-backend:local"
 HEALTH = {"interval": "5s", "timeout": "3s", "retries": 12, "start_period": "10s"}
+#: Скрипт ролей — том только для чтения, как в выводе compose 5.7.1 (A177).
+DB_SCRIPT = {
+    "type": "bind",
+    "source": "/srv/copy/deploy/db/roles.sql",
+    "target": "/docker-entrypoint-initdb.d/roles.sql",
+    "read_only": True,
+    "bind": {"create_host_path": True},
+}
+#: Строка пароля на входе here-doc: `$$` — раскрытие в контейнере (A178).
+PASS_LINE = "requirepass $$REDIS_PASSWORD"
+#: Команда redis — `sh -c`, пароль на входе here-doc; флаги наложения — после `-` (A178, A89).
+REDIS_COMMAND = ["sh", "-c", f"exec redis-server - <<EOF\n{PASS_LINE}\nEOF\n"]
+REDIS_HEALTH = {
+    "test": [
+        "CMD-SHELL",
+        'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -x PONG',
+    ],
+    **HEALTH,
+}
 CODES = (
     "stack-name",
     "ports",
@@ -50,6 +69,8 @@ CODES = (
     "segments",
     "internal",
     "stop-grace",
+    "db-roles",
+    "redis-auth",
 )
 TRUSTED = "API_TRUSTED_PROXIES"
 
@@ -92,14 +113,26 @@ def plain() -> dict[str, Any]:
                 "image": "postgres:16-alpine" + DIGEST,
                 "restart": "unless-stopped",
                 "stop_grace_period": "60s",
-                "environment": {"POSTGRES_PASSWORD": "${DB_PASSWORD:?пароль базы}"},
+                "environment": {
+                    "POSTGRES_USER": "audit",
+                    "POSTGRES_DB": "audit",
+                    "POSTGRES_PASSWORD": "${DB_PASSWORD:?пароль базы}",
+                    "POSTGRES_MIGRATE_PASSWORD": "${POSTGRES_MIGRATE_PASSWORD:?пароль миграций}",
+                    "POSTGRES_APP_PASSWORD": "${POSTGRES_APP_PASSWORD:?пароль сервиса}",
+                },
                 "healthcheck": {"test": ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U a"], **HEALTH},
-                "volumes": [{"type": "volume", "source": "db-data", "target": "/var/lib/data"}],
+                "volumes": [
+                    {"type": "volume", "source": "db-data", "target": "/var/lib/data"},
+                    copy.deepcopy(DB_SCRIPT),
+                ],
             },
             "redis": {
                 "image": "redis:7.4-alpine" + DIGEST,
+                "user": "redis",
                 "restart": "unless-stopped",
-                "healthcheck": {"test": ["CMD", "redis-cli", "ping"], **HEALTH},
+                "environment": {"REDIS_PASSWORD": "${REDIS_PASSWORD:?пароль очереди}"},
+                "command": list(REDIS_COMMAND),
+                "healthcheck": copy.deepcopy(REDIS_HEALTH),
             },
             "migrate": {
                 "build": {"context": "/srv/copy", "dockerfile": "deploy/backend/Dockerfile"},
@@ -283,7 +316,7 @@ SECRETS = [
         "JWT_SECRET",
     ),
     (
-        put(svc("redis"), "environment", {"DATABASE_URL": "${API_DATABASE_URL:?адрес}"}),
+        put(env("redis"), "DATABASE_URL", "${API_DATABASE_URL:?адрес}"),
         "foreign-secret",
         "redis",
         "DATABASE_URL",
@@ -410,18 +443,19 @@ def test_a72_violation_names_code_service_variable_without_value(
 
 
 def test_a73_a87_a88_rule_codes_are_a71_a72_a87_and_stop_grace_in_order() -> None:
-    """A73, A87, A88: перечень кодов модуля — шестнадцать кодов A71 и A72, семь кодов A87 и
-    `stop-grace` из A88, по порядку."""
+    """A73, A87, A88 и A179, вторая строка: перечень кодов модуля поимённо и по порядку —
+    шестнадцать кодов A71 и A72, семь кодов A87, `stop-grace` из A88, затем `db-roles` и
+    `redis-auth` «Учёток хранилищ»; всего 26."""
     assert sr.RULES == CODES
 
 
 def test_a73_a87_summary_names_services_and_rules(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A73, A87: верный стек — код 0, «сервисов 5, правил 24», нарушений 0."""
+    """A73, A87: верный стек — код 0, «сервисов 5, правил 26», нарушений 0."""
     code, out = run(monkeypatch, capsys, json.dumps(valid()))
     assert code == 0
-    assert out.strip() == "итог: сервисов 5, правил 24, нарушений 0"
+    assert out.strip() == "итог: сервисов 5, правил 26, нарушений 0"
 
 
 def test_a73_web_waits_for_api_by_health_or_the_order_is_red(
@@ -691,7 +725,7 @@ def test_a88_stop_grace_line_names_the_term_and_the_need(
     assert out.splitlines() == [
         "stop-grace: сервис api — stop_grace_period 29 с, нужно не меньше 30 с",
         "stop-grace: сервис db — stop_grace_period нет — у докера 10 с, нужно не меньше 60 с",
-        "итог: сервисов 5, правил 24, нарушений 2",
+        "итог: сервисов 5, правил 26, нарушений 2",
     ]
 
 

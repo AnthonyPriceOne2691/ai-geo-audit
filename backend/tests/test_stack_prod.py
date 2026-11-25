@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -30,7 +31,8 @@ LIMITS = {
     "api": ("512m", 1),
     "web": ("128m", 0.5),
 }
-REDIS = ["redis-server", "--maxmemory", "100mb", "--maxmemory-policy", "noeviction"]
+#: Флаги потолка Redis в боевом наложении — после `-` команды `sh -c` (A89, A171).
+FLAGS_LINE = "--maxmemory 100mb --maxmemory-policy noeviction"
 Found = set[tuple[str, str | None, str | None]]
 
 
@@ -40,9 +42,15 @@ def prod() -> dict[str, Any]:
     for name, (memory, cpus) in LIMITS.items():
         journal = {"driver": "journald", "options": {"tag": f"ai-geo-audit-{name}"}}
         stack["services"][name] |= {"mem_limit": memory, "cpus": cpus, "logging": journal}
-    stack["services"]["redis"]["command"] = list(REDIS)
+    stack["services"]["redis"]["command"] = ["sh", "-c", queue_script(FLAGS_LINE)]
     stack["services"]["db"]["command"] = ["postgres", "-c", "max_connections=50"]
     return stack
+
+
+def queue_script(flags: str = "") -> str:
+    """Скрипт redis: `exec redis-server -`, флаги наложения после `-`, пароль на входе."""
+    first = " ".join(part for part in ("exec redis-server -", flags) if part)
+    return f"{first} <<EOF\nrequirepass $$REDIS_PASSWORD\nEOF\n"
 
 
 def found(config: dict[str, Any]) -> Found:
@@ -75,7 +83,7 @@ def python_m(text: str) -> tuple[int, str, str]:
 
 
 def command(*words: str) -> Callable[[dict[str, Any]], None]:
-    return put(svc("redis"), "command", ["redis-server", *words])
+    return put(svc("redis"), "command", ["sh", "-c", queue_script(shlex.join(words))])
 
 
 # Проба, код и сервис: ожидается ровно это нарушение.
@@ -90,7 +98,7 @@ PROBES = [
     (drop(options("db"), "tag"), "journald", "db"),
     (put(options("web"), "tag", "ai-geo-audit-api"), "journald", "web"),
     (put(options("api"), "tag", "{{.Name}}"), "journald", "api"),
-    (drop(svc("redis"), "command"), "redis-memory", "redis"),
+    (command(), "redis-memory", "redis"),
     (command("--maxmemory-policy", "noeviction"), "redis-memory", "redis"),
     (command("--maxmemory", "0", "--maxmemory-policy", "noeviction"), "redis-memory", "redis"),
     (command("--maxmemory", "100mb", "--maxmemory-policy", "allkeys-lru"), "redis-memory", "redis"),
@@ -108,7 +116,7 @@ PROBE_IDS = [
     "db-без-метки",
     "web-чужая-метка",
     "api-метка-шаблоном",
-    "redis-без-команды",
+    "redis-без-флагов",
     "redis-без-потолка",
     "redis-потолок-0",
     "redis-вытеснение",
@@ -133,13 +141,13 @@ def test_a89_each_prod_rule_has_its_probe(spoil: Callable, code: str, service: s
 
 
 CALM = [
-    put(svc("redis"), "command", " ".join(REDIS)),
-    command("--save", "", "--maxmemory", "100mb", "--maxmemory-policy", "noeviction"),
+    put(svc("redis"), "command", f'sh -c "{queue_script(FLAGS_LINE)}"'),
+    command("--save", "", *FLAGS_LINE.split()),
     put(svc("api"), "cpus", "1"),
     put(svc("db"), "mem_limit", "1G"),
     put(svc("web"), "mem_limit", "134217728"),
     put(options("api"), "labels", "service"),
-    command("--requirepass", "${REDIS_PASSWORD:?пароль}", *REDIS[1:]),
+    command("--dir", "${REDIS_DIR:?каталог}", *FLAGS_LINE.split()),
 ]
 
 
@@ -159,31 +167,31 @@ CALM = [
 def test_a89_neighbour_cases_are_not_violations(change: Callable) -> None:
     """A89, первая строка, соседние случаи (L53): команда Redis строкой, как в файле, и с другими
     флагами, `cpus` строкой, память `1G` и в байтах, другая опция журнала рядом с меткой, ссылка
-    `${…}` в другом слове команды (пароль очереди «Учёток хранилищ») — не нарушения."""
+    `${…}` в другом слове команды (каталог данных `--dir`) — не нарушения."""
     config = prod()
     change(config)
     assert found(config) == set()
 
 
 def test_a89_prod_codes_follow_the_main_set_in_order() -> None:
-    """A89: боевой набор — 24 кода основного и три боевых, по порядку."""
+    """A89: боевой набор — 26 кодов основного и три боевых, по порядку."""
     assert (*CODES, "limits", "journald", "redis-memory") == sr.PROD_RULES
 
 
 def test_a89_prod_rules_run_only_under_the_flag(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A89, вторая строка: без флага — основной набор, «правил 24», лимитов нет — не нарушение,
-    и у `run()` по умолчанию тоже; с `--prod` на верном слитом выводе — «сервисов 5, правил 27,
+    """A89, вторая строка: без флага — основной набор, «правил 26», лимитов нет — не нарушение,
+    и у `run()` по умолчанию тоже; с `--prod` на верном слитом выводе — «сервисов 5, правил 29,
     нарушений 0»."""
     plain = json.dumps(valid())
-    assert sr.run(plain) == (0, ["итог: сервисов 5, правил 24, нарушений 0"])
-    assert run_main(monkeypatch, capsys, plain) == (0, "итог: сервисов 5, правил 24, нарушений 0\n")
-    summary = "итог: сервисов 5, правил 27, нарушений 0\n"
+    assert sr.run(plain) == (0, ["итог: сервисов 5, правил 26, нарушений 0"])
+    assert run_main(monkeypatch, capsys, plain) == (0, "итог: сервисов 5, правил 26, нарушений 0\n")
+    summary = "итог: сервисов 5, правил 29, нарушений 0\n"
     assert run_main(monkeypatch, capsys, json.dumps(prod()), "--prod") == (0, summary)
     code, out = run_main(monkeypatch, capsys, plain, "--prod")
     assert code == 1
-    assert out.splitlines()[-1] == "итог: сервисов 5, правил 27, нарушений 11"
+    assert out.splitlines()[-1] == "итог: сервисов 5, правил 29, нарушений 11"
 
 
 def test_a89_violation_lines_name_the_rule_and_the_service(
@@ -195,14 +203,14 @@ def test_a89_violation_lines_name_the_rule_and_the_service(
     del config["services"]["db"]["mem_limit"]
     del config["services"]["db"]["cpus"]
     config["services"]["api"]["logging"]["driver"] = "json-file"
-    del config["services"]["redis"]["command"]
+    sh_c("exec redis-server -")(config)
     code, out = run_main(monkeypatch, capsys, json.dumps(config), "--prod")
     assert code == 1
     assert out.splitlines() == [
         "limits: сервис db — нет mem_limit и cpus",
         "journald: сервис api — журнал не journald с меткой ai-geo-audit-api",
         "redis-memory: сервис redis — нет --maxmemory или вытеснение не noeviction",
-        "итог: сервисов 5, правил 27, нарушений 3",
+        "итог: сервисов 5, правил 29, нарушений 3",
     ]
 
 
@@ -222,6 +230,14 @@ def test_a89_redis_memory_without_redis_has_nothing_to_judge() -> None:
     config = prod()
     del config["services"]["redis"]
     assert list(prod_rules.redis_memory(sr.parse(config))) == []
+
+
+def test_a89_a178_redis_without_a_command_is_red_in_both_rules() -> None:
+    """A89, A178: у redis нет команды — сервер образа без пароля и без потолка: красное и
+    `redis-memory`, и `redis-auth`."""
+    config = prod()
+    del config["services"]["redis"]["command"]
+    assert found(config) == {("redis-memory", "redis", None), ("redis-auth", "redis", None)}
 
 
 #: Хвост отказа на значении ссылкой и флаги Redis — литералами, как строки нарушений.
@@ -308,7 +324,7 @@ def test_a89_reference_in_a_flag_of_the_sh_c_line_is_refused(
 @pytest.mark.parametrize(
     ("spoil", "code", "line"),
     [
-        (lambda config: None, 0, "итог: сервисов 5, правил 27, нарушений 0"),
+        (lambda config: None, 0, "итог: сервисов 5, правил 29, нарушений 0"),
         *((spoil, 2, f"отказ: сервис {reason}") for spoil, reason in REFUSALS),
     ],
     ids=["верный", *REFUSAL_IDS],
@@ -317,7 +333,7 @@ def test_a89_python_m_entry_as_in_the_image(spoil: Callable, code: int, line: st
     """A89, вторая строка, находка 4 приёмки: настоящий вход — `python -m … --prod`, как его зовёт
     шаг A89 в образе. Модуль правил тогда — `__main__`, а отказ боевых правил — тот же класс:
     строка отказа целиком, код 2 и пустой поток ошибок, а не трассировка с кодом 1; на верном
-    слитом выводе — «правил 27»: флаг доходит до входа."""
+    слитом выводе — «правил 29»: флаг доходит до входа."""
     config = prod()
     spoil(config)
     assert python_m(json.dumps(config)) == (code, f"{line}\n", "")
