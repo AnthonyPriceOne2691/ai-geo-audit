@@ -64,13 +64,17 @@ async def test_a232_each_change_is_a_new_version_and_a_repeat_writes_nothing(
     session: AsyncSession,
 ) -> None:
     """A232: без строк — 3, версия 0; 5 — версия 1; ещё раз 5 — без записи, версия 1; 4 с
-    `expected=1` — версия 2; снова 4 с `expected=1` — без записи и без отказа, версия 2."""
+    `expected=1` — версия 2; снова 4 с `expected=1` — без записи и без отказа, версия 2. Запись
+    от умолчания, `expected=0`, при версии 2 — отказ до записи (находка 10 второй проверяющей)."""
     assert await values.current(session, "audits_parallel") == Versioned(3, 0)
     got = [
         await values.put_setting(session, "audits_parallel", value, expected=expected)
         for value, expected in [(5, None), (5, None), (4, 1), (4, 1)]
     ]
     assert got == [Versioned(5, 1), Versioned(5, 1), Versioned(4, 2), Versioned(4, 2)]
+    with pytest.raises(values.SettingChanged) as stale:
+        await values.put_setting(session, "audits_parallel", 6, expected=0)
+    assert stale.value.args == ("настройку уже изменили: версия 2 — перечитайте",)
     assert await values.current(session, "audits_parallel") == Versioned(4, 2)
     assert await rows(session) == [("audits_parallel", 1, 5), ("audits_parallel", 2, 4)]
 
@@ -233,6 +237,8 @@ async def test_a235_bad_value_in_the_base_is_refused_loudly(
     fields = (record.levelname, record.event, record.setting)  # type: ignore[attr-defined]
     assert fields == ("ERROR", "setting-invalid", name)
     assert record.getMessage() == f"настройка в базе не годится: {WORDS[name]} — {found}"
+    logged = record.exc_info[1] if record.exc_info else None
+    assert isinstance(logged, registry.Unfit) and str(logged) == logged.need
 
 
 async def test_a238_codes_are_brought_to_case_and_a_case_repeat_writes_nothing(
@@ -241,7 +247,8 @@ async def test_a238_codes_are_brought_to_case_and_a_case_repeat_writes_nothing(
     """A238: без строк — пустой список, версия 0; Германия и немецкий, США и английский кодами в
     разном регистре — версия 1, страна заглавными, язык строчными. Тот же список в другом регистре
     — без новой версии (п. 8 проверяющей). Умолчание — свой список на вызов: правка отданного
-    реестр не трогает."""
+    реестр не трогает. Рядом строка `audits_parallel`: версий настройки не делят (находка 11)."""
+    await values.put_setting(session, "audits_parallel", 5)
     empty = await values.current(session, "audit_locales")
     assert empty == Versioned([], 0)
     assert isinstance(empty.value, list)
@@ -252,7 +259,7 @@ async def test_a238_codes_are_brought_to_case_and_a_case_repeat_writes_nothing(
     again = await values.put_setting(session, "audit_locales", [["dE", "De"], ["us", "EN"]])
     assert again == written
     assert await values.current(session, "audit_locales") == written
-    assert await rows(session) == [("audit_locales", 1, [["DE", "de"], ["US", "en"]])]
+    assert await rows(session) == [("audit_locales", 1, written.value), ("audits_parallel", 1, 5)]
 
 
 async def test_a238_three_hundred_pairs_are_written(session: AsyncSession) -> None:
@@ -294,13 +301,13 @@ async def test_a238_bad_locales_are_refused_before_any_write(
 #: Не латиница ASCII, которую приведение регистра или NFKC делает латиницей (п. 7 проверяющей):
 #: проверка — до приведения. Знаки — кодами: так их видно в исходнике.
 LOOKALIKES = {
-    "cyrillic": "ДЕ",  # кириллические Д и Е
-    "fullwidth": "ＤＥ",  # полноширинные D и E: NFKC даёт DE
-    "long-s": "ſK",  # длинное s и K: upper даёт SK
-    "sharp-s": "ß",  # эсцет: upper даёт SS
-    "ligature": "ﬀ",  # лигатура ff: upper даёт FF
-    "dotless-i": "ıt",  # i без точки и t: upper даёт IT
-    "kelvin": "Ke",  # знак кельвина и e: lower даёт ke
+    "cyrillic": "\u0414\u0415",  # кириллические Д и Е
+    "fullwidth": "\uff24\uff25",  # полноширинные D и E: NFKC даёт DE
+    "long-s": "\u017fK",  # длинное s и K: upper даёт SK
+    "sharp-s": "\u00df",  # эсцет: upper даёт SS
+    "ligature": "\ufb00",  # лигатура ff: upper даёт FF
+    "dotless-i": "\u0131t",  # i без точки и t: upper даёт IT
+    "kelvin": "\u212ae",  # знак кельвина и e: lower даёт ke
 }
 
 
