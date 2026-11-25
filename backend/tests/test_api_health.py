@@ -460,6 +460,18 @@ async def test_a243_silent_redis_is_cut_by_the_limit(
     ]
 
 
+async def test_a243_lost_probe_write_is_not_repeated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A243 (находка 14): Redis обрывает соединение на записи пробы, вторую бы принял — 503 и одна
+    запись: повторов у здоровья нет, граница одна на базу и Redis."""
+    replies = {**redis_fakes.FULL, b"SET": [redis_fakes.LOST, b"+OK\r\n"]}
+    with redis_fakes.running(replies=replies) as fake:
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=fake.url)
+        async with probes.client(probes.build()) as http:
+            response = await http.get("/api/health")
+        writes = fake.commands.count(b"SET")
+    assert (response.status_code, writes) == (503, 1)
+
+
 async def test_a243_database_and_redis_down_is_one_answer_and_two_records(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
