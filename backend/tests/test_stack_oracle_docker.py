@@ -78,6 +78,30 @@ def test_a172_timeout_keeps_what_the_command_printed(monkeypatch: pytest.MonkeyP
     assert docker.raw == [(("compose", "logs"), f"half {INVENTED}!")]
 
 
+def test_a65_executor_cleanup_names_what_was_not_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A65: исполнитель снимает свои контейнеры и образы по разу на имя; что осталось после снятия
+    или на чём команда не уложилась в предел, — названо, остальное снято молча."""
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], **kw: Any) -> subprocess.CompletedProcess[bytes]:
+        seen.append(argv[1:])
+        if argv[1:3] == ["image", "rm"]:
+            raise subprocess.TimeoutExpired(argv, 30)
+        left = argv[1:3] == ["ps", "-aq"] and argv[-1] == "name=^c-left$"
+        return subprocess.CompletedProcess(argv, 0, b"abc\n" if left else b"", b"")
+
+    monkeypatch.setattr(docker_mod.subprocess, "run", run)
+    docker = docker_mod.Docker(containers=["c-left", "c-gone", "c-left"], images=["img-stuck"])
+    assert docker.cleanup() == ["c-left", "img-stuck"]
+    assert seen == [
+        ["rm", "-f", "-v", "c-left"],
+        ["ps", "-aq", "--filter", "name=^c-left$"],
+        ["rm", "-f", "-v", "c-gone"],
+        ["ps", "-aq", "--filter", "name=^c-gone$"],
+        ["image", "rm", "-f", "img-stuck"],
+    ]
+
+
 def test_a172_run_puts_every_invented_secret_in_the_mask(tmp_path: Path) -> None:
     """A172: секреты прогона выдумывает оракул — пароль суперпользователя, секрет подписи, пароли
     ролей миграций и сервиса; у роли миграций — с «@»; все не короче 12 знаков (A21). С созданием
