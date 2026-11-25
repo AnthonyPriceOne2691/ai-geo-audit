@@ -180,7 +180,7 @@ React с Vite и Mantine, pytest, docker compose.
   процесса. Адреса процессов — снова на `audit`, затем:
 
   ```
-  docker compose exec -T db psql -X -v ON_ERROR_STOP=1 -U audit -d audit \
+  docker compose exec -T db psql -X -1 -v ON_ERROR_STOP=1 -U audit -d audit \
     -c 'DROP OWNED BY audit_app' -c 'REASSIGN OWNED BY audit_migrate TO audit' \
     -c 'DROP OWNED BY audit_migrate' -c 'DROP ROLE audit_app' -c 'DROP ROLE audit_migrate'
   ```

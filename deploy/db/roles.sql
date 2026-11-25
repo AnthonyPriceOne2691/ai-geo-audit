@@ -39,20 +39,21 @@ SELECT format('CREATE ROLE %I', :'app_role')
  WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_role') \gexec
 ALTER ROLE :"app_role" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
   PASSWORD :'app_password';
-SELECT format('REVOKE %I FROM %I', g.rolname, m.rolname)
+SELECT format('REVOKE %I FROM %I GRANTED BY %I CASCADE', g.rolname, m.rolname, w.rolname)
   FROM pg_auth_members a
   JOIN pg_roles g ON g.oid = a.roleid
   JOIN pg_roles m ON m.oid = a.member
+  JOIN pg_roles w ON w.oid = a.grantor
  WHERE m.rolname IN (:'migrate_role', :'app_role') \gexec
 REASSIGN OWNED BY :"app_role" TO :"migrate_role";
 ALTER DATABASE :"db_name" OWNER TO :"migrate_role";
 ALTER SCHEMA public OWNER TO pg_database_owner;
 SELECT format('ALTER TABLE public.%I OWNER TO %I', tablename, :'migrate_role')
   FROM pg_tables WHERE schemaname = 'public' AND tableowner <> :'migrate_role' \gexec
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM :"app_role";
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM :"app_role";
-REVOKE ALL ON SCHEMA public FROM :"app_role";
-REVOKE ALL ON DATABASE :"db_name" FROM :"app_role";
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM :"app_role" CASCADE;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM :"app_role" CASCADE;
+REVOKE ALL ON SCHEMA public FROM :"app_role" CASCADE;
+REVOKE ALL ON DATABASE :"db_name" FROM :"app_role" CASCADE;
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrate_role" IN SCHEMA public
   REVOKE ALL ON TABLES FROM :"app_role";
 ALTER DEFAULT PRIVILEGES FOR ROLE :"migrate_role" IN SCHEMA public
