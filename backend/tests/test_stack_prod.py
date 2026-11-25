@@ -260,6 +260,51 @@ def test_a89_value_unknown_until_the_server_is_refused(
     assert run_main(monkeypatch, capsys, json.dumps(config), "--prod") == (2, out)
 
 
+#: Команда redis «Учёток хранилищ» (A171): `sh -c` с `exec redis-server -`, пароль — на входе
+#: here-doc; в боевом наложении флаги — после `-` (план, срез 3). `$$` в выводе compose — как в
+#: файле (проба 3 среза 0).
+SH_C = "exec redis-server - --maxmemory 100mb --maxmemory-policy noeviction"
+SH_C_PROBES = {
+    "no-ceiling": "exec redis-server - --maxmemory-policy noeviction",
+    "ceiling-0": "exec redis-server - --maxmemory 0 --maxmemory-policy noeviction",
+    "eviction": "exec redis-server - --maxmemory 100mb --maxmemory-policy allkeys-lru",
+}
+
+
+def sh_c(first_line: str) -> Callable[[dict[str, Any]], None]:
+    script = f"{first_line} <<EOF\nrequirepass $$REDIS_PASSWORD\nEOF\n"
+    return put(svc("redis"), "command", ["sh", "-c", script])
+
+
+def test_a89_redis_memory_reads_flags_from_the_sh_c_line() -> None:
+    """A89, первая строка, и блок замены «Учёток хранилищ»: команда redis — `sh -c` с
+    `exec redis-server -`, флаги — после `-`, пароль — на входе here-doc; правило читает флаги из
+    строки `sh -c` до here-doc — нарушений ноль."""
+    config = prod()
+    sh_c(SH_C)(config)
+    assert found(config) == set()
+
+
+@pytest.mark.parametrize("first_line", list(SH_C_PROBES.values()), ids=list(SH_C_PROBES))
+def test_a89_redis_memory_judges_the_sh_c_line(first_line: str) -> None:
+    """A89, первая строка: в строке `sh -c` нет `--maxmemory`, он 0 или вытеснение не
+    `noeviction` — ровно нарушение `redis-memory` (держится до кода)."""
+    config = prod()
+    sh_c(first_line)(config)
+    assert found(config) == {("redis-memory", "redis", None)}
+
+
+def test_a89_reference_in_a_flag_of_the_sh_c_line_is_refused(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A89: значение флага в строке `sh -c` ссылкой `${…}` — отказ с кодом 2, как у команды
+    списком; строка отказа — целиком."""
+    config = prod()
+    sh_c("exec redis-server - --maxmemory ${REDIS_MAX} --maxmemory-policy noeviction")(config)
+    out = f"отказ: сервис redis: {FLAGS} {REF}\n"
+    assert run_main(monkeypatch, capsys, json.dumps(config), "--prod") == (2, out)
+
+
 @pytest.mark.parametrize(
     ("spoil", "code", "line"),
     [
