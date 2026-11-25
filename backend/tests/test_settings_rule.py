@@ -18,8 +18,9 @@ import pytest
 import ai_geo_audit
 
 KEYS, MODELS = "ai_geo_audit.settings.keys", "ai_geo_audit.settings.models"
-#: Модули и имена строки ключа и шифра: вне `settings/` их не импортирует никто.
-PRIVATE, NAMES = (MODELS, "ai_geo_audit.settings.crypto"), (".ServiceKey", ".unseal")
+SCHEMA = ("ai_geo_audit", "schema.py")
+#: Строка ключа и шифр: звенья `models` и `crypto` пакета настроек, имена `ServiceKey` и `unseal`.
+NAMES = (".ServiceKey", ".unseal")
 OUTSIDE = "строка ключа, модели или шифр вне settings/"
 QUERY = "запрос к service_keys вне settings/"
 AT_IMPORT = "резолвер ключа при импорте модуля — ключ берётся в момент вызова"
@@ -33,6 +34,17 @@ def _bound(node: ast.AST, parts: tuple[str, ...]) -> Iterator[tuple[str, str]]:
         home = parts[: len(parts) - node.level] if node.level else ()
         module = ".".join([*home, *filter(None, [node.module])])
         yield from ((f"{module}.{alias.name}", alias.asname or alias.name) for alias in node.names)
+
+
+def _full(node: ast.expr, bound: dict[str, str]) -> str:
+    """Полное имя цепочки `a.b.c`: первое звено — по импортам модуля (находка 15)."""
+    head, _, rest = ast.unparse(node).partition(".")
+    return ".".join(filter(None, [bound.get(head, head), rest]))
+
+
+def _private(full: str) -> bool:
+    inner = full.split(".")[2:] if full.startswith("ai_geo_audit.settings.") else []
+    return bool({"models", "crypto"} & set(inner)) or full.endswith(NAMES)
 
 
 def _at_import(node: ast.AST) -> Iterator[ast.AST]:
@@ -50,22 +62,19 @@ def _at_import(node: ast.AST) -> Iterator[ast.AST]:
 
 
 def _broken(tree: ast.Module, parts: tuple[str, ...]) -> Iterator[tuple[int, str]]:
-    calls = {f"{KEYS}.resolve"}
-    for full, name in (pair for node in ast.walk(tree) for pair in _bound(node, parts)):
-        if full in (KEYS, f"{KEYS}.resolve"):
-            calls.add(name if full.endswith(".resolve") else f"{name}.resolve")
+    bound = {name: full for node in ast.walk(tree) for full, name in _bound(node, parts)}
     for node in _at_import(tree):
-        if isinstance(node, ast.Call) and ast.unparse(node.func) in calls:
+        if isinstance(node, ast.Call) and _full(node.func, bound) == f"{KEYS}.resolve":
             yield node.lineno, AT_IMPORT
     if parts[1:2] == ("settings",):
         return
     for node in ast.walk(tree):
-        nameless = (
-            parts == ("ai_geo_audit", "schema.py") and ast.unparse(node) == f"import {MODELS}"
-        )
+        nameless = parts == SCHEMA and ast.unparse(node) == f"import {MODELS}"
         if isinstance(node, ast.Import | ast.ImportFrom) and not nameless:
-            if any(f.startswith(PRIVATE) or f.endswith(NAMES) for f, _ in _bound(node, parts)):
+            if any(_private(full) for full, _ in _bound(node, parts)):
                 yield node.lineno, OUTSIDE
+        elif isinstance(node, ast.Attribute) and _private(_full(node, bound)):
+            yield node.lineno, OUTSIDE
         elif isinstance(node, ast.Constant) and "service_keys" in str(node.value).lower():
             yield node.lineno, QUERY
 
@@ -80,7 +89,8 @@ def violations(package: Path) -> tuple[int, list[str]]:
     for path in paths:
         parts = path.relative_to(package.parent).parts
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        found += [f"{'/'.join(parts)}:{line}: {what}" for line, what in _broken(tree, parts)]
+        broken = dict.fromkeys(_broken(tree, parts))  # вложенная цепочка — одна запись на строку
+        found += [f"{'/'.join(parts)}:{line}: {what}" for line, what in broken]
     return len(paths), found
 
 
@@ -111,7 +121,7 @@ IMPORT = f"from {KEYS} import resolve\n\n"
 #: нарушений. Безымянный импорт моделей в `storage/schema.py` — красное: исключение — по пути.
 #: Обходы проверки по имени (пункты второй проверяющей): относительный импорт, таблица заглавными,
 #: резолвер под другим именем, вызов под `if` и в списковом выражении. `relative-module` держит
-#: само приведение уровня: имя `crypto` не из запретных.
+#: само приведение уровня. Находки 15–16 — атрибут и пакет, умолчание по имени, вложенный вызов.
 CASES: dict[str, tuple[str, str, tuple[int, str] | None]] = {
     "key-row": ("api/p.py", f"from {MODELS} import ServiceKey\n", (1, OUTSIDE)),
     "cipher": ("api/p.py", "from ai_geo_audit.settings import crypto\n", (1, OUTSIDE)),
@@ -127,10 +137,15 @@ CASES: dict[str, tuple[str, str, tuple[int, str] | None]] = {
         f"from {KEYS} import resolve as get\nK = get(0, 'x')\n",
         (2, AT_IMPORT),
     ),
-    "module-alias": ("api/p.py", f"import {KEYS} as k\nK = k.resolve(0, 'x')\n", (2, AT_IMPORT)),
+    "full-path": ("api/p.py", f"import {KEYS}\nK = {KEYS}.resolve(0, 'x')\n", (2, AT_IMPORT)),
     "under-if": ("api/p.py", f"{IMPORT}if True:\n    K = resolve(0, 'x')\n", (4, AT_IMPORT)),
     "comprehension": ("api/p.py", f"{IMPORT}K = [resolve(0, n) for n in 'ab']\n", (3, AT_IMPORT)),
-    "decorator": ("api/p.py", f"{IMPORT}@resolve(0, 'x')\ndef read():\n    pass\n", (3, AT_IMPORT)),
+    "decorator": ("api/p.py", f"{IMPORT}@print(resolve())\ndef f(): ...\n", (3, AT_IMPORT)),
+    "kw-default": ("api/p.py", f"{IMPORT}def f(*, k=list(resolve())): ...\n", (3, AT_IMPORT)),
+    "keys-row": ("api/p.py", f"from {KEYS} import ServiceKey\n", (1, OUTSIDE)),
+    "attribute": ("api/p.py", f"import {KEYS} as keys\nROW = keys.ServiceKey\n", (2, OUTSIDE)),
+    "chain": ("api/p.py", f"import {KEYS} as k\nk.crypto.unseal()\n", (2, OUTSIDE)),
+    "parent": ("x.py", "import ai_geo_audit.settings as s\ns.keys.resolve()\n", (2, AT_IMPORT)),
     "default": (
         "settings/p.py",
         f"{IMPORT}def read(k=resolve(0, 'x')):\n    pass\n",
