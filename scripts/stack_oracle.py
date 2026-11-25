@@ -205,6 +205,8 @@ class Run:
         default_factory=lambda: f"{secrets.token_hex(6)}@{secrets.token_hex(6)}"
     )
     app_password: str = field(default_factory=lambda: secrets.token_hex(12))
+    #: Пароль очереди (A171): 24 знака hex — проверка старта в бою его принимает (A175).
+    redis_password: str = field(default_factory=lambda: secrets.token_hex(12))
 
     def __post_init__(self) -> None:
         """Выдуманные секреты — в маске исполнителя с созданием прогона, до его команд (A172)."""
@@ -214,7 +216,8 @@ class Run:
     def invented(self) -> tuple[str, ...]:
         """Выдуманные секреты прогона; пароль роли миграций — и в процентной записи."""
         encoded = quote(self.migrate_password, safe="")
-        return (self.password, self.jwt, self.migrate_password, encoded, self.app_password)
+        app, queue = self.app_password, self.redis_password
+        return (self.password, self.jwt, self.migrate_password, encoded, app, queue)
 
     @property
     def image(self) -> str:

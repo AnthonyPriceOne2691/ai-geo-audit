@@ -156,6 +156,8 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
             "audit_migrate", (wrong or run.migrate_password).replace("@", "%40")
         ),
         "API_DATABASE_URL": DB_URL.format("audit_app", run.app_password),
+        "REDIS_PASSWORD": run.redis_password,
+        "API_REDIS_URL": f"redis://:{run.redis_password}@redis:6379/0",
         "JWT_SECRET": run.jwt,
         "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
