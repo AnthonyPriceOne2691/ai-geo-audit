@@ -182,12 +182,12 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
 #: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
 #: Ч1.5в, срез 3 — A88, срез 4 — A89; «Учётки-1», срез 2 — A85, A170 и A172 (вторая строка);
-#: «Учётки-2», срез 3 — A171.
+#: «Учётки-2», срез 3 — A171, срез 5 — A173.
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
 STEP_EXAMPLES |= {"A88", "A89"}
 STEP_EXAMPLES |= {"A85", "A170", "A172"}
-STEP_EXAMPLES |= {"A171"}
+STEP_EXAMPLES |= {"A171", "A173"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -199,11 +199,11 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a89_a170_to_a172() -> None:
+def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a89_a170_to_a173() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
     A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89, с «Учётками-1» — A85, A170 и
-    A172, с «Учётками-2» — A171."""
+    A172, с «Учётками-2» — A171 и A173."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -211,13 +211,16 @@ def test_a88_stop_steps_go_after_hardening_and_before_a67() -> None:
     """A88: остановка и падение api ломают api — шаги стоят после шагов web и защиты стека и до
     A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков. A170:
     шаги ролей — после остановки и падения api и до A67: смена пароля роли сервиса на время шага
-    отнимает у api вход в базу, шаги api идут раньше. A171: шаги redis — после A67, последними:
-    вторая строка останавливает redis."""
+    отнимает у api вход в базу, шаги api идут раньше. A173: отказ старта — после шагов ролей и
+    до A67: разовые контейнеры живут на поднятом стеке. A171: шаги redis — после A67,
+    последними: вторая строка останавливает redis."""
     hard = importlib.import_module("stack_oracle_hardening")
     stop = importlib.import_module("stack_oracle_stop")
     roles = importlib.import_module("stack_oracle_roles")
     redis = importlib.import_module("stack_oracle_redis")
-    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *roles.ROLE_STEPS, *compose.BREAKING_STEPS]
+    start = importlib.import_module("stack_oracle_start")
+    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *roles.ROLE_STEPS, *start.START_STEPS]
+    tail += compose.BREAKING_STEPS
     tail += redis.REDIS_STEPS
     assert oracle.STEPS[-len(tail) :] == tail
     assert [step.__name__ for _, _, step, _ in stop.STOP_STEPS] == ["step_stop", "step_crash"]
