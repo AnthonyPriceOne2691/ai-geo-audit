@@ -272,10 +272,11 @@ def service_log(run: Run, service: str) -> str:
 
 def step_up(run: Run) -> str:
     """A65, A63: стек одной командой — migrate вышел 0 до старта api, api healthy; ревизия в базе
-    равна голове, обе — из образа; migrate и процессы api — от uid 10001."""
+    равна голове, обе — из образа; migrate и процессы api — от uid 10001. Сбой — хвосты журналов
+    migrate, api и web: отказ проверки старта api виден только в журнале api (Ч1.12а, L126)."""
     done = compose_result(run, "up", "--detach", "--wait", "--wait-timeout", "240", limit="up")
     if done.returncode:
-        logs = "; ".join(service_log(run, service) for service in ("migrate", "web"))
+        logs = "; ".join(service_log(run, service) for service in ("migrate", "api", "web"))
         raise StepError(f"up --wait — код {done.returncode}: {output(done)[-500:]}; {logs}")
     migrate, api = inspect(run, "migrate"), inspect(run, "api")
     finished, started = (

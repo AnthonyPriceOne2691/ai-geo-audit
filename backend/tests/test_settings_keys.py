@@ -188,10 +188,12 @@ async def test_a226_same_value_keeps_the_row_and_drop_names_its_outcome(
     outcomes, rows = [], []
     for value in (first, first, other):
         async with AsyncSession(committed) as session:
-            outcomes.append((await keys.put_key(session, "openai", value)).outcome)
+            written = await keys.put_key(session, "openai", value)
             await session.commit()
             rows.append((await session.execute(ROW, {"name": "openai"})).one())
-    assert outcomes == ["задан", "без изменений", "задан"]
+            [state] = [state for state in await keys.states(session) if state.name == "openai"]
+            outcomes.append((written.outcome, written.state == state))
+    assert outcomes == [("задан", True), ("без изменений", True), ("задан", True)]
     assert rows[1] == rows[0]
     changed = [rows[2][field] != rows[0][field] for field in range(4)]
     assert changed == [True, False, True, True]
@@ -285,6 +287,7 @@ async def test_a223_gone_previous_line_is_named_with_an_error_record(
     [record] = [r for r in caplog.records if r.name == "ai_geo_audit.settings"]
     fields = (record.levelname, record.event, record.key, record.master_id)  # type: ignore[attr-defined]
     assert fields == ("ERROR", "key-unreadable", "openai", master_id)
+    assert record.getMessage() == f"ключ не расшифровывается: {refused.value}"
     assert value not in logging.Formatter().format(record) + repr(record.__dict__)
 
 

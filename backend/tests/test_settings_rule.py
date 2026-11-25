@@ -143,6 +143,7 @@ CASES: dict[str, tuple[str, str, tuple[int, str] | None]] = {
     "decorator": ("api/p.py", f"{IMPORT}@print(resolve())\ndef f(): ...\n", (3, AT_IMPORT)),
     "kw-default": ("api/p.py", f"{IMPORT}def f(*, k=list(resolve())): ...\n", (3, AT_IMPORT)),
     "keys-row": ("api/p.py", f"from {KEYS} import ServiceKey\n", (1, OUTSIDE)),
+    "keys-unseal": ("api/p.py", f"from {KEYS} import unseal\n", (1, OUTSIDE)),
     "attribute": ("api/p.py", f"import {KEYS} as keys\nROW = keys.ServiceKey\n", (2, OUTSIDE)),
     "chain": ("api/p.py", f"import {KEYS} as k\nk.crypto.unseal()\n", (2, OUTSIDE)),
     "parent": ("x.py", "import ai_geo_audit.settings as s\ns.keys.resolve()\n", (2, AT_IMPORT)),

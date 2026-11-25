@@ -457,13 +457,15 @@ def test_a76_docker_down_is_code_2_not_a_green_run(
     assert " ".join(oracle.UP_HINT.split()) in " ".join(capsys.readouterr().out.split())
 
 
-#: Строка журнала web: проверка здоровья смотрит не туда, nginx ответил 404.
+#: Строка журнала web: проверка здоровья смотрит не туда, nginx ответил 404. Строка журнала api:
+#: проверка старта в бою отказала (A221, Ч1.12а; наблюдение на живой порче L126).
 WEB_LOG = 'web-1  | 127.0.0.1 - - "GET /api/health HTTP/1.1" 404 153 "-" "Wget"\n'
+API_LOG = "api-1  | KEYS_MASTER_KEY_FILE: строка 1 — не 64 знака hex\n"
 
 
 class MigrateFails(oracle.Docker):
     """Подставной исполнитель: `up --wait` — код 1, migrate вышел 255; журнал migrate — строки с
-    паролем и секретом стека, ошибка alembic и две строки после неё; журнал web — `WEB_LOG`."""
+    паролем и секретом стека, ошибка alembic и две строки после неё; api и web — свои строки."""
 
     secrets: tuple[str, str] = ("", "")
     logs_calls: tuple[tuple[str, ...], ...] = ()
@@ -480,15 +482,15 @@ class MigrateFails(oracle.Docker):
                 "migrate-1  | FAILED: Path doesn't exist: 'x'.\n"
                 "migrate-1  | exit code 255\nmigrate-1  | done\n"
             )
-            log = log if args[-1] == "migrate" else WEB_LOG
+            log = {"migrate": log, "api": API_LOG}.get(args[-1], WEB_LOG)
             return subprocess.CompletedProcess(["docker", *args], 0, log.encode(), b"")
         return subprocess.CompletedProcess(["docker", *args], 0, b"", b"")
 
 
 def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: Path) -> None:
-    """A76, третья строка: подъём упал — в причине шага хвосты журналов migrate и web
-    (`--tail 20`, шесть последних строк): причина от alembic («FAILED: …») и ответ nginx на
-    проверку здоровья web (L89); пароля и секрета стека в причине нет."""
+    """A76, третья строка: подъём упал — в причине шага хвосты журналов migrate, api и web
+    (`--tail 20`, шесть последних строк): причина от alembic («FAILED: …»), отказ проверки старта
+    api и ответ nginx на проверку здоровья web (L89); пароля и секрета стека в причине нет."""
     docker = MigrateFails()
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
     docker.secrets = (run.password, run.jwt)
@@ -496,10 +498,11 @@ def test_a76_failed_up_names_the_alembic_reason_without_the_password(tmp_path: P
         compose.step_up(run)
     reason = str(failure.value)
     assert "exit 255" in reason and "FAILED: Path doesn't exist" in reason
-    assert '"GET /api/health HTTP/1.1" 404' in reason
+    assert '"GET /api/health HTTP/1.1" 404' in reason and "строка 1 — не 64 знака hex" in reason
     assert run.password not in reason and run.jwt not in reason
     tails = [call[-4:] for call in docker.logs_calls]
-    assert tails == [("--no-color", "--tail", "20", service) for service in ("migrate", "web")]
+    services = ("migrate", "api", "web")
+    assert tails == [("--no-color", "--tail", "20", service) for service in services]
 
 
 class RulesAnswer(oracle.Docker):
