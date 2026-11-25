@@ -32,7 +32,9 @@ MAIN_RULES = 24
 PROD, PROD_RULES = "docker-compose.prod.yml", 27
 
 
-DB_URL = "postgresql+asyncpg://audit:{}@db:5432/audit"
+#: Адрес базы процесса — роль и пароль (A65). Пароли выдумывает оракул: hex, у роли миграций —
+#: и «@», в адресе он идёт как `%40`.
+DB_URL = "postgresql+asyncpg://{}:{}@db:5432/audit"
 
 
 APP_UID = "10001"
@@ -146,8 +148,12 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
         "WEB_PORT": str(port),
         "FRONT_SUBNET": subnet,
         "DB_PASSWORD": run.password,
-        "MIGRATE_DATABASE_URL": DB_URL.format(wrong or run.password),
-        "API_DATABASE_URL": DB_URL.format(run.password),
+        "POSTGRES_MIGRATE_PASSWORD": run.migrate_password,
+        "POSTGRES_APP_PASSWORD": run.app_password,
+        "MIGRATE_DATABASE_URL": DB_URL.format(
+            "audit_migrate", (wrong or run.migrate_password).replace("@", "%40")
+        ),
+        "API_DATABASE_URL": DB_URL.format("audit_app", run.app_password),
         "JWT_SECRET": run.jwt,
         "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
