@@ -56,7 +56,7 @@ class Stack:
         self,
         probes: dict[str, Any],
         rows: dict[str, Any],
-        codes: tuple[int, ...] = (),
+        codes: tuple[int | str, ...] = (),
         psql: str = "",
         db_log: str = "",
     ) -> None:
@@ -80,6 +80,8 @@ class Stack:
         if "logs" in args:
             return self.db_log
         found = self.rows[kw["stdin"].decode()]
+        if isinstance(found, Exception):  # запрос суперпользователя упал
+            raise found
         rows = sticky(found) if found and isinstance(found[0], list) else found
         return "".join(f"{row}\n" for row in rows)
 
@@ -98,6 +100,8 @@ class Stack:
             err = "Traceback\nboom\n" if found is FAILED else ""
         elif self.codes:
             code = self.codes.pop(0)
+            if isinstance(code, str):  # команда не уложилась в предел — отказ исполнителя
+                raise roles.StepError(code)
         run.docker.raw.append((args, out + err))
         return subprocess.CompletedProcess(args, code, out.encode(), err.encode())
 
@@ -475,6 +479,17 @@ def test_a170_new_password_step_returns_the_old_password_after_a_failed_probe(
     assert fake.calls[-1] == ((*RERUN, RERUN_TEXT), None)
 
 
+def test_a170_new_password_step_returns_the_old_password_when_the_change_fails(
+    monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace
+) -> None:
+    """A170, вторая строка: сама смена пароля не уложилась в предел — красное с причиной, а запуск
+    с прежним паролем всё равно идёт: смена могла пройти в контейнере (замечание ведущей 08:43Z)."""
+    late = "docker compose exec не уложился в 120 с"
+    fake = stack(monkeypatch, {"api:login": REFUSED}, codes=(late, 0))
+    assert red(roles.step_new_password, run) == late
+    assert fake.calls[-1] == ((*RERUN, RERUN_TEXT), None)
+
+
 LEGACY_PROBES = {
     "legacy": answer("audit_app", "ok", "ok"),
     "legacy-drop": answer("audit_migrate", "ok"),
@@ -554,6 +569,20 @@ def test_a170_legacy_step_clears_the_table_after_a_failed_probe(
     снимается."""
     fake = stack(monkeypatch, LEGACY_PROBES | {"legacy": FAILED}, legacy_rows())
     assert red(roles.step_legacy_table, run) == "проба legacy в api — код 1: Traceback | boom"
+    assert fake.calls[-2:] == [
+        ((*MIGRATE, "legacy-drop"), PROBE_TEXT),
+        (DB, roles.LEGACY_DROP.encode()),
+    ]
+
+
+def test_a170_legacy_step_clears_the_table_when_making_it_fails(
+    monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace
+) -> None:
+    """A170, третья строка: заведение таблицы суперпользователем упало — таблица могла остаться
+    без строки: красное с причиной, и таблица всё равно снимается."""
+    failed = roles.StepError("docker compose — код 3: ERROR:  42P01")
+    fake = stack(monkeypatch, LEGACY_PROBES, legacy_rows() | {roles.LEGACY: failed})
+    assert red(roles.step_legacy_table, run) == "docker compose — код 3: ERROR:  42P01"
     assert fake.calls[-2:] == [
         ((*MIGRATE, "legacy-drop"), PROBE_TEXT),
         (DB, roles.LEGACY_DROP.encode()),
