@@ -317,11 +317,12 @@ def test_a89_redis_memory_judges_the_sh_c_line(first_line: str) -> None:
 )
 def test_a89_redis_memory_reads_only_the_first_line(lines: tuple[str, ...]) -> None:
     """A89, первая строка: флаги потолка — только из первой строки `sh -c` до here-doc; такие же
-    слова на его входе — настройки файла Redis, а не аргументы: ровно `redis-memory`."""
+    слова на его входе — не аргументы: `redis-memory`. И `redis-auth`: на входе очереди — ровно одна
+    строка `requirepass` (A178)."""
     script = "\n".join(("exec redis-server - <<EOF", *lines, "EOF")) + "\n"
     config = prod()
     put(svc("redis"), "command", ["sh", "-c", script])(config)
-    assert found(config) == {("redis-memory", "redis", None)}
+    assert found(config) == {("redis-memory", "redis", None), ("redis-auth", "redis", None)}
 
 
 def test_a89_a178_here_doc_on_a_later_line_is_red_in_both_rules() -> None:

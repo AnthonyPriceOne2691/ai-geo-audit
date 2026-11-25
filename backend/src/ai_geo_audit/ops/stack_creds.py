@@ -28,8 +28,10 @@ ROLE_PASSWORDS = ("POSTGRES_MIGRATE_PASSWORD", "POSTGRES_APP_PASSWORD")
 DB_OWN = ("POSTGRES_USER", "POSTGRES_DB")
 #: Пароли базы — суперпользователя и ролей: только у db.
 DB_PASSWORDS = frozenset({"POSTGRES_PASSWORD", *ROLE_PASSWORDS})
-#: Каталог образа postgres: на пустом томе он исполняет скрипты оттуда.
+#: Каталог образа postgres: на пустом томе он исполняет скрипты оттуда; скрипт ролей — один файл.
 INIT_DIR = "/docker-entrypoint-initdb.d"
+SCRIPT_NAME = "roles.sql"
+SCRIPT_TARGET = f"{INIT_DIR}/{SCRIPT_NAME}"
 #: Переменная сервера, из которой процесс берёт адрес базы.
 ADDRESSES = {"migrate": "MIGRATE_DATABASE_URL", "api": "API_DATABASE_URL"}
 #: Пароль очереди — переменная контейнера redis; в контейнере он раскрывается из `$$`.
@@ -38,9 +40,11 @@ IN_CONTAINER = "$$REDIS_PASSWORD"
 #: Короткая запись тома: двоеточие внутри ссылки `${…}` — не разделитель.
 _REF = re.compile(r"\$\{[^}]*\}")
 #: Начало here-doc словом без кавычек: в слове с кавычками оболочка не раскрывает `$…`.
-_HERE_DOC = re.compile(r"<<-?\s*\w+\s*$")
-#: Пароль очереди у проверки здоровья — раскрытие в контейнере, без одинарных кавычек.
-_HEALTH_AUTH = re.compile(r'REDISCLI_AUTH="?\$\$REDIS_PASSWORD"?(?=\s|$)')
+_HERE_DOC = re.compile(r"<<(-?)\s*(\w+)\s*$")
+#: Проверка здоровья очереди — ровно эта форма: раскрытие пароля в контейнере, ответ `PONG`.
+_HEALTH = re.compile(
+    r'REDISCLI_AUTH="?\$\$REDIS_PASSWORD"? redis-cli ping \| grep -(?:x|q|xq|qx) PONG'
+)
 
 
 def _strict(value: object) -> str | None:
@@ -49,19 +53,21 @@ def _strict(value: object) -> str | None:
     return match[1] if match else None
 
 
-def _mounts(service: dict[str, Any]) -> Iterator[tuple[str, bool]]:
-    """Точки монтирования томов и «только чтение»; короткая запись — `источник:путь:режимы`."""
+def _mounts(service: dict[str, Any]) -> Iterator[tuple[str, str, bool]]:
+    """Источник, точка и «только чтение» тома; короткая запись — `источник:путь:режимы`."""
     for entry in service.get("volumes") or []:
         if isinstance(entry, dict):
-            yield str(entry.get("target") or ""), entry.get("read_only") is True
+            read_only = entry.get("read_only") is True
+            yield str(entry.get("source") or ""), str(entry.get("target") or ""), read_only
             continue
         parts = _REF.sub("$", str(entry)).split(":")
         modes = parts[2].split(",") if len(parts) > 2 else []
-        yield parts[1] if len(parts) > 1 else parts[0], "ro" in modes
+        yield parts[0], parts[1] if len(parts) > 1 else parts[0], "ro" in modes
 
 
-def _in_init(target: str) -> bool:
-    return target == INIT_DIR or target.startswith(INIT_DIR + "/")
+def _is_script(source: str, target: str) -> bool:
+    """Скрипт ролей, а не любой файл каталога образа: цель и имя файла — ровно."""
+    return target == SCRIPT_TARGET and source.rsplit("/", 1)[-1] == SCRIPT_NAME
 
 
 def _db(stack: Stack) -> Iterator[Finding]:
@@ -73,11 +79,13 @@ def _db(stack: Stack) -> Iterator[Finding]:
     for var in ROLE_PASSWORDS:
         if _strict(values.get(var)) is None:
             yield "db", var, "пароль роли — не ${VAR:?причина}"
-    modes = [read_only for target, read_only in _mounts(stack.services["db"]) if _in_init(target)]
-    if not modes:
-        yield "db", None, f"скрипт ролей не смонтирован в {INIT_DIR}"
-    elif not all(modes):
-        yield "db", None, f"скрипт ролей смонтирован в {INIT_DIR} на запись"
+    found = [
+        ro for source, target, ro in _mounts(stack.services["db"]) if _is_script(source, target)
+    ]
+    if not found:
+        yield "db", None, f"скрипт ролей не смонтирован: {SCRIPT_TARGET}"
+    elif not all(found):
+        yield "db", None, f"скрипт ролей смонтирован на запись: {SCRIPT_TARGET}"
 
 
 def db_roles(stack: Stack) -> Iterator[Finding]:
@@ -110,22 +118,32 @@ def _script(service: dict[str, Any]) -> str | None:
     return words[2] if len(words) == 3 and words[:2] == ["sh", "-c"] else None
 
 
+def _here_doc(script: str) -> tuple[list[str], list[str]] | None:
+    """Слова первой строки до here-doc и непустые строки его тела; нет here-doc словом без кавычек,
+    нет ограничителя или после него непустая строка — None."""
+    first, _, rest = script.partition("\n")
+    start = _HERE_DOC.search(first)
+    if start is None:
+        return None
+    dash, word = start.groups()
+    lines = rest.splitlines()
+    ends = [n for n, line in enumerate(lines) if (line.lstrip("\t") if dash else line) == word]
+    if not ends or any(line.strip() for line in lines[ends[0] + 1 :]):
+        return None
+    return _shell(first[: start.start()]), [line for line in lines[: ends[0]] if line.strip()]
+
+
 def _auth_command(service: dict[str, Any]) -> bool:
     """Команда redis: `exec redis-server -`, без пароля аргументом, а на входе here-doc — ровно одна
-    строка `requirepass $$REDIS_PASSWORD`."""
+    строка `requirepass $$REDIS_PASSWORD`, и после ограничителя ничего."""
     script = _script(service)
-    if script is None:
+    parsed = _here_doc(script) if script is not None else None
+    if parsed is None:
         return False
-    first, _, rest = script.partition("\n")
-    here_doc = _HERE_DOC.search(first)
-    if here_doc is None:
-        return False
-    words = _shell(first[: here_doc.start()])
-    lines = [line.split() for line in rest.splitlines()]
-    passes = [line for line in lines if line[:1] == ["requirepass"]]
+    words, body = parsed
     by_argument = any(word.startswith("--requirepass") for word in words)
     started = words[:3] == ["exec", "redis-server", "-"] and not by_argument
-    return started and passes == [["requirepass", IN_CONTAINER]]
+    return started and [line.split() for line in body] == [["requirepass", IN_CONTAINER]]
 
 
 def _health(service: dict[str, Any]) -> str | None:
@@ -141,17 +159,10 @@ def _health(service: dict[str, Any]) -> str | None:
 
 
 def _auth_health(service: dict[str, Any]) -> bool:
-    """Проверка здоровья redis: `REDISCLI_AUTH` раскрытием `$$REDIS_PASSWORD` перед `redis-cli` и
-    сверка ответа с `PONG` после `|`."""
+    """Проверка здоровья redis — ровно одна форма: `REDISCLI_AUTH` раскрытием `$$REDIS_PASSWORD`,
+    `redis-cli ping` и сверка ответа с `PONG`; без хвоста, который её не роняет."""
     text = _health(service)
-    if text is None:
-        return True
-    auth = _HEALTH_AUTH.search(text)
-    if auth is None or auth.start() > text.find("redis-cli"):
-        return False
-    words = _shell(text)
-    answered = words[words.index("|") + 1 :] if "|" in words else []
-    return "grep" in answered and "PONG" in answered
+    return text is None or _HEALTH.fullmatch(" ".join(text.split())) is not None
 
 
 def _has_password(url: str) -> bool:
@@ -162,14 +173,18 @@ def _has_password(url: str) -> bool:
 
 
 def _password_flag(service: dict[str, Any]) -> bool:
-    """Пароль на виду у процессов — в команде или проверке здоровья: `-a` или `--pass` у redis-cli,
-    `-u` с паролем в адресе."""
+    """Пароль на виду у процессов — в команде или проверке здоровья: `-a`, `--pass` или `AUTH` у
+    redis-cli (по имени файла, с путём и без), `-u` с паролем в адресе."""
     command = service.get("command") or []
     parts = [command] if isinstance(command, str) else [str(part) for part in command]
     words = [word for part in parts for word in _shell(part)] + _shell(_health(service) or "")
-    flagged = any(word in ("-a", "--pass") or word.startswith("--pass=") for word in words)
+    cli = any(word.rsplit("/", 1)[-1] == "redis-cli" for word in words)
+    flagged = any(
+        word in ("-a", "--pass") or word.startswith("--pass=") or word.upper() == "AUTH"
+        for word in words
+    )
     by_url = any(flag == "-u" and _has_password(url) for flag, url in itertools.pairwise(words))
-    return ("redis-cli" in words and flagged) or by_url
+    return (cli and flagged) or by_url
 
 
 def _redis(value: object, service: dict[str, Any]) -> Iterator[Finding]:
