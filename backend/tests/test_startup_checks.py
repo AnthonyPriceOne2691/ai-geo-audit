@@ -95,6 +95,27 @@ def test_a3_master_key_file_must_exist(monkeypatch: pytest.MonkeyPatch, master_k
     ]
 
 
+MASTER_KEY_FOR = "мастер-ключ шифрования ключей сервисов"
+
+
+@pytest.mark.parametrize(
+    ("value", "why"),
+    [
+        ("", f"не задано — {MASTER_KEY_FOR}"),
+        ("CHANGE_ME", f"стоит заглушка из .env.example — {MASTER_KEY_FOR}"),
+    ],
+    ids=["empty", "placeholder"],
+)
+def test_a3_master_key_reason_is_compared_whole(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, value: str, why: str
+) -> None:
+    """A3, L136: пустой путь к мастер-ключу и заглушка `.env.example` у api и worker — причина
+    целиком, с назначением ключа: `in` и `startswith` порчи текста не держат (L124)."""
+    env = full_env(master_key) | {"KEYS_MASTER_KEY_FILE": value}
+    for process in ("api", "worker"):
+        assert prod(monkeypatch, process, **env) == [sc.Problem("KEYS_MASTER_KEY_FILE", why)]
+
+
 def test_a3_processes_need_different_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """A3, A33: миграциям хватает базы; воркеру не нужен секрет входа, api — нужно всё, и ещё
     адреса прокси (A33)."""
