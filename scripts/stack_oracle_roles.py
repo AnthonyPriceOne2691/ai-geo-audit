@@ -135,8 +135,9 @@ EXTRA_ROWS = [
     "по умолчанию S SELECT,USAGE",
     "членств 0",
 ]
-#: A380, первая строка: лишнее с передачей трёх видов; дальше передают роль сервиса и временная
-#: роль — через `SET ROLE` (пробы S5–S7 2026-11-25T12:50Z и 13:07Z).
+#: A380, первая строка: лишнее четырёх видов; дальше передают роль сервиса и временная роль —
+#: через `SET ROLE` (пробы S5–S7 2026-11-25T12:50Z и 13:07Z); прямое членство роли миграций от
+#: суперпользователя держит снятие её членств (находка проверяющей на `0013506`).
 PASSED = """
 GRANT SELECT ON alembic_version TO audit_app WITH GRANT OPTION;
 SET ROLE audit_app;
@@ -151,6 +152,7 @@ GRANT pg_write_all_data TO oracle_grantor WITH ADMIN OPTION;
 SET ROLE oracle_grantor;
 GRANT pg_write_all_data TO audit_app;
 RESET ROLE;
+GRANT pg_monitor TO audit_migrate;
 """
 PASSED_CHECK = """
 SELECT 'членств ' || count(*) FROM pg_auth_members
@@ -383,7 +385,7 @@ def step_extra_revoked(run: Run) -> str:
 
 
 def step_passed_extra(run: Run) -> str:
-    """A380, первая строка: суперпользователь заводит лишнее с передачей трёх видов, затем скрипт
+    """A380, первая строка: суперпользователь заводит лишнее четырёх видов, затем скрипт
     ролей той же командой, что в A170, — код 0; членств у обеих ролей нет, у роли сервиса на
     `alembic_version` — четыре права без права передачи, у `PUBLIC` — ни одного; временная роль
     удаляется — и после отказа."""
