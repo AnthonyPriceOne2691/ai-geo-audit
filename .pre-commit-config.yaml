@@ -206,7 +206,7 @@ repos:
       - id: file-length
         name: Файлы кода <= 500/1000 строк (baseline-ratchet)
         language: system
-        entry: bash -c 'export LINT_LENGTH_GLOBS="*.py *.ts *.tsx *.mjs"; cd "$(git rev-parse --show-toplevel)" && bash scripts/lint/check_file_length.sh'
+        entry: bash -c 'export LINT_LENGTH_GLOBS="*.py *.ts *.tsx *.mjs *.js"; cd "$(git rev-parse --show-toplevel)" && bash scripts/lint/check_file_length.sh'
         types_or: [python, ts, tsx, javascript]
         pass_filenames: false
 
