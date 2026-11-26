@@ -250,6 +250,8 @@ def _image_digest(stack: Stack) -> Iterator[Finding]:
         image = service.get("image")
         if not image or image in built:
             continue
+        if name in prod_rules.SERVER_IMAGES and _STRICT_REF.fullmatch(str(image)):
+            continue  # образ боя из файла сервера — его судит image-from-server (A181)
         match = _IMAGE.fullmatch(str(image))
         repo = match["name"].removeprefix("docker.io/").removeprefix("library/") if match else ""
         if not match or IMAGE_LINES.get(repo) != match["tag"]:

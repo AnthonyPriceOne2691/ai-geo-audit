@@ -32,7 +32,15 @@ services:
       options:
         tag: ai-geo-audit-redis
 
+  # Свои образы — из файла сервера по дайджесту, их пишет выкат: на сервере не собираются и не
+  # скачиваются (A181, правило image-from-server). Бой — литералами (правило prod-mode).
   migrate:
+    image: ${BACKEND_IMAGE:?образ бэкенда по дайджесту — пишет выкат}
+    pull_policy: never
+    build: !reset null
+    environment:
+      APP_ENV: prod
+      LOG_FORMAT: json
     mem_limit: 256m
     cpus: 1.0
     logging:
@@ -41,6 +49,11 @@ services:
         tag: ai-geo-audit-migrate
 
   api:
+    image: ${BACKEND_IMAGE:?образ бэкенда по дайджесту — пишет выкат}
+    pull_policy: never
+    environment:
+      APP_ENV: prod
+      LOG_FORMAT: json
     mem_limit: 512m
     cpus: 1.0
     logging:
@@ -49,6 +62,9 @@ services:
         tag: ai-geo-audit-api
 
   web:
+    image: ${WEB_IMAGE:?образ фронта по дайджесту — пишет выкат}
+    pull_policy: never
+    build: !reset null
     mem_limit: 128m
     cpus: 0.5
     logging:
