@@ -11,10 +11,12 @@ from pydantic import Field, SecretStr, field_validator
 
 from ai_geo_audit.config._base import Settings
 
-#: База разработки из docker compose. В бою проверка старта требует `DATABASE_URL` явно.
+#: База и Redis разработки из docker compose: 5462 и 6462, пароли стенда публичны. В бою проверка
+#: старта требует `DATABASE_URL` и `REDIS_URL` явно.
 # pragma: allowlist nextline secret
 _DEV_DATABASE_URL = "postgresql+asyncpg://audit:audit@localhost:5462/audit"
-_DEV_REDIS_URL = "redis://localhost:6379/0"
+# pragma: allowlist nextline secret
+_DEV_REDIS_URL = "redis://:audit-dev-redis@127.0.0.1:6462/0"
 Level = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 #: Самая широкая сеть доверенных прокси по версии адреса: шире — это уже чужие машины.
 _WIDEST_PROXY_NET = {4: 16, 6: 64}
@@ -76,12 +78,7 @@ def _proxy_problem(element: str) -> str | None:
         return "пустой элемент — назовите адреса прокси через запятую"
     if element == "*":
         return "`*` нельзя: назовите адреса прокси"
-    try:
-        ipaddress.ip_address(element)
-    except ValueError:
-        pass
-    else:
-        return None
+    # Адрес — сеть /32 или /128: отдельная проверка адреса ничего не меняла (decisions, срез 4).
     try:
         network = ipaddress.ip_network(element)
     except ValueError:

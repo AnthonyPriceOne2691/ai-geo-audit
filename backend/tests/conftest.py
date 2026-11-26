@@ -1,6 +1,7 @@
 """Тесты не ходят дальше петли, не читают `.env` разработчика и не видят его окружения.
 
-База тестов — своя у рабочей копии (`dbtools`); без Postgres прогон останавливается один раз.
+База тестов — своя у рабочей копии (`dbtools`), база Redis — своя у процесса (`redistools`); без
+Postgres или Redis прогон останавливается один раз.
 """
 
 from __future__ import annotations
@@ -20,11 +21,13 @@ import os
 import tempfile
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
+from typing import NoReturn
 
 import dbtools
 import masterkeys
 import mutation_db
 import pytest
+import redistools
 from hypothesis import settings
 from run_summary import (  # noqa: F401 -- хуки итога A106 подключаются по именам
     pytest_collection,
@@ -70,21 +73,32 @@ def pytest_report_header() -> str:
     return f"окружение тестов: вычищено имён — {len(CLEANED)}; сеть — только петля"
 
 
+def refuse(message: str) -> NoReturn:
+    """Сервера тестов нет — сессия не идёт: одно сообщение, под mutmut ещё и метка сбоя (A285)."""
+    mutation_db.mark_refused(message)
+    # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
+    raise pytest.UsageError(message)
+
+
 def pytest_sessionstart(session: pytest.Session) -> None:
-    """A12: нет Postgres — одно сообщение с командой, а не десятки пропусков. База сессии — база
-    рабочей копии, под mutmut — своя копия шаблона (A281)."""
+    """A12: нет Postgres или Redis — одно сообщение с командой, а не десятки пропусков. База
+    сессии — база рабочей копии, под mutmut — своя копия шаблона (A281); база Redis — своя у
+    процесса, под меткой со сроком."""
     reason = asyncio.run(dbtools.unreachable())
     if reason:
-        # Ошибка использования печатается одной строкой; pytest.exit дал бы две.
-        message = f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}"
-        raise pytest.UsageError(message)
+        refuse(f"Postgres для тестов не отвечает ({reason}). Поднять: {dbtools.START}")
+    reason = redistools.session_refusal()
+    if reason:
+        refuse(reason)
     mutation_db.session_start()
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     """Под mutmut — снос копии сессии (A281), в самом конце: после итога A106 и развязки фикстур.
-    Хук итога подключён списком импорта выше, как был (L63)."""
+    Хук итога подключён списком импорта выше, как был (L63). Метка базы Redis снимается здесь же;
+    у сессии, снятой mutmut по сроку, её отпускает срок метки (L97)."""
     mutation_db.session_end()
+    redistools.session_end()
 
 
 @pytest.fixture(autouse=True)
@@ -152,3 +166,12 @@ async def committed(engine: AsyncEngine) -> AsyncIterator[AsyncEngine]:
     await dbtools.require_empty(engine)
     yield engine
     await dbtools.truncate(engine)
+
+
+@pytest.fixture
+def redis_url() -> Iterator[str]:
+    """Адрес Redis теста — база сессии, пустая до и после теста: ключи в коде прежние (L97)."""
+    db = redistools.session_db()
+    redistools.flush(db)
+    yield redistools.url(db)
+    redistools.flush(db)

@@ -29,6 +29,8 @@ import dbtools
 import envguard
 import mutation_db
 import pytest
+import redis_fakes
+import redistools
 import smoke_run
 
 import ai_geo_audit
@@ -306,6 +308,21 @@ def test_a377_postgres_down_before_scenarios_counts_none(
     assert lines[0] == f"пакет: {fake_package(tmp_path).parent.resolve()}"
     assert lines[1].startswith("окружение: Postgres не отвечает")
     assert lines[1].endswith(dbtools.START)
+
+
+def test_a377_redis_down_before_scenarios_counts_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A377, A243: Redis недоступен до сценариев — код 1, строка «окружение: …» с командой подъёма:
+    S1 судит здоровье, а оно ходит в Redis; ни один сценарий не засчитан."""
+    monkeypatch.setenv("TEST_REDIS_URL", f"redis://127.0.0.1:{redis_fakes.closed_port()}")
+    lines: list[str] = []
+    ran: list[str] = []
+    only = scenario("S3", lambda _run, _deadline: ran.append("S3"))
+    code = smoke_run.smoke(make_run(tmp_path, lines), (only,), {}, fake_package(tmp_path))
+    assert (code, ran, len(lines)) == (1, [], 2), lines
+    assert lines[1].startswith("окружение: Redis не отвечает (ConnectionError")
+    assert lines[1].endswith(redistools.START)
 
 
 def test_a377_foreign_package_stops_the_run_before_scenarios(tmp_path: Path) -> None:
@@ -786,6 +803,8 @@ def test_a371_signal_cleans_up_once_and_a_second_one_does_not_cut_it(
     finally:
         helper.kill()
         helper.wait()
+        if helper.stdout is not None:  # упавший до `communicate` тест потока сборщику не оставляет
+            helper.stdout.close()
         if pgid is not None:
             smoke_run.kill_group(pgid)
         left = asyncio.run(smoke_run.drop(run.db))

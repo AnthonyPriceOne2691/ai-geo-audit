@@ -28,6 +28,7 @@ import dbtools
 import httpx
 import masterkeys
 import pytest
+import redistools
 from fastapi import (
     APIRouter,
     Depends,
@@ -282,10 +283,12 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(config, name, domain())
 
 
-def use_database(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
-    """Движок процесса смотрит в эту базу: настройка подменяется до первого вызова движка."""
+def use_database(monkeypatch: pytest.MonkeyPatch, url: str, redis: str | None = None) -> None:
+    """Движок процесса смотрит в эту базу, здоровье — в Redis теста или в `redis` (A243):
+    настройка подменяется до первого вызова движка."""
     storage = config.StorageSettings()
     monkeypatch.setattr(storage, "database_url", SecretStr(url))
+    monkeypatch.setattr(storage, "redis_url", SecretStr(redis or redistools.current_url()))
     monkeypatch.setattr(config, "storage", storage)
 
 

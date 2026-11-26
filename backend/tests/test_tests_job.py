@@ -13,6 +13,7 @@ from typing import Any
 
 import envguard
 import pytest
+import redistools
 import yaml
 
 ROOT = envguard.ROOT
@@ -22,6 +23,14 @@ POSTGRES = (
     "postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139"
 )
 IGNORED = (".coverage.*", "coverage.json", "coverage.json.head", "mutants/")
+#: Redis тестов в CI — как Redis стенда: строка образа стека, пароль стенда, петля 6462.
+REDIS_READY = '--health-cmd "redis-cli -h 127.0.0.1 -e ping"'
+
+
+def stack_redis_image() -> str:
+    """Строка образа redis стека «линия@дайджест» — её же берут стенд и служба CI (A100)."""
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    return str(compose["services"]["redis"]["image"])
 
 
 def step(job: dict[str, Any], name: str) -> dict[str, Any]:
@@ -35,6 +44,7 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
     if not job:
         return ["джобы tests нет"]
     service = job.get("services", {}).get("postgres", {})
+    redis = job.get("services", {}).get("redis", {})
     run = str(step(job, "Тесты с покрытием").get("run", ""))
     diff = step(job, "Diff coverage").get("env", {})
     checks = [
@@ -48,6 +58,21 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
         (
             "pg_isready -h 127.0.0.1" in str(service.get("options", "")),
             "служба базы: готовность не по TCP",
+        ),
+        (redis.get("image") == stack_redis_image(), f"служба Redis: образ {redis.get('image')!r}"),
+        (redis.get("ports") == ["127.0.0.1:6462:6379"], "служба Redis: порт не на петле 6462"),
+        (
+            redis.get("command") == f"redis-server --requirepass {redistools.PASSWORD}",
+            "служба Redis: пароль стенда не в command",
+        ),
+        (
+            (redis.get("env") or {}).get("REDISCLI_AUTH") == redistools.PASSWORD,
+            "служба Redis: готовность без пароля в REDISCLI_AUTH",
+        ),
+        (
+            REDIS_READY in str(redis.get("options", "")),
+            "служба Redis: готовность не `redis-cli -e ping` целиком — без -e ответ-ошибка даёт"
+            " код 0 (L60)",
         ),
         (bool(step(job, "Diff base")), "нет шага Diff base"),
         ("pytest --cov --cov-report=json:coverage.json" in run, "покрытие: не src и migrations"),
@@ -96,7 +121,7 @@ def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
         (gate.get("LINT_PY_SRC") == "backend/src", "доли: область не backend/src"),
         (
             shard.get("services") == jobs.get("tests", {}).get("services"),
-            "доли: служба базы не как у tests",
+            "доли: службы базы и Redis не как у tests",
         ),
         (
             upload.get("with", {}).get("name") == "mutation-shard-${{ matrix.shard }}",
@@ -122,7 +147,7 @@ def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
 
 
 def test_a106_a107_a108_a109_tests_job_keeps_the_contract() -> None:
-    """A99, A106–A109: таймаут по спеке, свежесть замка, служба базы по дайджесту, набор с
+    """A99, A106–A109: таймаут по спеке, свежесть замка, службы базы и Redis по дайджесту, набор с
     покрытием и привязкой, покрытие изменённого по отчёту джобы; мутации — 4 доли только на запросе
     в бюджете и сумма при любом исходе долей (A289)."""
     assert job_contract_problems(yaml.safe_load(QUALITY.read_text(encoding="utf-8"))) == []
@@ -176,8 +201,34 @@ COPIES = [
         "A289-db-by-tag",
         r"\(A289\)\.\n      postgres:\n        image: postgres:16-alpine@sha256:[0-9a-f]{64}",
         "(A289).\n      postgres:\n        image: postgres:16-alpine",
-        "служба базы не как у tests",
+        "не как у tests",
     ),
+    (
+        "A289-redis-by-tag",
+        r"\(A289\)\.\n      redis:\n        image: redis:7\.4-alpine@sha256:[0-9a-f]{64}",
+        "(A289).\n      redis:\n        image: redis:7.4-alpine",
+        "не как у tests",
+    ),
+    (
+        "A100-redis-by-tag",
+        r"redis:7\.4-alpine@sha256:[0-9a-f]{64}",
+        "redis:7.4-alpine",
+        "Redis: образ",
+    ),
+    (
+        "redis-no-password",
+        r"command: redis-server --requirepass \S+",
+        "command: redis-server",
+        "command",
+    ),
+    (
+        "redis-ready-without-e",
+        r"redis-cli -h 127\.0\.0\.1 -e ping",
+        "redis-cli -h 127.0.0.1 ping",
+        "-e",
+    ),
+    ("redis-ready-or-true", r'-e ping"', '-e ping || true"', "-e ping"),
+    ("redis-ready-no-auth", r"\n {10}REDISCLI_AUTH: \S+", "", "REDISCLI_AUTH"),
     (
         "A289-step-back-in-tests",
         r"(?=\n  # Ход 3 «Скорости CI»)",

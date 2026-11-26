@@ -10,11 +10,15 @@ import re
 import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
 
 import api_probes as probes
 import dbtools
 import httpx
 import pytest
+import redis_fakes
+import redistools
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from ai_geo_audit.api import contract, health
@@ -53,12 +57,13 @@ async def silent_db() -> AsyncIterator[Silent]:
 @dataclass
 class Relay:
     """Посредник TCP перед тестовой базой: по флагу перестаёт пересылать байты, соединений не
-    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; `delay` — задержка нового
-    соединения до первой пересылки; считает открытые соединения."""
+    рвёт; с `freeze_on` замерзает сам, когда клиент шлёт эти байты; с `cut_on` — рвёт соединение;
+    `delay` — задержка нового соединения до первой пересылки; считает открытые соединения."""
 
     url: str = ""
     frozen: bool = False
     freeze_on: bytes = b""
+    cut_on: bytes = b""
     delay: float = 0.0
     open: int = 0
 
@@ -74,6 +79,8 @@ async def relay() -> AsyncIterator[Relay]:
     ) -> None:
         with contextlib.suppress(ConnectionError):
             while data := await reader.read(65536):
+                if watch and found.cut_on and found.cut_on in data:
+                    break
                 if watch and found.freeze_on and found.freeze_on in data:
                     found.frozen = True
                 while found.frozen:  # noqa: ASYNC110 -- проба держит ответ, пока поднят флаг
@@ -221,6 +228,51 @@ async def test_a40_one_deadline_covers_the_connection_and_the_query(
     assert [(r["error"], r["limit_seconds"]) for r in records] == [("TimeoutError", 1.0)]
 
 
+async def test_a40_failure_before_the_limit_keeps_its_own_class(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], relay: Relay
+) -> None:
+    """A40: соединение с базой рвётся на `SELECT 1` раньше предела — 503 и запись WARNING с классом
+    сбоя, а не с `TimeoutError`: срок не вышел."""
+    probes.use_database(monkeypatch, relay.url)
+    relay.cut_on = b"SELECT 1"
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http, asyncio.timeout(5):
+        response = await http.get("/api/health")
+    assert (response.status_code, response.json()["kind"]) == (503, "unavailable")
+    records = list(warnings_of(capsys.readouterr().err))
+    assert [(r["message"], r["error"]) for r in records] == [
+        ("здоровье: база не ответила", "DBAPIError")
+    ]
+
+
+async def test_a40_health_connection_is_named_in_the_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A40: соединение здоровья видно в `pg_stat_activity` своим именем — `ai-geo-audit:health`."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    who = "SELECT application_name FROM pg_stat_activity WHERE pid = pg_backend_pid()"
+    async with health._engine().connect() as connection:
+        assert await connection.scalar(text(who)) == "ai-geo-audit:health"
+
+
+@pytest.mark.parametrize("opened", [False, True], ids=["не открыто", "закрыто"])
+async def test_a40_cut_of_a_missing_connection_is_harmless(
+    monkeypatch: pytest.MonkeyPatch, opened: bool
+) -> None:
+    """A40: обрыв в срок, когда рвать нечего — соединение ещё не открыто или уже закрыто, — не
+    падает: исключение обратного вызова ушло бы мимо ответа."""
+    probes.use_database(monkeypatch, dbtools.own_url())
+    connection = health._engine().connect()
+    if opened:
+        await connection.start()
+        await connection.close()
+    cut = health._Cut(connection)
+    assert cut.fired is False
+    cut()
+    assert cut.fired is True
+
+
 async def test_a41_requests_without_database_need_do_not_touch_it(
     monkeypatch: pytest.MonkeyPatch, silent_db: Silent
 ) -> None:
@@ -322,3 +374,129 @@ async def test_a43_every_answer_is_its_sample(monkeypatch: pytest.MonkeyPatch, k
     if kind == "invalid":
         assert [sorted(item) for item in body["errors"]] == [sorted(sample["errors_item_keys"])]
     assert body == sample["body"]
+
+
+# --- A243: здоровье видит Redis ------------------------------------------------------------------
+
+
+def wrong_password_url() -> str:
+    """Адрес Redis теста с неверным паролем: сервер тот же, пароль — тестовое значение."""
+    parts = urlsplit(redistools.current_url())
+    netloc = ":" + redis_fakes.PASSWORD + f"@{parts.hostname}:{parts.port}"
+    return urlunsplit(parts._replace(netloc=netloc))
+
+
+async def test_a243_health_sees_redis_by_a_probe_write(
+    monkeypatch: pytest.MonkeyPatch, redis_url: str
+) -> None:
+    """A243: база и Redis теста отвечают — 200 `{"status": "ok"}`, как A38; проба Redis — запись
+    своего ключа со сроком 60 с, а не `PING`."""
+    probes.use_database(monkeypatch, dbtools.own_url(), redis=redis_url)
+    async with probes.client(probes.build()) as http:
+        response = await http.get("/api/health")
+    assert (response.status_code, response.json()) == (200, {"status": "ok"})
+    stand = redistools.client(redistools.session_db())
+    assert stand.get(health.REDIS_PROBE_KEY) == b"1"
+    assert 0 < stand.pttl(health.REDIS_PROBE_KEY) <= health.REDIS_PROBE_TTL_MS == 60_000
+
+
+@pytest.mark.parametrize(
+    ("case", "error"),
+    [
+        ("closed", "ConnectionRefusedError"),
+        ("password", "AuthenticationError"),
+        ("full", "OutOfMemoryError"),
+    ],
+)
+async def test_a243_redis_refusal_is_unavailable_with_one_record(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], case: str, error: str
+) -> None:
+    """A243: порт Redis закрыт; в адресе неверный пароль; Redis полон — рукопожатие и `PING`
+    отвечают, на запись — `OOM` (`noeviction`): 503 тело `unavailable` образца договора, одна
+    запись WARNING «здоровье: Redis не ответил» с классом; ни адреса, ни пароля нет ни в ответе,
+    ни в записи."""
+    with redis_fakes.running(replies=redis_fakes.FULL) as full:
+        urls = {
+            "closed": redis_fakes.url(redis_fakes.closed_port()),
+            "password": wrong_password_url(),
+            "full": full.url,
+        }
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=urls[case])
+        app = probes.build()
+        log_setup.setup_logging(fmt="json")
+        async with probes.client(app) as http:
+            response = await http.get("/api/health")
+        commands = list(full.commands)
+    err = capsys.readouterr().err
+    records = list(warnings_of(err))
+    assert (response.status_code, response.json()) == (503, UNAVAILABLE["body"])
+    assert [(r["message"], r["error"]) for r in records] == [("здоровье: Redis не ответил", error)]
+    said = response.text + err
+    assert redis_fakes.PASSWORD not in said and f":{urlsplit(urls[case]).port}" not in said
+    assert (b"SET" in commands, b"PING" in commands) == (
+        (True, False) if case == "full" else (False, False)
+    )
+
+
+async def test_a243_silent_redis_is_cut_by_the_limit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A243: Redis теста принимает соединение и молчит, граница подменена на 0,5 с — 503 не позже
+    1 с, `error` — `TimeoutError`, `limit_seconds` — 0.5."""
+    with redis_fakes.running(silent=True) as silent:
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=silent.url)
+        monkeypatch.setattr(health, "HEALTH_DB_LIMIT_SECONDS", 0.5)
+        app = probes.build()
+        log_setup.setup_logging(fmt="json")
+        async with probes.client(app) as http:
+            started = time.monotonic()
+            response = await asyncio.wait_for(http.get("/api/health"), 2)
+            took = time.monotonic() - started
+    records = list(warnings_of(capsys.readouterr().err))
+    assert (response.status_code, response.json()["kind"]) == (503, "unavailable")
+    assert took <= 1.0, took
+    assert [(r["message"], r["error"], r["limit_seconds"]) for r in records] == [
+        ("здоровье: Redis не ответил", "TimeoutError", 0.5)
+    ]
+
+
+async def test_a243_lost_probe_write_is_not_repeated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A243 (находка 14): Redis обрывает соединение на записи пробы, вторую бы принял — 503 и одна
+    запись: повторов у здоровья нет, граница одна на базу и Redis."""
+    replies = {**redis_fakes.FULL, b"SET": [redis_fakes.LOST, b"+OK\r\n"]}
+    with redis_fakes.running(replies=replies) as fake:
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=fake.url)
+        async with probes.client(probes.build()) as http:
+            response = await http.get("/api/health")
+        writes = fake.commands.count(b"SET")
+    assert (response.status_code, writes) == (503, 1)
+
+
+async def test_a243_database_and_redis_down_is_one_answer_and_two_records(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A243: база и Redis лежат разом — один ответ 503 и две записи: база и Redis."""
+    closed = redis_fakes.url(redis_fakes.closed_port())
+    probes.use_database(monkeypatch, probes.closed_port_url(), redis=closed)
+    app = probes.build()
+    log_setup.setup_logging(fmt="json")
+    async with probes.client(app) as http:
+        response = await http.get("/api/health")
+    records = list(warnings_of(capsys.readouterr().err))
+    assert (response.status_code, response.json()) == (503, UNAVAILABLE["body"])
+    assert [(r["message"], r["error"]) for r in records] == [
+        ("здоровье: база не ответила", "ConnectionRefusedError"),
+        ("здоровье: Redis не ответил", "ConnectionRefusedError"),
+    ]
+
+
+async def test_a243_paths_without_a_pass_do_not_touch_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A243: без пропуска `GET /api/nope` — 403, Redis теста не принял ни одного соединения."""
+    with redis_fakes.running(replies=redis_fakes.FULL) as fake:
+        probes.use_database(monkeypatch, dbtools.own_url(), redis=fake.url)
+        async with probes.client(probes.build()) as http:
+            response = await http.get("/api/nope")
+        accepted = fake.accepted
+    assert (response.status_code, accepted) == (403, 0)
