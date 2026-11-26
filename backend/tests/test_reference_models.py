@@ -14,7 +14,10 @@ import pytest
 from dbtools import public_tables, refused_by, version
 from reference_sample import SAMPLE, SAMPLE2, insert_revision
 
-TABLES = {"reference_revisions", "reference_checks", "reference_params"}
+from ai_geo_audit.reference.models import ReferenceCheck, ReferenceParam, ReferenceRevision
+
+#: Таблицы справочника — по именам моделей: тест следит за моделями, а не за своим списком.
+TABLES = {model.__tablename__ for model in (ReferenceRevision, ReferenceCheck, ReferenceParam)}
 #: Функция и триггеры неизменности: в метаданных моделей их нет, их несёт только ревизия.
 FROZEN_OBJECTS = (
     "SELECT 'функция ' || proname FROM pg_proc WHERE proname = 'reference_frozen' UNION ALL"
