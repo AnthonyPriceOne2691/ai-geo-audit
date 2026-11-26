@@ -38,6 +38,12 @@ CHECK = ("python", "-m", "ai_geo_audit.ops.config_check")
 GOOD = "Конфиг процесса «{}» годен, режим prod: проверено имён: 19\n"
 WHY = "DB_POOL_SIZE — Input should be less than or equal to 50"
 REFUSAL = f"Процесс «migrate» не стартует, негодные настройки:\n  {WHY}\n"
+#: Значение подмены: число, которого нет в шуме compose — в имени разового контейнера 12 знаков hex.
+VALUE = "4000000001"
+#: Шум `compose run` в stderr — проба живого оракула 2026-11-26T13:16:40Z: строки создания
+#: разового контейнера до вывода команды.
+NOISE = " Container {0}-{1}-run-9dfe187d7bbf Creating \n"
+NOISE += " Container {0}-{1}-run-9dfe187d7bbf Created\n"
 LINE = (
     "api и migrate — годен, режим prod; отказ импорта у migrate — код 1, без Traceback и "
     "значения; снимок соседа: общих 5, перезапусков 0, коды прежние; пропало 0, новых 0"
@@ -46,13 +52,14 @@ LINE = (
 
 class Stack:
     """Подставной `docker` прогона: разбор конфига отвечает по ключу — `api`, `migrate` или
-    `refusal` (подмена `-e`); `ps` стека — имена по очереди; после отказа импорта машина
-    переходит в состояние `after`."""
+    `refusal` (подмена `-e`): с кодом 0 — в stdout, иначе — в stderr, как команда, а ответ из
+    трёх частей — код, stdout и stderr как есть; у `run` в stderr сначала шум compose; `ps` стека —
+    имена по очереди; после отказа импорта машина переходит в состояние `after`."""
 
     def __init__(
         self,
         machine: FakeRunner,
-        answers: dict[str, tuple[int, str]],
+        answers: dict[str, tuple[Any, ...]],
         after: list[str] | None,
         names: list[list[str]],
     ) -> None:
@@ -64,10 +71,14 @@ class Stack:
     ) -> subprocess.CompletedProcess[bytes]:
         self.calls.append((args, env))
         key = "refusal" if "-e" in args else args[-1]
-        code, text = self.answers[key]
+        code, text, *given = self.answers[key]
         if key == "refusal" and self.after is not None:
             self.machine.become(self.after)
-        return subprocess.CompletedProcess(["docker"], code, text.encode(), b"")
+        noise = NOISE.format(NAME, args[-1]) if "run" in args else ""
+        out, err = (text, noise) if code == 0 else ("", noise + text)
+        if given:
+            out, err = text, given[0]
+        return subprocess.CompletedProcess(["docker"], code, out.encode(), err.encode())
 
     def __call__(self, *args: str, **_kw: Any) -> str:
         label = f"label=com.docker.compose.project={NAME}"
@@ -97,7 +108,7 @@ def run_of(step: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Callable[..., S
         after: list[str] | None = None,
         names: tuple[list[str], list[str]] = (NAMES, NAMES),
         codes: tuple[int, int] = (200, 200),
-        **answers: tuple[int, str],
+        **answers: tuple[Any, ...],
     ) -> SimpleNamespace:
         lines = STACK + rec.server_machine() + rec.ours() if machine is None else machine
         runner = FakeRunner(lines)
@@ -136,8 +147,8 @@ def test_a186_a189_snapshot_config_check_and_the_stack_untouched(
     ]
     for args, env in run.docker.calls:
         assert args[:3] == ("compose", "-p", NAME) and env["KEEP"] == "yes"
-        assert not [arg for arg in args if "777" in arg]
-    assert [env.get("DB_POOL_SIZE") for _, env in run.docker.calls] == [None, None, "777"]
+        assert not [arg for arg in args if VALUE in arg]
+    assert [env.get("DB_POOL_SIZE") for _, env in run.docker.calls] == [None, None, VALUE]
     assert run.asked == [f"http://127.0.0.1:{PORT}/"] * 2
 
 
@@ -150,15 +161,24 @@ LEFT = [*STACK, rec.inspect_line(ONE_OFF, NAME, status="exited", health=None)]
 API = f"{NAME}-api-1"
 RESTARTED = [rec.vary(line, restarts=1) if f'"/{API}"' in line else line for line in STACK]
 CASES: list[tuple[str, dict[str, Any], str]] = [
-    ("api-код", {"api": (1, GOOD.format("api"))}, "api: код 1 — нет «годен, режим prod»"),
-    ("api-не-бой", {"api": (0, GOOD.format("api").replace("prod", "dev"))}, "api: код 0 — нет"),
-    ("migrate-чужой", {"migrate": (0, GOOD.format("api"))}, "migrate: код 0 — нет «годен"),
+    ("api-код", {"api": (1, GOOD.format("api"))}, "api: код 1, вывод — не «годен, режим prod»"),
+    (
+        "код-при-годном",
+        {"migrate": (1, GOOD.format("migrate"), "Error response from daemon: removal\n")},
+        "migrate: код 1, вывод — годен, режим prod",
+    ),
+    (
+        "api-не-бой",
+        {"api": (0, GOOD.format("api").replace("prod", "dev"))},
+        "api: код 0, вывод — не «годен",
+    ),
+    ("migrate-чужой", {"migrate": (0, GOOD.format("api"))}, "migrate: код 0, вывод — не «годен"),
     ("отказ-код-0", {"refusal": (0, REFUSAL)}, "отказ импорта DB_POOL_SIZE: код не 1"),
     ("без-причины", {"refusal": (1, REFUSAL.replace(WHY, "что-то"))}, f"нет «{WHY}»"),
     ("процесс", {"refusal": (1, REFUSAL.replace("«migrate»", "«api»"))}, "процесс не назван"),
     ("Traceback", {"refusal": (1, "Traceback (most recent call last):\n" + REFUSAL)}, "Traceback"),
-    ("input_value", {"refusal": (1, REFUSAL + "input_value='777'\n")}, "input_value в выводе"),
-    ("значение", {"refusal": (1, REFUSAL + "получено 777\n")}, "значение подмены в выводе"),
+    ("input_value", {"refusal": (1, REFUSAL + f"input_value='{VALUE}'\n")}, "input_value в выводе"),
+    ("значение", {"refusal": (1, REFUSAL + f"получено {VALUE}\n")}, "значение подмены в выводе"),
     ("секрет", {"refusal": (1, REFUSAL + INVENTED + "\n")}, "секрет в выводе"),
     (
         "стек-не-виден",
@@ -198,7 +218,7 @@ def test_a186_a189_step_red(
     run = run_of(**kwargs)
     with pytest.raises(compose_mod.StepError, match=re.escape(why)) as red:
         step.step_deploy_on_stack(run)
-    assert "777" not in str(red.value) and INVENTED not in str(red.value)
+    assert VALUE not in str(red.value) and INVENTED not in str(red.value)
 
 
 def test_a186_foreign_containers_of_the_machine_are_not_judged_by_the_step(
