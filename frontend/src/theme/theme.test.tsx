@@ -11,7 +11,9 @@ import {
   Checkbox,
   Container,
   DEFAULT_THEME,
+  Paper,
   Radio,
+  SegmentedControl,
   Table,
   Tabs,
   Text,
@@ -27,8 +29,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { contrast, inGamut } from '../test/contrast';
 import { renderWithProviders } from '../test/render';
 
-import { cssVariablesResolver, theme, variantColorResolver } from './theme';
-import { SCHEMES, cssVar, parseBlocks, schemeColors } from './tokens';
+import { cssVariablesResolver, neutralStepsResolver, theme, variantColorResolver } from './theme';
+import { SCHEMES, cssVar, parseBlocks, schemeColors, type Scheme } from './tokens';
 
 const TOKENS = join(dirname(fileURLToPath(import.meta.url)), 'tokens.css');
 const blocks = parseBlocks(readFileSync(TOKENS, 'utf8'));
@@ -204,6 +206,158 @@ describe('роли Mantine', () => {
     for (const one of [...others, input('filled', 'red')]) {
       expect(variantColorResolver(one)).toEqual(defaultVariantColorsResolver(one));
     }
+  });
+});
+
+// Ступени нейтральных палитр Mantine → токен в той схеме, где библиотека их берёт (F11, таблица
+// ступеней спеки). Ступень на цвете библиотеки красила бы компонент мимо токенов.
+const STEP_TABLE: Readonly<Record<Scheme, Readonly<Record<string, string>>>> = {
+  light: {
+    'gray-0': 'sunken',
+    'gray-1': 'sunken',
+    'gray-2': 'line',
+    'gray-3': 'line',
+    'gray-4': 'edge',
+    'gray-5': 'faint',
+    'gray-6': 'faint',
+    'gray-7': 'soft',
+    'gray-8': 'ink',
+    'gray-9': 'ink',
+  },
+  dark: {
+    'dark-0': 'ink',
+    'dark-1': 'soft',
+    'dark-2': 'faint',
+    'dark-3': 'edge',
+    'dark-4': 'line',
+    'dark-5': 'tint',
+    'dark-6': 'surface',
+    'dark-7': 'bg',
+    'dark-8': 'sunken',
+    'dark-9': 'bg',
+  },
+};
+
+// Сочетания текста и фона у компонентов таблицы спеки — своим списком: «29 пар» не трогаются.
+const COMPONENT_PAIRS: readonly (readonly [string, string, number])[] = [
+  ['ink', 'surface', 4.5],
+  ['ink', 'tint', 4.5],
+  ['ink', 'sunken', 4.5],
+  ['faint', 'sunken', 4.5],
+  ['faint', 'tint', 4.5],
+  ['soft', 'sunken', 4.5],
+];
+
+/** Значение переменной в блоке схемы, который тема поставила на страницу. */
+function pageVar(scheme: Scheme, name: string): string {
+  const css = [...document.querySelectorAll('style[data-mantine-styles]')]
+    .map((style) => style.textContent ?? '')
+    .join('');
+  const block = new RegExp(`\\[data-mantine-color-scheme="${scheme}"\\][^{]*\\{([^}]*)\\}`);
+  const text = block.exec(css)?.[1] ?? '';
+  return new RegExp(`${name}:\\s*([^;]+)`).exec(text)?.[1]?.trim() ?? '';
+}
+
+/** Компоненты таблицы спеки без пропсов цвета. */
+function Components() {
+  return (
+    <>
+      <Card>Карточка</Card>
+      <Paper withBorder>Рамка</Paper>
+      <Table striped highlightOnHover>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Страница</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          <Table.Tr>
+            <Table.Td>Главная</Table.Td>
+          </Table.Tr>
+        </Table.Tbody>
+      </Table>
+      <SegmentedControl aria-label="Вид" data={['Все', 'Ошибки']} />
+    </>
+  );
+}
+
+function element(container: HTMLElement, selector: string): HTMLElement {
+  const found = container.querySelector<HTMLElement>(selector);
+  if (!found) throw new Error(`нет ${selector}`);
+  return found;
+}
+
+// Строки таблицы компонентов спеки, которые тема пишет в сам элемент — стилем или переменной.
+const ELEMENT_ROWS: readonly (readonly [string, (container: HTMLElement) => string, string])[] = [
+  ['Card — фон', (c) => element(c, '.mantine-Card-root').style.backgroundColor, 'surface'],
+  ['Table — шапка', (c) => element(c, 'thead').style.backgroundColor, 'sunken'],
+  ['Table — подписи колонок', (c) => element(c, 'th').style.color, 'faint'],
+  [
+    'Table — подсветка строки',
+    (c) => element(c, 'table').style.getPropertyValue('--table-hover-color'),
+    'tint',
+  ],
+  [
+    'Table — полоса строки',
+    (c) => element(c, 'table').style.getPropertyValue('--table-striped-color'),
+    'sunken',
+  ],
+  [
+    'переключатель — выбранное положение',
+    (c) => element(c, '[role="radiogroup"]').style.getPropertyValue('--sc-color'),
+    'surface',
+  ],
+  [
+    'переключатель — выбранная подпись',
+    (c) => element(c, '[role="radiogroup"]').style.getPropertyValue('--sc-label-color'),
+    'ink',
+  ],
+];
+
+// Строки, которые красят ступени палитр: ступень светлой и тёмной схемы → токен.
+const STEP_ROWS: readonly (readonly [string, string, string, string])[] = [
+  ['Paper с рамкой — рамка', 'gray-3', 'dark-4', 'line'],
+  ['Table — линии строк', 'gray-3', 'dark-4', 'line'],
+  ['переключатель — подложка', 'gray-1', 'dark-8', 'sunken'],
+  ['переключатель — подписи', 'gray-7', 'dark-1', 'soft'],
+  ['переключатель — разделители', 'gray-3', 'dark-4', 'line'],
+];
+
+describe('компоненты на токенах', () => {
+  it('F11: ступени нейтральных палитр — на токенах: таблица ступеней целиком', () => {
+    const resolved = neutralStepsResolver(merged);
+    expect(resolved.variables).toEqual({});
+    for (const scheme of SCHEMES) {
+      const want = Object.entries(STEP_TABLE[scheme]).map(([step, role]) => [
+        `--mantine-color-${step}`,
+        cssVar(role),
+      ]);
+      expect(resolved[scheme], `схема ${scheme}`).toEqual(Object.fromEntries(want));
+    }
+    const roles = SCHEMES.flatMap((scheme) => Object.values(STEP_TABLE[scheme]));
+    expect(roles.filter((role) => !(role in colors.light))).toEqual([]);
+  });
+
+  it.each(ELEMENT_ROWS)('F11: %s — тема пишет токен в элемент', (_row, read, role) => {
+    const { container } = renderWithProviders(<Components />);
+    expect(read(container)).toBe(cssVar(role));
+  });
+
+  it.each(STEP_ROWS)('F11: %s — ступени %s и %s на странице — токен', (_r, light, dark, role) => {
+    renderWithProviders(<Components />);
+    const painted = [
+      pageVar('light', `--mantine-color-${light}`),
+      pageVar('dark', `--mantine-color-${dark}`),
+    ];
+    expect(painted).toEqual([cssVar(role), cssVar(role)]);
+  });
+
+  it.each(SCHEMES)('F11: схема %s — сочетания текста и фона компонентов ≥ 4,5 : 1', (scheme) => {
+    const low = COMPONENT_PAIRS.flatMap(([fg, bg, need]) => {
+      const ratio = contrast(colors[scheme][fg] ?? '', colors[scheme][bg] ?? '');
+      return ratio < need ? [`${fg} на ${bg}: ${comma(ratio.toFixed(2))}`] : [];
+    });
+    expect(low).toEqual([]);
   });
 });
 
