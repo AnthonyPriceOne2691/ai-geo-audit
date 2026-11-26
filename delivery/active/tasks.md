@@ -47,7 +47,7 @@
       739, лимит 789; полный набор 1903 из 1903; мера после коммита кода — 777 при пороге 1640.
 
 ## Slice 4 — наложение и правила (A181, первая и вторая строки)
-- [ ] T3: `docker-compose.prod.yml` — образы `${BACKEND_IMAGE:?…}` и `${WEB_IMAGE:?…}`,
+- [x] T3: `docker-compose.prod.yml` — образы `${BACKEND_IMAGE:?…}` и `${WEB_IMAGE:?…}`,
       `pull_policy: never`, у migrate и api — `APP_ENV: prod` и `LOG_FORMAT: json`;
       `ops/stack_prod.py` — `image-from-server` и `prod-mode` после `limits`, `journald` и
       `redis-memory`, пробы по одной на случай; `ops/stack_rules.py` — `image-digest` пропускает
@@ -60,7 +60,11 @@
       Сделано 2026-11-26: красное `aa4d71a` (54 красных) → зелёное `b6354a1`: наложение — образы
       из файла сервера, `pull_policy: never`, `build: !reset null`, бой литералами; хук
       `check-yaml` — наложение синтаксисом (decisions); полный набор 1920 из 1920. Приёмка среза 3
-      — находка 2 и мелочи 1, 2, 4 тестами (`10f2a43`), мелочи 3 и 4 — decisions.
+      — находка 2 и мелочи 1, 2, 4 тестами (`10f2a43`), мелочи 3 и 4 — decisions. Живые прогоны —
+      красное `0e8f022` (4 красных) → зелёное `987b74a`: `scripts/deploy_live.py` шагом джобы
+      `stack` от root на корнях одноразовой машины, вывод без значений; подъём стека с файлом
+      `env-init` — в 6а-3 или 6в (decisions). Оракул на `b6354a1` — шагов 42, красных 0, A89 —
+      «правил 31, нарушений 0»; полный набор 1928 из 1928; мера после среза — 1228 при пороге 2010.
 
 ## Slice 5 — разбор конфига (A189, первая строка)
 - [ ] T4: `config/check.py` — `python -m ai_geo_audit.config.check <процесс>`: `ValidationError`
