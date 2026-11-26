@@ -1,4 +1,5 @@
-"""Выдуманный справочник тестов — Ф и Ф2 спеки Ч2.1 — и помощник сырых вставок редакции.
+"""Выдуманный справочник тестов — Ф и Ф2 спеки Ч2.1: файл, манифест к нему и помощник сырых
+вставок редакции.
 
 Коды — 90–99: в настоящем справочнике таких нет (A303). Тексты — слова-заглушки. Записи командой
 до Ч2.1б нет: редакции тестов ставит помощник сырыми вставками, мимо кода сервиса.
@@ -7,17 +8,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import asyncpg
 
+from ai_geo_audit.reference.file import UNITS
+from ai_geo_audit.reference.models import Unit
+
 #: Дата снимка Ф — как в примерах спеки.
 SNAPSHOT = date(2026, 11, 18)
-#: Пределы единицы порога Ф: `s` — 0.1–60, как в таблице единиц спеки.
-BOUNDS = {"s": (Decimal("0.1"), Decimal("60"))}
 #: Поля строки справочника в порядке колонок `reference_checks` после места.
 FIELDS = (
     "code",
@@ -114,7 +118,38 @@ async def insert_revision(
     for position, item in enumerate(rows, 1):
         check = await conn.fetchval(_CHECK, revision, position, *(item[f] for f in FIELDS))
         for param in item["params"]:
-            low, high = BOUNDS[param["unit"]]
+            low, high = UNITS[Unit(param["unit"])]
             values = (param["name"], param["value"], low, high, param["unit"])
             await conn.execute(_PARAM, check, *values)
     return revision
+
+
+def document(rows: Sequence[Mapping[str, Any]] = SAMPLE, **top: Any) -> dict[str, Any]:
+    """Документ формата 1: строки (по умолчанию Ф), снимок Ф; правки верхнего уровня — `top`."""
+    return {"format": 1, "source_date": SNAPSHOT.isoformat(), "rows": list(rows)} | top
+
+
+def _number(value: object) -> int | float:
+    """`Decimal` в тексте JSON — числом: целое без точки, дробное как есть."""
+    if not isinstance(value, Decimal):
+        raise TypeError(type(value).__name__)
+    return int(value) if value == value.to_integral_value() else float(value)
+
+
+def dump(doc: object) -> bytes:
+    """Текст JSON в UTF-8, по полю на строку; кириллица — как есть."""
+    return json.dumps(doc, ensure_ascii=False, indent=1, default=_number).encode()
+
+
+def manifest_of(data: bytes, rows: int, **changes: Any) -> dict[str, Any]:
+    """Манифест байтов файла: формат 1, число строк, sha256, дата снимка; правки — `changes`."""
+    sha = hashlib.sha256(data).hexdigest()
+    return {"format": 1, "rows": rows, "sha256": sha, "source_date": SNAPSHOT.isoformat()} | changes
+
+
+def files(tmp_path: Path, data: bytes, manifest: Mapping[str, Any]) -> tuple[str, str]:
+    """Файл и манифест во временном каталоге теста — пути строками для аргументов команды."""
+    path, spec = tmp_path / "reference.json", tmp_path / "manifest.json"
+    path.write_bytes(data)
+    spec.write_text(json.dumps(manifest), encoding="utf-8")
+    return str(path), str(spec)
