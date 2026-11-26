@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 
 #: Процессы проверки старта (`startup_checks.Process`): её модуль грузит конфиг, и до `try` его не
 #: импортировать — список свой, равенство держит тест.
-PROCESSES: tuple[Process, ...] = ("api", "worker", "migrate")
-USAGE = "использование: python -m ai_geo_audit.ops.config_check api|worker|migrate"
+PROCESSES: tuple[Process, ...] = ("api", "worker", "migrate", "reference")
+USAGE = "использование: python -m ai_geo_audit.ops.config_check api|worker|migrate|reference"
 
 
 def _process(argv: Sequence[str]) -> Process | None:
