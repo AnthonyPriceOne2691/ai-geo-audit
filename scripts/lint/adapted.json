@@ -39,5 +39,9 @@
   ".github/workflows/main-guard.yml": {
     "reason": "права токена и раннер: запись — только у джобы alert",
     "changed": "сверху `permissions: contents: read`, `issues: write` — у джобы `alert` (A100); раннер `ubuntu-24.04` вместо `ubuntu-latest`; условие, триггер и тело тревоги — дословно (A117)"
+  },
+  ".dependency-cruiser.cjs": {
+    "reason": "правила шаблона — слои бэкенда (`models`, `services`, `api`): у фронта они не совпали бы ни с одним файлом, а канон велит привести пути к своим слоям; гейт зовёт depcruise из корня, пути — `^frontend/src/…` (В1б, A384)",
+    "changed": "вместо `models-is-leaf` и `services-no-web` — `theme-below-pages` (тема берёт только тему, `words.ts` и `brand.ts`) и `no-test-helpers-in-app` (код приложения не берёт помощников тестов из `src/test/`), перед ними — комментарий об адаптации; `no-circular`, `options` (кандидаты tsConfig, `tsPreCompilationDeps`, `exclude`) и шапка — дословно cqg@3.30"
   }
 }

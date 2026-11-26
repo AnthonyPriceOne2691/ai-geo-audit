@@ -9,7 +9,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** plan
+- **phase:** implement
   <!-- Полоса фронта — слово владельца 2026-11-26T08:53:28Z «да на всё» на список ведущей:
        «Схема» → В1б → «Клиент API и связь» → 4г. Черновика 19.11 у В1б нет: спека и план
        написаны исполнителем 2026-11-26 на main `b4fd595` по спеке В1а, объявлениям
@@ -35,6 +35,12 @@
        (`deps_audit_baseline.txt`, `js_total` 0 → 11) с `by=human:owner` и этим временем вносит
        исполнитель на срезе, где снимается аудит; на каждом срезе вторая проверяющая сверяет
        диффом снимков против main, что вырос только `js_total`. -->
+- **new_dependency:** jscpd reason=дубли кода TS и Python — гейт дублей (CQG §2.1); 5.4.3 от 2026-11-08, без скриптов установки by=human:owner at=2026-11-26T10:54Z
+- **new_dependency:** dependency-cruiser reason=направление зависимостей — TS-половина гейта слоёв (CQG §3.6); 18.7.2 от 2026-11-02, 18.9.0 моложе 14 суток by=human:owner at=2026-11-26T10:54Z
+- **new_dependency:** knip reason=мёртвый код — TS-половина гейта (CQG §3.8); 6.45.1 от 2026-11-11, 6.48.0 моложе 14 суток by=human:owner at=2026-11-26T10:54Z
+- **new_dependency:** @stryker-mutator/core reason=порчи TS-половины гейта мутаций (CQG §3.7); 10.1.1 от 2026-10-23 by=human:owner at=2026-11-26T10:54Z
+- **new_dependency:** @stryker-mutator/vitest-runner reason=раннер Stryker на тестах Vitest — единственный; 10.1.1 от 2026-10-23 by=human:owner at=2026-11-26T10:54Z
+- **new_dependency:** fast-check reason=свойства в тестах Vitest (A392); 4.10.2 от 2026-09-19, 4.11.0 моложе 14 суток by=human:owner at=2026-11-26T10:54Z
 - **shape-oracles:** cqg-deployed
   <!-- Половина Python — с В1а; TS-половина — эта поставка. -->
 - **behavior-oracles:** tests-present — pytest: контракт CI и хуков, мета-гейт; Vitest: F17, правило З14, свойство fast-check; гейты на копиях с нарушением
@@ -56,7 +62,7 @@
 - **model_surface:** n/a reason=модель продукт не вызывает; поверхность объявляется с первым вызовом модели — волна В3 (§14)
 - **rule_enforcers:** n/a reason=model_surface не объявлена
 - **canon_drift_waiver:** no
-- **baseline_growth_waiver:** no
+- **baseline_growth_waiver:** reason=deps_audit_baseline.txt js_total 0 → 11 — JS-аудит фронта включается этой поставкой; снимок A389 — 11 умеренных dev-зависимостей, боевых 0 by=human:owner at=2026-11-26T12:05Z
 - **observability:** 1
 - **observe_signal:** первые запросы и push в main после слияния — `quality` зелёный: цепочка фронта идёт, у каждой TS-половины «просмотрено N» > 0, доктор — DEAD 0; первая поставка фронта после В1б проходит под CI без чистого клона ведущей «рукой»
 - **observe_until:** pending — назначается на сдаче

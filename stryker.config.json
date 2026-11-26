@@ -1,0 +1,20 @@
+{
+  "testRunner": "vitest",
+  "vitest": { "configFile": "frontend/vite.config.ts" },
+  "mutate": [
+    "frontend/src/**/*.{ts,tsx}",
+    "!frontend/src/**/*.test.{ts,tsx}",
+    "!frontend/src/test/**",
+    "!frontend/src/main.tsx"
+  ],
+  "ignorePatterns": [
+    "/*",
+    "!/frontend",
+    "/frontend/dist",
+    "/frontend/coverage",
+    "/frontend/reports"
+  ],
+  "concurrency": 4,
+  "tempDirName": "frontend/.stryker-tmp",
+  "jsonReporter": { "fileName": "frontend/reports/mutation/mutation.json" }
+}

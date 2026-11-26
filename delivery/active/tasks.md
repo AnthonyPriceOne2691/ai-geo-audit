@@ -19,9 +19,16 @@ L135); «сказать до сдачи» — 2300, предел — 2500. Ме�
       среза 1: JS-аудит с Stryker — 11 умеренных против снимка A389 «7».
 
 ## Slice 1 — пакеты и конфиги
-- [ ] T1: шесть пакетов точными версиями, `approved-packages.json` и `new_dependency` одной правкой;
+- [x] T1: шесть пакетов точными версиями, `approved-packages.json` и `new_dependency` одной правкой;
       `.dependency-cruiser.cjs`, конфиги knip, Stryker и jscpd. Тесты — F17 и снимок `npm audit`
       (A389, A394), сначала красные.
+      Итог: пакеты — `npm install -D --save-exact` 2026-11-26T13:12:30Z: lock +259 записей (222
+      пары), все старше отсечки, самая свежая — `graceful-fs` 4.2.12 (2026-11-12T12:06Z), скриптов
+      установки нет; список одобренных и `new_dependency` — одной правкой. F17 и F4 (следы Stryker) —
+      красные, затем зелёные. Конфиги: `.dependency-cruiser.cjs` и `stryker.config.json` в корне,
+      `setupFiles` от файла конфига Vite; knip и jscpd — без своих. Снимок JS-аудита — `js_total`
+      0 → 11 со строкой `baseline_growth_waiver`; ратчет без неё — красный. Мера — 45 (`net_loc`
+      гейта; `.dependency-cruiser.cjs` — конфиг контура, гейт его не считает: `delivery_base.py:140`).
 
 ## Slice 2 — гейты и хуки
 - [ ] T2: записи `not-applicable.json` «поставка В1б» сняты; хуки TS; снимки `--generate`;
