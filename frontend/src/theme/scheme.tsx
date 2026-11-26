@@ -38,7 +38,8 @@ function isChoice(value: string): value is MantineColorScheme {
 
 /** Переключатель «Светлая / Тёмная / Как в системе» — сегментами, как в образце владельца. Пропса
  *  `color` нет: он красит выбранную подпись белым (`autoContrast`), в светлой схеме — белое на
- *  белом. Повторный выбор того же положения ничего не меняет. */
+ *  белом. Повторный выбор того же положения ничего не меняет: Mantine зовёт `onChange` только по
+ *  событию `change` радиокнопки, а у выбранного положения его нет (тест F19). */
 export function SchemeSwitch() {
   const { colorScheme, setColorScheme } = useMantineColorScheme();
   const { scheme } = words;
@@ -48,7 +49,7 @@ export function SchemeSwitch() {
       value={colorScheme}
       data={CHOICES.map((choice) => ({ value: choice, label: scheme[choice] }))}
       onChange={(value) => {
-        if (value === colorScheme || !isChoice(value)) return;
+        if (!isChoice(value)) return;
         changeScheme(() => {
           setColorScheme(value);
         });
