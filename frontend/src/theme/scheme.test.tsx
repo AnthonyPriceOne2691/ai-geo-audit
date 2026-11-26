@@ -90,13 +90,15 @@ function runScript(): string | null {
 
 const scheme = () => document.documentElement.getAttribute(ATTRIBUTE);
 
-/** Переход документа, как в Chrome: смена — внутри обратного вызова; схема до и после него. */
+/** Переход документа, как в Chrome: смена — внутри обратного вызова. Снимок «после» браузер берёт
+ *  сразу по его возврату — к этому мигу на странице новая схема и новое положение переключателя. */
 function viewTransition() {
-  const seen: (string | null)[][] = [];
+  const seen: (string | null | undefined)[][] = [];
   const start = vi.fn((update: () => void) => {
     const before = scheme();
     update();
-    seen.push([before, scheme()]);
+    const active = document.querySelector('label[data-active]')?.textContent;
+    seen.push([before, scheme(), active]);
     const done = Promise.resolve();
     return {
       finished: done,
@@ -113,11 +115,12 @@ function choose(label: string) {
   fireEvent.click(screen.getByRole('radio', { name: label }));
 }
 
+// Ключ схемы после теста снимает обвязка (`src/test/setup.ts`) — здесь его не трогают: иначе её
+// уборку не держал бы ни один тест.
 afterEach(() => {
   restoreStorage();
   vi.unstubAllGlobals();
   Reflect.deleteProperty(document, 'startViewTransition');
-  window.localStorage.removeItem(SCHEME_KEY);
   document.documentElement.removeAttribute(ATTRIBUTE);
 });
 
@@ -206,7 +209,9 @@ describe('переключатель схемы', () => {
     renderWithProviders(<StubPage />);
     choose(words.scheme.dark);
     expect(start).toHaveBeenCalledTimes(1);
-    expect(seen).toEqual([['light', 'dark']]);
+    // Переключатель отрисован заново внутри перехода: иначе новый снимок вышел бы со старым
+    // положением, и бегунок доехал бы после перехода.
+    expect(seen).toEqual([['light', 'dark', words.scheme.dark]]);
   });
 
   it('F19: без перехода документа — мгновенно', () => {
