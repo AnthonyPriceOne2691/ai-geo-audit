@@ -165,12 +165,36 @@ def test_a304_order_and_threshold_changes_are_named(
     assert check(data) == (0, NL.join([GOOD.format(len(rows)), line, sign(data, 1), ""]), "")
 
 
-@pytest.mark.parametrize("data", [F, F.replace(b"3.25", b"3.250")], ids=["same", "3.250"])
+def test_a304_enum_changes_are_words_and_a_missing_share_is_a_dash(seed: Seed, check: Run) -> None:
+    """A304: активна 1 из Ф; у `91` в файле важность «Важно», область «все страницы», доля 10 —
+    перечисления называются словами, а не значениями, нет доли у сайта — «—»."""
+    seed({"rows": SAMPLE, "number": 1})
+    moved = {"importance": "important", "scope": "pages", "share_percent": Decimal("10")}
+    data = dump(document([SAMPLE[0] | moved, *SAMPLE[1:]]))
+    words = ["91 · важность: Критично → Важно", "91 · область: сайт → все страницы"]
+    lines = [GOOD.format(6), *words, "91 · доля: — → 10 %", sign(data, 1), ""]
+    assert check(data) == (0, NL.join(lines), "")
+
+
+def test_a304_revision_rows_are_read_by_position_not_by_insertion(seed: Seed, check: Run) -> None:
+    """A304: строки редакции 1 вставлены не по порядку мест — `91` на месте 2, `92` на месте 1:
+    `check` Ф называет порядок — строки редакции читаются по месту, а не по порядку вставки."""
+    seed({"rows": SAMPLE, "number": 1, "positions": [2, 1, 3, 4, 5, 6]})
+    lines = [GOOD.format(6), "порядок: строк на других местах 2", sign(F, 1), ""]
+    assert check(F) == (0, NL.join(lines), "")
+
+
+SHARES = F.replace(b'"share_percent": 10,', b'"share_percent": 10.0,')
+
+
+@pytest.mark.parametrize(
+    "data", [F, F.replace(b"3.25", b"3.250"), SHARES], ids=["same", "3.250", "share-10.0"]
+)
 def test_a304_a_file_equal_to_the_revision_has_no_changes(
     seed: Seed, check: Run, data: bytes
 ) -> None:
-    """A304: активна 1 из Ф; `check` Ф и Ф с записью `3.250` — «изменений нет: файл равен
-    редакции 1»: число сравнивается значением, а не записью."""
+    """A304: активна 1 из Ф; `check` Ф, Ф с записью порога `3.250` и Ф с долями `10.0` —
+    «изменений нет: файл равен редакции 1»: числа сравниваются значением, а не записью."""
     seed({"rows": SAMPLE, "number": 1})
     lines = [GOOD.format(6), "изменений нет: файл равен редакции 1", sign(data, 1), ""]
     assert check(data) == (0, NL.join(lines), "")

@@ -98,10 +98,11 @@ async def insert_revision(
     status: str = "active",
     source: str = "file",
     based_on: int | None = None,
+    positions: Sequence[int] | None = None,
 ) -> int:
-    """Редакция сырыми вставками: заголовок, строки по месту с 1, пороги с пределами единицы. У
-    файла sha256 и дата снимка выдуманные, у правки их нет; архивная — с `archived_at`. Возвращает
-    id редакции."""
+    """Редакция сырыми вставками: заголовок, строки по месту с 1 (`positions` — свои места, вставка
+    не по их порядку), пороги с пределами единицы. У файла sha256 и дата снимка выдуманные, у
+    правки их нет; архивная — с `archived_at`. Возвращает id редакции."""
     from_file = source == "file"
     revision: int = await conn.fetchval(
         _REVISION,
@@ -115,7 +116,7 @@ async def insert_revision(
         f"проба {number}" if from_file else "",
         datetime.now(UTC) if status == "archived" else None,
     )
-    for position, item in enumerate(rows, 1):
+    for position, item in zip(positions or range(1, len(rows) + 1), rows, strict=True):
         check = await conn.fetchval(_CHECK, revision, position, *(item[f] for f in FIELDS))
         for param in item["params"]:
             low, high = UNITS[Unit(param["unit"])]
