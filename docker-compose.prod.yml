@@ -16,8 +16,15 @@ services:
         tag: ai-geo-audit-db
 
   # Потолок очереди без вытеснения: полная очередь отказывает в записи явно, а не теряет задачи.
+  # Та же строка, что в основном файле, флаги — после `-`: пароль по-прежнему на входе (A89).
   redis:
-    command: ["redis-server", "--maxmemory", "100mb", "--maxmemory-policy", "noeviction"]
+    command:
+      - sh
+      - -c
+      - |
+        exec redis-server - --maxmemory 100mb --maxmemory-policy noeviction <<EOF
+        requirepass $$REDIS_PASSWORD
+        EOF
     mem_limit: 256m
     cpus: 0.5
     logging:

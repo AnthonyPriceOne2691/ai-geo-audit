@@ -32,7 +32,10 @@ from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError
 from stack_oracle_compose import cleanup as stack_cleanup
 from stack_oracle_docker import LIMITS, Docker
 from stack_oracle_hardening import HARDENING_STEPS
+from stack_oracle_redis import REDIS_STEPS
 from stack_oracle_roles import ROLE_STEPS
+from stack_oracle_search import FINAL_SEARCH, LIVE_SEARCH
+from stack_oracle_start import START_STEPS
 from stack_oracle_stop import STOP_STEPS
 from stack_oracle_web import WEB_BUILD_STEPS, WEB_STACK_STEPS
 
@@ -205,6 +208,8 @@ class Run:
         default_factory=lambda: f"{secrets.token_hex(6)}@{secrets.token_hex(6)}"
     )
     app_password: str = field(default_factory=lambda: secrets.token_hex(12))
+    #: Пароль очереди (A171): 24 знака hex — проверка старта в бою его принимает (A175).
+    redis_password: str = field(default_factory=lambda: secrets.token_hex(12))
 
     def __post_init__(self) -> None:
         """Выдуманные секреты — в маске исполнителя с созданием прогона, до его команд (A172)."""
@@ -214,7 +219,8 @@ class Run:
     def invented(self) -> tuple[str, ...]:
         """Выдуманные секреты прогона; пароль роли миграций — и в процентной записи."""
         encoded = quote(self.migrate_password, safe="")
-        return (self.password, self.jwt, self.migrate_password, encoded, self.app_password)
+        app, queue = self.app_password, self.redis_password
+        return (self.password, self.jwt, self.migrate_password, encoded, app, queue)
 
     @property
     def image(self) -> str:
@@ -377,7 +383,11 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     *HARDENING_STEPS,
     *STOP_STEPS,
     *ROLE_STEPS,
+    *START_STEPS,
+    *LIVE_SEARCH,
     *BREAKING_STEPS,
+    *REDIS_STEPS,
+    *FINAL_SEARCH,
 ]
 
 
