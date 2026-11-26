@@ -1,12 +1,14 @@
 """`python -m ai_geo_audit.reference check <файл|-> [--manifest <путь>]`: проверка файла справочника
 без записи (Ч2.1). Код 0 — годен, итог в вывод; 1 — отказ, причины в поток ошибок; 2 — не тот вызов.
-Файл и манифест — до базы: битый файл базы не касается (decisions). Журналы и крючки — до работы
-(L54, L55); негодную настройку вход ловит вокруг импорта (L30); класс отказа — в `reference.file`:
-под `python -m` модуль исполняется как `__main__` (L123). Непредвиденный сбой — строкой со своим
+Порядок: проверка старта; файл и манифест — до базы: битый файл базы не касается (decisions); затем
+«было — станет» против активной редакции и знак записи. Журналы и крючки — до работы (L54, L55);
+негодную настройку вход ловит вокруг импорта (L30); класс отказа — в `reference.file`: под
+`python -m` модуль исполняется как `__main__` (L123). Непредвиденный сбой — строкой со своим
 типом, без текста исключения: в нём бывает текст файла (L57, L118)."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,12 +19,18 @@ from ai_geo_audit.refusal import invalid_settings
 
 try:
     from ai_geo_audit import config
+    from ai_geo_audit.config.startup_checks import ConfigError, check_startup
     from ai_geo_audit.logs.setup import guard_process, setup_logging
-    from ai_geo_audit.reference import file, manifest
+    from ai_geo_audit.reference import file, manifest, store
+    from ai_geo_audit.reference.models import RevisionSource
+    from ai_geo_audit.storage import build_engine, session_scope
 except ValidationError as invalid:
     raise SystemExit(invalid_settings("reference", invalid)) from None
 
 USAGE = "использование: python -m ai_geo_audit.reference check <файл|-> [--manifest <путь>]"
+GONE = (
+    "строки справочника не удаляются — верните её в файл; снять проверку с аудитов — убрать её из"
+)
 
 
 def _args(argv: Sequence[str]) -> tuple[str, str | None] | None:
@@ -44,7 +52,11 @@ def main(argv: Sequence[str]) -> int:
     setup_logging()
     guard_process()
     try:
+        check_startup("reference")
         lines = _check(*args)
+    except ConfigError as refusal:
+        sys.stderr.write(f"{refusal}\n")
+        return 1
     except file.FileRefusedError as refused:
         sys.stderr.write("\n".join(refused.reasons) + "\n")
         return 1
@@ -56,7 +68,7 @@ def main(argv: Sequence[str]) -> int:
 
 
 def _check(source: str, manifest_path: str | None) -> list[str]:
-    """Файл и манифест до базы (A305–A308): в бою — только манифест из образа."""
+    """Файл и манифест до базы (A305–A308), затем база (A304, A312); в бою — манифест образа."""
     if manifest_path is not None and config.app.env == "prod":
         raise file.FileRefusedError(["в бою — только манифест из образа"])
     expected = manifest.load(Path(manifest_path)) if manifest_path else manifest.MANIFEST
@@ -65,7 +77,36 @@ def _check(source: str, manifest_path: str | None) -> list[str]:
     if why:
         raise file.FileRefusedError(why)
     rows, day = len(found.rows), found.source_date.isoformat()
-    return [f"файл годен: строк {rows}, снимок {day}; с манифестом совпадает"]
+    good = f"файл годен: строк {rows}, снимок {day}; с манифестом совпадает"
+    return [good, *asyncio.run(_against(found))]
+
+
+async def _against(found: file.ReferenceFile) -> list[str]:
+    """«Было — станет» против активной редакции, правки, которые запись отменит, и знак записи
+    `<sha256>@<номер>`; пропавшая строка — отказ без знака (A312). База не меняется."""
+    engine = build_engine("reference")
+    try:
+        async with session_scope(engine) as session:
+            try:
+                active = await store.active_revision(session)
+            except store.NotLoadedError:
+                return [f"новых строк {len(found.rows)}", f"{found.sha256}@0"]
+            rows = await store.revision_rows(session, active.id)
+            base = await store.last_file_revision(session, active.number)
+            edited = active.source is RevisionSource.EDIT and base is not None
+            old = await store.revision_rows(session, base.id) if edited and base else rows
+    finally:
+        await engine.dispose()
+    gone = store.missing(rows, found.rows)
+    if gone:
+        raise file.FileRefusedError([f"строки {code} нет в файле: {GONE} наборов" for code in gone])
+    edits = {key for key, _ in store.diff(old, rows)}
+    cancel = f"будут отменены правки редакции {active.number}: "
+    lines = [cancel + line if key in edits else line for key, line in store.diff(rows, found.rows)]
+    return [
+        *(lines or [f"изменений нет: файл равен редакции {active.number}"]),
+        f"{found.sha256}@{active.number}",
+    ]
 
 
 def _read(source: str) -> bytes:

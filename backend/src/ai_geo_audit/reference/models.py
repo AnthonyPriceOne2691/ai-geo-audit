@@ -77,6 +77,32 @@ class Unit(StrEnum):
     NUMBER = "number"
 
 
+#: Слова на выходе — одной таблицей: `check`, экран Ч2.4 и XLS Ч5.6 берут их отсюда (реестр
+#: интерфейса, Р94). Важность — ТЗ:116, охват — ТЗ:217, область — ТЗ:115; «сайт» — наше слово.
+WORDS: dict[str, str] = {
+    Importance.CRITICAL: "Критично",
+    Importance.IMPORTANT: "Важно",
+    Importance.LOW: "Низкий приоритет",
+    Coverage.FULL: "проверяет",
+    Coverage.PARTIAL: "частично",
+    Coverage.NO_DATA: "Нет данных",
+    Scope.SITE: "сайт",
+    Scope.PAGES: "все страницы",
+    Scope.SAMPLE: "выборка",
+}
+#: Единица порога в выводе: «3.25 с».
+UNIT_WORDS: dict[str, str] = {
+    Unit.SECONDS: "с",
+    Unit.MILLISECONDS: "мс",
+    Unit.MEGABYTES: "МБ",
+    Unit.PERCENT: "%",
+    Unit.CHARS: "знаков",
+    Unit.CLICKS: "кликов",
+    Unit.COUNT: "шт.",
+    Unit.NUMBER: "",
+}
+
+
 class ReferenceRevision(Base):
     """Заголовок редакции: номер, статус, источник и основа, файл, причина, время."""
 

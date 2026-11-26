@@ -28,7 +28,8 @@ MIN_DB_PASSWORD = 12
 #: Причина, когда драйвер и `urlsplit` читают адрес базы по-разному: без адреса и его кусков.
 DB_URL_UNENCODED_CHARS = "в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23"
 
-Process = Literal["api", "worker", "migrate"]
+#: `reference` — команда справочника (A310): сервиса в compose нет, идёт в контейнере api.
+Process = Literal["api", "worker", "migrate", "reference"]
 
 #: Роль базы у каждого процесса (A174): в бою адрес с чужой ролью не даёт старта. Те же имена
 #: заводит `deploy/db/roles.sql`; их равенство держит A179.
@@ -36,6 +37,7 @@ DB_ROLES: dict[Process, str] = {
     "migrate": "audit_migrate",
     "api": "audit_app",
     "worker": "audit_app",
+    "reference": "audit_app",
 }
 #: Причина чужой роли — с нужной ролью, без найденного имени: на месте имени бывает пароль.
 DB_ROLE_FOREIGN = "в адресе чужая роль базы — нужна {}"
@@ -47,6 +49,7 @@ _NEEDS: dict[Process, frozenset[str]] = {
     ),
     "worker": frozenset({"DATABASE_URL", "REDIS_URL", "KEYS_MASTER_KEY_FILE"}),
     "migrate": frozenset({"DATABASE_URL"}),
+    "reference": frozenset({"DATABASE_URL"}),
 }
 
 

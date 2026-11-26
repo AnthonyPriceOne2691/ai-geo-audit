@@ -17,6 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import dbtools
 import pytest
 from pydantic import ValidationError
 from reference_sample import SAMPLE, SAMPLE2, document, dump, files, manifest_of, row
@@ -50,10 +51,13 @@ P95 = R2 + "p95_ms вне пределов единицы s: 0.1–60"
 
 
 def quiet(monkeypatch: MP, calls: list[str] | None = None) -> None:
-    """Журналы и крючки процесса — заглушкой; `calls` пишет их порядок."""
+    """Журналы, крючки и проверка старта — заглушкой (их держит подпроцесс A310), `calls` пишет
+    их порядок; база команды — тестовая."""
     seen = calls if calls is not None else []
     monkeypatch.setattr(command, "setup_logging", lambda: seen.append("logs"))
     monkeypatch.setattr(command, "guard_process", lambda: seen.append("guard"))
+    monkeypatch.setattr(command, "check_startup", seen.append)
+    monkeypatch.setattr(config, "storage", config.StorageSettings(database_url=dbtools.own_url()))
 
 
 @pytest.fixture
@@ -366,7 +370,7 @@ def test_a307_an_unexpected_failure_is_one_line_with_its_type(
 
 
 def test_a307_logs_and_hooks_come_before_the_file(tmp_path: Path, monkeypatch: MP) -> None:
-    """A307: журналы и крючки процесса — до чтения файла (L54, L55)."""
+    """A307: журналы, крючки процесса и проверка старта — до чтения файла (L54, L55)."""
     calls: list[str] = []
     quiet(monkeypatch, calls)
     read = file.read
@@ -378,7 +382,7 @@ def test_a307_logs_and_hooks_come_before_the_file(tmp_path: Path, monkeypatch: M
     monkeypatch.setattr(file, "read", traced)
     path, spec = files(tmp_path, SAMPLE_BYTES, manifest_of(SAMPLE_BYTES, 6))
     assert command.main(["check", path, "--manifest", spec]) == 0
-    assert calls == ["logs", "guard", "read"]
+    assert calls == ["logs", "guard", "reference", "read"]
 
 
 @pytest.mark.parametrize(
