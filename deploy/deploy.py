@@ -363,7 +363,7 @@ def session(ctx: Context, command: str) -> Iterator[Report]:
     if not ctx.paths.service.is_dir():
         raise RefusedError(f"нет каталога {ctx.paths.service} — сначала git clone по памятке")
     ctx.files.mkdir(ctx.paths.deploy_dir)
-    log = ctx.paths.deploy_dir / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{command}.log"
+    log = ctx.paths.deploy_dir / f"{datetime.now(UTC):%Y%m%dT%H%M%S%fZ}-{command}.log"
     rep = Report(ctx.files, log, ctx.out)
     rep.line(f"{command}: начало")
     fd = -1
