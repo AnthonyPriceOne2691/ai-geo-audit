@@ -96,6 +96,14 @@
   }
 }
 
+/* Смена схемы — переходом документа (F19): длительность и кривая — токенами, текст и фон меняются
+   вместе. При «меньше движения» длительность уже 0 — её обнуляет блок выше. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--audit-motion-slow);
+  animation-timing-function: var(--audit-motion-ease);
+}
+
 /* Страница — токенами с первой отрисовки. `:root` сильнее правила `body` библиотеки при любом
    порядке файлов. */
 :root body {

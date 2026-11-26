@@ -23,7 +23,7 @@ env:
   LINT_FE_DIR: frontend
   LINT_PY_SRC: "backend/src"  # как у хуков гейтов, которые зовутся здесь напрямую (A99)
   LINT_COV_PKG: "src/ai_geo_audit"
-  LINT_LENGTH_GLOBS: "*.py *.ts *.tsx *.mjs"
+  LINT_LENGTH_GLOBS: "*.py *.ts *.tsx *.mjs *.js"
 
 jobs:
   gates:
