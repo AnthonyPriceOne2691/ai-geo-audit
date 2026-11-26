@@ -61,9 +61,11 @@ def sample_block(text: str) -> dict[str, tuple[str, str]]:
 @pytest.fixture
 def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     """Корни — во временном каталоге, образец — копия из рабочей копии, как в клоне на сервере;
-    владелец мастер-ключа — пользователь прогона (на сервере — uid 10001)."""
+    `/etc` есть, свой корень в нём заводит env-init; владелец мастер-ключа — пользователь прогона
+    (на сервере — uid 10001)."""
     ctx = make_ctx(tmp_path, monkeypatch)
     ctx.key_owner = os.getuid()
+    ctx.paths.etc.parent.mkdir()
     ctx.paths.service.joinpath(".env.example").write_bytes(SAMPLE.read_bytes())
     return ctx
 
@@ -290,7 +292,7 @@ def test_a182_put_secret_takes_only_the_incoming_folder(ctx: Any, tmp_path: Path
     outside.chmod(0o600)
     assert (put_secret(ctx, beside), put_secret(ctx, outside)) == (1, 1)
     assert beside.exists() and outside.exists()
-    assert said(ctx).count("входящий файл — только из каталога входящих") == 2
+    assert ctx.out.getvalue().count("входящий файл — только из каталога входящих") == 2
 
 
 def test_a182_put_secret_before_env_init_is_refused(ctx: Any) -> None:

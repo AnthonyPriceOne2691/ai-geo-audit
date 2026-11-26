@@ -19,6 +19,7 @@ import json
 import os
 import pwd
 import re
+import secrets
 import signal
 import stat
 import subprocess
@@ -53,6 +54,22 @@ INSPECT_FORMAT = (
 )
 INSPECT = ("docker", "container", "inspect", "--format", INSPECT_FORMAT)
 SNAPSHOT_FIELDS = ("Id", "StartedAt", "RestartCount", "здоровье")
+#: Блок «сервер» `.env.example` (A182): строки `# ИМЯ=…` под строкой `## <пометка>` — кто задаёт.
+BY_SCRIPT, BY_OWNER, BY_DEPLOY = "создаёт скрипт", "задаёт владелец", "пишет выкат"
+MARK_RE = re.compile(f"## ({BY_SCRIPT}|{BY_OWNER}|{BY_DEPLOY})")
+SAMPLE_RE = re.compile(r"# ([A-Z][A-Z0-9_]*)=(.*)")
+#: «Создаёт скрипт»: пароли — 48 знаков hex, секрет подписи — 64, путь мастер-ключа — свой корень;
+#: адрес — строка образца с паролем своей пары вместо заглушки.
+PASSWORDS = ("DB_PASSWORD", "POSTGRES_MIGRATE_PASSWORD", "POSTGRES_APP_PASSWORD", "REDIS_PASSWORD")
+SIGNING = "JWT_SECRET"
+KEY_PATH = "KEYS_MASTER_KEY_HOST_FILE"
+PAIRS = {
+    "MIGRATE_DATABASE_URL": "POSTGRES_MIGRATE_PASSWORD",
+    "API_DATABASE_URL": "POSTGRES_APP_PASSWORD",
+    "API_REDIS_URL": "REDIS_PASSWORD",
+}
+#: Владелец мастер-ключа — пользователь процесса api в образе.
+API_UID = 10001
 
 
 class RefusedError(Exception):
@@ -84,6 +101,18 @@ class Paths:
     @property
     def deploy_dir(self) -> Path:
         return self.service / ".deploy"
+
+    @property
+    def sample(self) -> Path:
+        return self.service / ".env.example"
+
+    @property
+    def master_key(self) -> Path:
+        return self.etc / "master.key"
+
+    @property
+    def incoming(self) -> Path:
+        return self.etc / "incoming"
 
 
 class Result(NamedTuple):
@@ -223,6 +252,16 @@ class Files:
         os.unlink(target)
         self.ops.append(("remove", str(target)))
 
+    def exists(self, path: Path) -> bool:
+        """Есть ли свой путь — и ссылка считается."""
+        return os.path.lexists(self.own(path))
+
+    def chown(self, path: Path, uid: int) -> None:
+        """Владелец своего файла — не по ссылке."""
+        target = self.own(path)
+        os.chown(target, uid, -1, follow_symlinks=False)
+        self.ops.append(("chown", str(target)))
+
     def rename(self, source: Path, target: Path) -> None:
         src, dst = self.own(source), self.own(target)
         os.replace(src, dst)
@@ -311,6 +350,7 @@ class Context:
     probe: Callable[[str], int] = http_code
     out: TextIO = field(default_factory=lambda: sys.stdout)
     owner: int = 0  # владелец файлов сервера — root; в тестах — пользователь прогона
+    key_owner: int = API_UID  # владелец мастер-ключа; в тестах — пользователь прогона
     files: Files = field(init=False)
 
     def __post_init__(self) -> None:
@@ -354,12 +394,8 @@ class EnvFile(NamedTuple):
     uid: int
 
 
-def read_env(files: Files, path: Path) -> EnvFile:
+def parse_env(text: str, what: str) -> dict[str, str]:
     """Строки «ИМЯ=значение»; пустые и `#` — мимо; ничего не подставляется и не исполняется."""
-    try:
-        text, info = files.read(path)
-    except FileNotFoundError:
-        raise RefusedError("файла окружения нет — сначала env-init") from None
     values: dict[str, str] = {}
     for number, raw in enumerate(text.splitlines(), 1):
         line = raw.strip()
@@ -367,11 +403,20 @@ def read_env(files: Files, path: Path) -> EnvFile:
             continue
         name, sep, value = line.partition("=")
         if not sep or not NAME_RE.fullmatch(name):
-            raise RefusedError(f"файл окружения, строка {number}: не «ИМЯ=значение»")
+            raise RefusedError(f"{what}, строка {number}: не «ИМЯ=значение»")
         if name in values:
-            raise RefusedError(f"файл окружения: имя {name} дважды")
+            raise RefusedError(f"{what}: имя {name} дважды")
         values[name] = value
-    return EnvFile(values, stat.S_IMODE(info.st_mode), info.st_uid)
+    return values
+
+
+def read_env(files: Files, path: Path) -> EnvFile:
+    """Файл окружения сервера с правами и владельцем; нет файла — отказ «сначала env-init»."""
+    try:
+        text, info = files.read(path)
+    except FileNotFoundError:
+        raise RefusedError("файла окружения нет — сначала env-init") from None
+    return EnvFile(parse_env(text, "файл окружения"), stat.S_IMODE(info.st_mode), info.st_uid)
 
 
 def env_problems(env: EnvFile, *, owner: int, may_be_empty: frozenset[str]) -> list[str]:
@@ -546,8 +591,120 @@ def cmd_last(ctx: Context, _args: argparse.Namespace) -> int:
     return 0
 
 
+def server_block(files: Files, paths: Paths) -> dict[str, tuple[str, str]]:
+    """Блок «сервер» образца клона: имя → пометка и значение образца (A182)."""
+    try:
+        text = files.read(paths.sample)[0]
+    except FileNotFoundError:
+        raise RefusedError("образца .env.example нет — нужен клон репозитория") from None
+    block: dict[str, tuple[str, str]] = {}
+    mark = None
+    for line in text.splitlines():
+        if found := MARK_RE.fullmatch(line):
+            mark = found[1]
+        elif mark and (pair := SAMPLE_RE.fullmatch(line)):
+            block[pair[1]] = (mark, pair[2])
+        elif mark and not line.startswith("#"):
+            mark = None
+    if not block:
+        raise RefusedError("в образце нет блока «сервер» — сверить клон с репозиторием")
+    return block
+
+
+def marked(block: Mapping[str, tuple[str, str]], mark: str) -> list[str]:
+    return [name for name, (have, _) in block.items() if have == mark]
+
+
+def env_values(block: Mapping[str, tuple[str, str]], paths: Paths) -> dict[str, str]:
+    """Значения файла сервера по пометкам: «создаёт скрипт» — случайные и адреса с паролем своей
+    пары; «задаёт владелец» — заглушка; «пишет выкат» — пусто (A182)."""
+    made: dict[str, str] = {}
+    for name in marked(block, BY_SCRIPT):
+        if name in PASSWORDS:
+            made[name] = secrets.token_hex(24)
+        elif name == SIGNING:
+            made[name] = secrets.token_hex(32)
+        elif name == KEY_PATH:
+            made[name] = str(paths.master_key)
+        elif name not in PAIRS:
+            raise RefusedError(f"{name}: «{BY_SCRIPT}», а скрипт не знает, как его сделать")
+    for name, password in PAIRS.items():
+        mark, template = block.get(name, ("", ""))
+        if mark != BY_SCRIPT or password not in made or PLACEHOLDER not in template:
+            raise RefusedError(f"{name}: в образце нет адреса с заглушкой пароля {password}")
+        made[name] = template.replace(PLACEHOLDER, made[password])
+    fixed = {BY_OWNER: PLACEHOLDER, BY_DEPLOY: ""}
+    return {name: made.get(name, fixed.get(mark, "")) for name, (mark, _) in block.items()}
+
+
+def cmd_env_init(ctx: Context, _args: argparse.Namespace) -> int:
+    """Файл окружения сервера, мастер-ключ и каталог входящих (A182). Второй запуск — отказ: база
+    помнит пароли первого, новый секрет подписи гасит все пропуска."""
+    with session(ctx, "env-init") as rep:
+        paths = ctx.paths
+        if ctx.files.exists(paths.env_file):
+            raise RefusedError("файл окружения уже есть — значения не пересоздаются")
+        if ctx.files.exists(paths.master_key):
+            raise RefusedError(
+                "мастер-ключ уже есть, файла окружения нет — значения не пересоздаются: ключами "
+                "сервисов в базе владеет этот ключ; разобрать по памятке"
+            )
+        block = server_block(ctx.files, paths)
+        values = env_values(block, paths)
+        ctx.files.mkdir(paths.etc)
+        ctx.files.mkdir(paths.incoming)
+        ctx.files.write(paths.master_key, f"{secrets.token_hex(32)}\n".encode(), mode=0o400)
+        ctx.files.chown(paths.master_key, ctx.key_owner)
+        ctx.files.write(paths.env_file, "".join(f"{k}={v}\n" for k, v in values.items()).encode())
+        rep.line(f"создано: {len(marked(block, BY_SCRIPT))}; мастер-ключ и каталог входящих есть")
+        rep.line(f"{BY_OWNER} — put-secret: {', '.join(marked(block, BY_OWNER))}")
+        rep.line(f"{BY_DEPLOY}: {', '.join(marked(block, BY_DEPLOY))}")
+    return 0
+
+
+def cmd_put_secret(ctx: Context, args: argparse.Namespace) -> int:
+    """Секреты владельца файлом (A182): только имена «задаёт владелец», замена своих строк файла
+    сервера, права 600, входящий удаляется. Отказ — ни файл сервера, ни входящий не тронуты."""
+    with session(ctx, "put-secret") as rep:
+        source = Path(os.path.abspath(args.file))
+        if source.parent != ctx.paths.incoming:
+            raise RefusedError("входящий файл — только из каталога входящих")
+        try:
+            text, info = ctx.files.read(source)
+        except FileNotFoundError:
+            raise RefusedError("входящего файла нет — положить его в каталог входящих") from None
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            raise RefusedError("права входящего файла шире 600 — chmod 600 и снова")
+        given = parse_env(text, "входящий файл")
+        owner = marked(server_block(ctx.files, ctx.paths), BY_OWNER)
+        if foreign := [name for name in given if name not in owner]:
+            raise RefusedError(f"{', '.join(foreign)} — не «{BY_OWNER}»: put-secret их не вносит")
+        if not given:
+            raise RefusedError("входящий файл пуст — нечего вносить")
+        try:
+            current = ctx.files.read(ctx.paths.env_file)[0]
+        except FileNotFoundError:
+            raise RefusedError("файла окружения нет — сначала env-init") from None
+        if missing := [name for name in given if name not in parse_env(current, "файл окружения")]:
+            raise RefusedError(f"в файле окружения нет имён: {', '.join(missing)} — env-init")
+        rows = current.splitlines(keepends=True)
+        new = [
+            f"{n}={given[n]}\n" if (n := row.partition("=")[0]) in given else row for row in rows
+        ]
+        ctx.files.write(ctx.paths.env_file, "".join(new).encode())
+        ctx.files.remove(source)
+        rep.line(f"внесено: {len(given)} — {', '.join(given)}")
+    return 0
+
+
 COMMANDS: dict[str, tuple[Callable[[Context, argparse.Namespace], int], str]] = {
     "last": (cmd_last, "последний журнал хода и идёт ли выкат"),
+    "env-init": (cmd_env_init, "файл окружения сервера, мастер-ключ и каталог входящих"),
+    "put-secret": (cmd_put_secret, "секреты владельца из входящего файла в файл сервера"),
+}
+#: Позиционные аргументы команд: имя и что это.
+ARGUMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "put-secret": (("file", "входящий файл из каталога входящих"),),
 }
 
 
@@ -555,7 +712,9 @@ def main(argv: Sequence[str] | None = None, ctx: Context | None = None) -> int:
     parser = argparse.ArgumentParser(prog="deploy.py", description="Выкат AI GEO Audit")
     commands = parser.add_subparsers(dest="command", required=True)
     for name, (_command, summary) in COMMANDS.items():
-        commands.add_parser(name, help=summary)
+        sub = commands.add_parser(name, help=summary)
+        for argument, about in ARGUMENTS.get(name, ()):
+            sub.add_argument(argument, help=about)
     args = parser.parse_args(argv)
     try:
         return COMMANDS[args.command][0](ctx or Context(), args)

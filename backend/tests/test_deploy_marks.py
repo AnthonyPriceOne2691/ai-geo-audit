@@ -98,6 +98,7 @@ def test_a183_env_init_and_put_secret_print_no_values(ctx, capsys) -> None:
     метки входящих файлов — ни в выводе, ни в журнале хода, и при отказе put-secret тоже; внешних
     команд нет."""
     ctx.key_owner = os.getuid()
+    ctx.paths.etc.parent.mkdir()
     ctx.paths.service.joinpath(".env.example").write_bytes((ROOT / ".env.example").read_bytes())
     assert tool.main(["env-init"], ctx) == 0
     made = [line.split("=", 1)[1] for line in ctx.paths.env_file.read_text("utf-8").splitlines()]
