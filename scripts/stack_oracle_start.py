@@ -48,11 +48,15 @@ def refused(run: Run, service: str, name: str, value: str) -> tuple[int, str]:
 
 def step_refusal(run: Run) -> str:
     """A173: каждый разовый контейнер — код не 0, в выводе — процесс, переменная и причина; ни
-    адреса, ни пароля, ни `Traceback`; `alembic current` до и после — одна ревизия."""
+    адреса, ни пароля, ни `Traceback`; `alembic current` до и после — одна ревизия. Предел
+    исполнителя — с сервисом и переменной случая."""
     before = alembic(run, "current")
     seen: list[str] = []
     for service, name, value, why in cases(run):
-        code, text = refused(run, service, name, value)
+        try:
+            code, text = refused(run, service, name, value)
+        except StepError as late:
+            raise StepError(f"{service}, {name}: {late}") from None
         problems = ["код 0"] * (code == 0)
         problems += [f"нет причины «{name} — {why}»"] * (f"{name} — {why}" not in text)
         problems += ["процесс не назван"] * (f"«{service}»" not in text)
