@@ -87,13 +87,23 @@ def missing(old: Sequence[RowIn], new: Sequence[RowIn]) -> list[str]:
 
 
 def diff(old: Sequence[RowIn], new: Sequence[RowIn]) -> list[tuple[str, str]]:
-    """«Было — станет» из `old` в `new` по строкам `new`: пары «код:поле» и строка вывода."""
+    """«Было — станет» из `old` в `new`: порядок общих строк, затем строки `new` по порядку —
+    пары «код:поле» и строка вывода."""
     before = {row.code: row for row in old}
-    found: list[tuple[str, str]] = []
+    found = _order(old, new)
     for row in new:
         was = before.get(row.code)
         found += _changes(was, row) if was else [(f"{row.code}:", f"новая строка {row.code}")]
     return found
+
+
+def _order(old: Sequence[RowIn], new: Sequence[RowIn]) -> list[tuple[str, str]]:
+    """Общие строки на других местах — по их порядку между собой, без кодов: новая строка в
+    середине сдвигает номера мест ниже себя, но порядка не меняет."""
+    common = {row.code for row in old} & {row.code for row in new}
+    was, now = ([row.code for row in rows if row.code in common] for rows in (old, new))
+    moved = sum(a != b for a, b in zip(was, now, strict=True))
+    return [(":order", f"порядок: строк на других местах {moved}")] if moved else []
 
 
 def _number(value: Decimal) -> str:
@@ -127,15 +137,22 @@ def _changes(was: RowIn, now: RowIn) -> list[tuple[str, str]]:
 
 
 def _params(code: str, was: Sequence[ParamIn], now: Sequence[ParamIn]) -> list[tuple[str, str]]:
-    """Пороги: новый, убранный, другое значение или единица — значением, а не записью."""
+    """Пороги: новый, убранный, другое значение или единица — значением, а не записью; при
+    смене единицы прежнее число — со своей: «3.25 → 3250 мс» читалось бы ростом в тысячу раз."""
     before, after = {p.name: p for p in was}, {p.name: p for p in now}
     found = []
     for name in sorted(before.keys() | after.keys()):
-        old, new = before.get(name), after.get(name)
+        old, new, key = before.get(name), after.get(name), f"{code}:param:{name}"
         if new is None:
-            found.append((f"{code}:param:{name}", f"{code} · порог {name} убран"))
-        elif old is None or (old.value, old.unit) != (new.value, new.unit):
-            start = f"{_number(old.value)} → " if old else "новый, "
-            line = f"{code} · {name} {start}{_number(new.value)} {UNIT_WORDS[new.unit]}"
-            found.append((f"{code}:param:{name}", line.rstrip()))
+            found.append((key, f"{code} · порог {name} убран"))
+        elif old is None:
+            found.append((key, f"{code} · {name} новый, {_value(new)}"))
+        elif (old.value, old.unit) != (new.value, new.unit):
+            start = _value(old) if old.unit != new.unit else _number(old.value)
+            found.append((key, f"{code} · {name} {start} → {_value(new)}"))
     return found
+
+
+def _value(param: ParamIn) -> str:
+    """Число порога со словом единицы; у `number` слова нет."""
+    return f"{_number(param.value)} {UNIT_WORDS[param.unit]}".rstrip()
