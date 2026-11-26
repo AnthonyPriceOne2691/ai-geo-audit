@@ -12,7 +12,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
 - **builder:** agent:hands-session
 - **verifier:** agent:reviewer3-session
   <!-- Третья проверяющая — решение ведущей 2026-11-26: чтение черновиков, приёмка с первого
@@ -64,6 +64,6 @@
        (`scripts/lint/file_length_baseline.txt`) правит исполнитель на срезе, где файл растёт, —
        по фактической длине, не выше 800. Число для 6а-3 — новым словом, с её черновиками. -->
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния 6а-2 (`quality`, `ubuntu-24.04`): джоба `stack` — оракул шагов 43, красных 0, шаг «A186 A189» — «ок»: api и migrate — годен, режим prod, отказ импорта у migrate — код 1, снимок соседа — перезапусков 0, пропало 0, новых 0; A89 — «правил 31, нарушений 0»; шаг «Живые env-init, put-secret и last» — шагов 6, красных 0; доли порч — четыре success. Без A185 (`split.md`: A185 — 6а-3)
+- **observe_until:** 2026-12-03 — неделя прогонов CI на main после 6а-2: джоба `stack` (оракул и живой шаг скрипта выката) и доли порч
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
