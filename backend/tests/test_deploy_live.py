@@ -1,12 +1,15 @@
-"""Живые `env-init` и `put-secret` (6а-2, срез 4; A182, A183): скрипт шага джобы `stack` грузится по
-пути. Без машины CI и без root — отказ словами до любой записи; файл владельца — ровно имена
-«задаёт владелец» блока «сервер»; шаг стоит в джобе после оракула. Сам прогон — только в CI."""
+"""Живые `env-init`, `put-secret` и `last` (6а-2, срез 4 и T5; A182, A183): скрипт шага джобы
+`stack` грузится по пути. Без машины CI и без root — отказ словами до любой записи; файл владельца
+— ровно имена «задаёт владелец» блока «сервер»; шаг стоит в джобе после оракула; `last` судится
+по подставному ответу. Сам прогон — только в CI."""
 
 from __future__ import annotations
 
 import importlib.util
 import os
 import re
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -129,3 +132,78 @@ def test_a182_live_step_runs_after_the_oracle_in_the_stack_job() -> None:
     runs = [step.get("run", "") for step in steps]
     oracle = runs.index("python3 scripts/stack_oracle.py")
     assert runs[oracle + 1 :] == [STEP]
+
+
+def test_a183_live_steps_in_order_last_after_the_moves() -> None:
+    """A182, A183: шаги живого прогона по порядку; `last` — после хода: поздний журнал — второго
+    `env-init`, его `last` и обязан показать (имя журнала до микросекунд, находка T5)."""
+    assert [title for title, _ in load().STEPS] == [
+        "A182 env-init на чистых корнях",
+        "A182 put-secret файла владельца",
+        "A182 второй env-init",
+        "A183 дерево сервиса чистое",
+        "A182 compose принимает файл сервера",
+        "A183 last после хода",
+    ]
+
+
+#: Ответ `last` после хода: поздний журнал — второго `env-init`, отказ. В цифрах времени имени
+#: журнала стоит «18180» — порт из файла сервера: число из одних цифр не ищется.
+LAST = (
+    "журнал 20261126T121818018000Z-env-init.log: строк 2, показано 2\n"
+    "2026-11-26T12:18:18Z env-init: начало\n"
+    "2026-11-26T12:18:18Z итог: отказ — файл окружения уже есть — значения не пересоздаются\n"
+    "выката нет\n"
+)
+#: Файл сервера живого прогона — выдуманные значения; образ ещё пуст (его пишет выкат).
+SERVER = {
+    "JWT_SECRET": "c" * 64,
+    "SITE_DOMAIN": "example.test",
+    "WEB_PORT": "18180",
+    "BACKEND_IMAGE": "",
+}
+
+
+@pytest.fixture
+def last_of(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., ModuleType]:
+    """Скрипт, у которого `deploy.py last` отвечает заданным кодом, выводом и ошибкой; файл
+    сервера — во временном каталоге."""
+    live = load()
+    monkeypatch.setattr(live, "SERVICE", tmp_path)
+    rows = "".join(f"{name}={value}\n" for name, value in SERVER.items())
+    (tmp_path / ".env").write_text(rows, encoding="utf-8")
+
+    def answer(code: int, out: str, err: str = "") -> ModuleType:
+        done = subprocess.CompletedProcess(["deploy.py", "last"], code, out, err)
+        monkeypatch.setattr(live, "deploy", lambda *_args: done)
+        return live
+
+    return answer
+
+
+def test_a183_live_last_shows_the_latest_journal_without_values(last_of) -> None:
+    """A183: `last` настоящим процессом после хода — код 0, поздний журнал целиком, «выката нет»,
+    ни одного значения файла сервера в выводе."""
+    live = last_of(0, LAST)
+    assert live.step_last() == "код 0, журнал второго env-init: строк 2, выката нет, значений 0"
+
+
+@pytest.mark.parametrize(
+    ("code", "out", "err", "why"),
+    [
+        (1, LAST, "", "last — код 1"),
+        (0, LAST.replace("-env-init.log", "-put-secret.log"), "", "не поздний журнал"),
+        (0, LAST.replace("показано 2", "показано 1"), "", "не поздний журнал"),
+        (0, "журналов хода нет\nвыката нет\n", "", "не поздний журнал"),
+        (0, LAST.replace("выката нет", "идёт выкат: процесс 7 с 2026"), "", "«выката нет»"),
+        (0, LAST.replace("начало", "c" * 64), "", "значения в выводе last: JWT_SECRET$"),
+        (0, LAST, "домен example.test", "значения в выводе last: SITE_DOMAIN$"),
+    ],
+    ids=["код", "не-поздний", "не-целиком", "нет-журнала", "идёт-выкат", "секрет", "в-ошибке"],
+)
+def test_a183_live_last_red(last_of, code: int, out: str, err: str, why: str) -> None:
+    """A183: красное шага `last` — код, не поздний журнал или не целиком, нет «выката нет»,
+    значение файла сервера в выводе или в ошибке; в причине — имя, не значение."""
+    live = last_of(code, out, err)
+    with pytest.raises(live.LiveError, match=why):
+        live.step_last()
