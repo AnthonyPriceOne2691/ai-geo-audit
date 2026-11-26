@@ -693,7 +693,7 @@ def passed_rows(rows: list[str] | Exception = PASSED_ROWS) -> dict[str, Any]:
 def test_a380_passed_extra_is_revoked_and_the_grantor_is_dropped(
     monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace
 ) -> None:
-    """A380, первая строка: суперпользователь заводит лишнее с передачей трёх видов, затем скрипт
+    """A380, первая строка: суперпользователь заводит лишнее четырёх видов, затем скрипт
     ролей той же командой, что в A170; членств у обеих ролей нет, у роли сервиса на
     `alembic_version` — четыре права без права передачи, у `PUBLIC` — ни одного; временная роль
     удаляется. Итог — строкой целиком."""
@@ -712,9 +712,10 @@ def test_a380_passed_extra_is_revoked_and_the_grantor_is_dropped(
 
 
 def test_a380_extra_is_passed_on_by_set_role_and_from_a_temporary_grantor() -> None:
-    """A380, первая строка: лишнее трёх видов — право на `alembic_version` с правом передачи и от
+    """A380, первая строка: лишнее четырёх видов — право на `alembic_version` с правом передачи и от
     роли сервиса `PUBLIC`, членство с `ADMIN OPTION` и от роли сервиса роли миграций, членство от
-    временной роли роли сервиса; выдаёт роль сервиса и временная роль — через `SET ROLE`."""
+    временной роли роли сервиса; выдаёт роль сервиса и временная роль — через `SET ROLE`; прямое
+    членство роли миграций от суперпользователя — порча «снятие членств без роли миграций»."""
     grants = [line for line in roles.PASSED.splitlines() if line.startswith(("GRANT", "SET"))]
     assert grants == [
         "GRANT SELECT ON alembic_version TO audit_app WITH GRANT OPTION;",
@@ -726,6 +727,7 @@ def test_a380_extra_is_passed_on_by_set_role_and_from_a_temporary_grantor() -> N
         "GRANT pg_write_all_data TO oracle_grantor WITH ADMIN OPTION;",
         "SET ROLE oracle_grantor;",
         "GRANT pg_write_all_data TO audit_app;",
+        "GRANT pg_monitor TO audit_migrate;",
     ]
 
 
