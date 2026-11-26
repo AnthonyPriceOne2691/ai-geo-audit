@@ -1,6 +1,6 @@
-"""Живые `env-init` и `put-secret` (6а-2, срез 4; A182, A183): настоящий `python3 -I deploy.py` от
-root на машине джобы `stack` — корни сервера одноразовой машины, значения владельца выдуманы. Не
-на машине CI или не от root — отказ до любой записи: скрипт пишет в `/srv` и `/etc`.
+"""Живые `env-init`, `put-secret` и `last` (6а-2, срез 4 и T5; A182, A183): настоящий `python3 -I
+deploy.py` от root на машине джобы `stack` — корни сервера одноразовой машины, значения владельца
+выдуманы. Не на машине CI или не от root — отказ до любой записи: скрипт пишет в `/srv` и `/etc`.
 
 Шаг джобы: `sudo --preserve-env=GITHUB_ACTIONS python3 scripts/deploy_live.py`. Вывод — строки
 «ок» или «КРАСНОЕ» с причиной, без значений: только имена, числа, права и коды (A183).
@@ -9,6 +9,7 @@ root на машине джобы `stack` — корни сервера одно
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -34,6 +35,8 @@ IMAGES = {
     "BACKEND_IMAGE": "registry.example.test/ai-geo-audit-backend@sha256:" + "0" * 64,
     "WEB_IMAGE": "registry.example.test/ai-geo-audit-web@sha256:" + "1" * 64,
 }
+#: Первая строка `last` после хода: поздний журнал — второго `env-init`, показан целиком.
+LAST_HEAD = re.compile(r"журнал \d{8}T\d{12}Z-env-init\.log: строк (\d+), показано \1")
 
 
 class LiveError(Exception):
@@ -135,12 +138,38 @@ def step_compose_accepts() -> str:
     return "основной файл и наложение с образами — код 0"
 
 
+def server_values() -> dict[str, str]:
+    """Значения файла сервера, что ищутся в выводе: непустые и не из одних цифр — число (порт)
+    совпадёт с цифрами времени в имени журнала."""
+    rows = (SERVICE / ".env").read_text(encoding="utf-8").splitlines()
+    pairs = (row.partition("=")[::2] for row in rows)
+    return {name: value for name, value in pairs if value and not value.isdigit()}
+
+
+def step_last() -> str:
+    """A183: `last` настоящим процессом после хода — код 0; поздний журнал — второго `env-init`,
+    целиком (имя журнала до микросекунд); «выката нет»; ни одного значения файла сервера и файла
+    владельца в выводе и в ошибке."""
+    done = deploy("last")
+    expect(done.returncode == 0, f"last — код {done.returncode}")
+    lines = done.stdout.splitlines()
+    head = LAST_HEAD.fullmatch(lines[0]) if lines else None
+    if head is None:
+        raise LiveError("last показал не поздний журнал второго env-init или не целиком")
+    expect(lines[-1:] == ["выката нет"], "last не сказал «выката нет»")
+    said = done.stdout + done.stderr
+    leaked = [name for name, value in server_values().items() if value in said]
+    expect(not leaked, "значения в выводе last: " + ", ".join(leaked))
+    return f"код 0, журнал второго env-init: строк {head[1]}, выката нет, значений 0"
+
+
 STEPS = (
     ("A182 env-init на чистых корнях", step_env_init),
     ("A182 put-secret файла владельца", step_put_secret),
     ("A182 второй env-init", step_second_env_init),
     ("A183 дерево сервиса чистое", step_tree_clean),
     ("A182 compose принимает файл сервера", step_compose_accepts),
+    ("A183 last после хода", step_last),
 )
 
 
