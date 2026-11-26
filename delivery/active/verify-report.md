@@ -2,8 +2,7 @@
 
 **Date:** 2026-11-26
 **Verifier:** agent:reviewer3-session
-**asserts_reviewed_by:** deferred (reason=подпись владельца под дайджестом ниже — через ведущую,
-до handoff)
+**asserts_reviewed_by:** human:owner at=2026-11-26T09:25Z
 **CI run:** запрос №34 — прогон 45786945361 на `4f2276f`, 10 из 10: `stack` 327 с, `tests` 247 с,
 четыре доли порч — success (итог — от ведущей)
 **Commit:** `3db565e` — вершина кода и тестов: A380, четвёртый вид лишнего (находка 1 проверяющей),
