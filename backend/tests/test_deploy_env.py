@@ -199,6 +199,31 @@ def test_a182_master_key_without_env_file_is_refused(ctx: Any) -> None:
     assert "мастер-ключ уже есть, файла окружения нет" in said(ctx)
 
 
+def test_a182_dangling_link_in_place_of_the_server_file_is_refused_at_once(
+    ctx: Any, tmp_path: Path
+) -> None:
+    """A182, A186, мелочь 4 третьей проверяющей: на месте файла сервера — висячая ссылка во
+    временный каталог: отказ сразу, ещё на проверке «файл уже есть» — функция файлов по ссылкам не
+    ходит; мастер-ключа нет, по ссылке ничего не создано. Порча «`exists` вместо `lexists`»
+    поэтому равнозначна: `own` отказывает раньше (проба 2026-11-26, decisions)."""
+    target = tmp_path / "elsewhere" / "env"
+    ctx.paths.env_file.symlink_to(target)
+    assert env_init(ctx) == 1
+    assert f"отказ — {ctx.paths.env_file} — ссылка: скрипт по ссылкам не ходит" in said(ctx)
+    assert not ctx.paths.etc.joinpath("master.key").exists()
+    assert not target.exists()
+
+
+def test_a182_server_block_ends_at_the_first_line_outside_comments(ctx: Any) -> None:
+    """A182, мелочь 1 третьей проверяющей: блок «сервер» кончается первой строкой не-комментарием —
+    `LATER_SETTING=1` и `# LATER_EXAMPLE=x` после него в файл сервера не идут: имён 18, не 19."""
+    sample = ctx.paths.service / ".env.example"
+    text = sample.read_text(encoding="utf-8")
+    sample.write_text(text + "\nLATER_SETTING=1\n# LATER_EXAMPLE=x\n", encoding="utf-8")
+    assert env_init(ctx) == 0
+    assert list(values(ctx)) == [*CREATED, *OWNER, *DEPLOY]
+
+
 @pytest.mark.parametrize(
     ("change", "why"),
     [
@@ -252,8 +277,9 @@ def test_a182_put_secret_replaces_own_lines_and_removes_the_incoming_file(ctx: A
         ("UNKNOWN_NAME=x\n", 0o600, "UNKNOWN_NAME — не «задаёт владелец»"),
         (OWNER_FILE, 0o640, "права входящего файла шире 600"),
         ("not a line\n", 0o600, "входящий файл, строка 1: не «ИМЯ=значение»"),
+        ("", 0o600, "входящий файл пуст — нечего вносить"),
     ],
-    ids=["создаёт-скрипт", "пишет-выкат", "чужое", "права", "не-строка"],
+    ids=["создаёт-скрипт", "пишет-выкат", "чужое", "права", "не-строка", "пустой"],
 )
 def test_a182_put_secret_refuses_and_touches_nothing(
     ctx: Any, text: str, mode: int, why: str
@@ -267,6 +293,22 @@ def test_a182_put_secret_refuses_and_touches_nothing(
     assert ctx.paths.env_file.read_bytes() == before
     assert path.read_text(encoding="utf-8") == text
     assert why in said(ctx)
+
+
+def test_a182_put_secret_refuses_a_name_missing_in_the_server_file(ctx: Any) -> None:
+    """A182, находка 2 третьей проверяющей: в файле сервера нет имени «задаёт владелец» (образец
+    вырос после env-init) — отказ с именем; ни файл сервера, ни входящий не тронуты. Порча «без
+    отказа» — «итог: ок», входящий удалён, имени в файле нет: секрет владельца пропал молча."""
+    env_init(ctx)
+    rows = ctx.paths.env_file.read_text(encoding="utf-8").splitlines(keepends=True)
+    trimmed = "".join(row for row in rows if not row.startswith("SITE_DOMAIN="))
+    ctx.paths.env_file.write_text(trimmed, encoding="utf-8")
+    before = ctx.paths.env_file.read_bytes()
+    path = incoming(ctx, "SITE_DOMAIN=example.test\n")
+    assert put_secret(ctx, path) == 1
+    assert ctx.paths.env_file.read_bytes() == before
+    assert path.read_text(encoding="utf-8") == "SITE_DOMAIN=example.test\n"
+    assert "в файле окружения нет имён: SITE_DOMAIN" in said(ctx)
 
 
 def test_a182_second_put_secret_finds_no_incoming_file(ctx: Any) -> None:
