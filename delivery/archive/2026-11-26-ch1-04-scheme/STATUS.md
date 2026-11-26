@@ -37,9 +37,10 @@
        eslint, prettier и tsc цепочкой `npm run check` у исполнителя. -->
 - **behavior-oracles:** tests-present — Vitest и jsdom, не больше двух воркеров, цепочка `npm run check`; проба первого кадра в Chrome протоколом DevTools; снимки в обеих схемах; шаг живого прогона через web — `eval-smoke.md`
 - **artifact_oracle:** frontend/scripts/check-dist.mjs
-- **ci-oracles:** weak
-  <!-- До В1б CI фронт не гоняет: поставка «держится рукой» — цепочка у исполнителя и чистый
-       клон ведущей (`v1a-spec.md:57–58`). -->
+- **ci-oracles:** deployed
+  <!-- По §10.4 — CI (`quality`) и серверный гейт мержа с В1а. Цепочка фронта (`npm run check`)
+       и TS-половины до В1б в CI не идут — названо в «Spec coverage gaps», держит чистый клон
+       ведущей (T5 и сдача). `weak` до сдачи — ошибка значения: оно из STATUS до В1а. -->
 - **worktree:** .claude/worktrees/smoke-run
   <!-- Четвёртая поставка в копии smoke (smoke, Ч1.12а, Ч1.14а1, «Схема»): новую копию в общем
        `.claude/worktrees/` изолированная сессия исполнителя не заводит; копия — решение
