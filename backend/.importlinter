@@ -25,13 +25,15 @@ root_packages =
 # `settings` (Ч1.12а) — между `api` и `storage`: разбор файла мастер-ключа поэтому лежит в `config`.
 # Слой `alerts` (Ч1.14а1, В5) — между `storage` и `logs`: тревоги кладут хранилище и настройки, а
 # сами зовут только конфиг, логи и Redis. Команды `ops` — вне слоёв.
+# Справочник `reference` (Ч2.1) — независимый сосед `settings` в одном слое: оба стоят на
+# `storage` и ниже, друг друга не импортируют (проба 4 шага 0: `|` import-linter 2.15 судит).
 # --------------------------------------------------------------------
 [importlinter:contract:ai-geo-audit-layered]
 name = ai_geo_audit: api -> settings -> storage -> alerts -> logs -> config -> refusal
 type = layers
 layers =
     api
-    settings
+    settings | reference
     storage
     alerts
     logs
