@@ -183,3 +183,47 @@ def test_a381_a382_a386_frontend_copies_are_red_and_named(
     spoiled, count = re.subn(old, new, text, count=1)
     assert count == 1, f"{case}: в quality.yml нет места порчи {old!r}"
     assert named in "\n".join(quality_check(spoiled)), case
+
+
+def guard(half: str) -> str:
+    """Предохранитель половины в тексте шага аудита — от `if` до `fi`, с отступом шага."""
+    return (
+        rf"\n {{10}}if printf '%s' \"\$out\" \| grep -q \"{half}-зависимости не проверены\"; then\n"
+        r"[^\n]*\n {12}exit 1\n {10}fi"
+    )
+
+
+#: Находка 3 второй проверяющей 2026-11-26: при непроверенной половине гейт аудита печатает
+#: «проверено НЕ ВСЁ» и выходит нулём — красным шаг делают только предохранители и `exit "$rc"`.
+AUDIT_COPIES = [
+    ("J1-js-guard-dropped", guard("js"), "", "нет предохранителя «js-зависимости не проверены»"),
+    (
+        "J2-python-guard-dropped",
+        guard("python"),
+        "",
+        "нет предохранителя «python-зависимости не проверены»",
+    ),
+    ("J4-exit-zero", r'exit "\$rc"', "exit 0", 'итог шага — не `exit "$rc"`'),
+    (
+        "J5-bare-gate",
+        r"run: \|\n {10}set \+e\n {10}out=\$\(bash scripts/lint/check_deps_audit\.sh 2>&1\)\n"
+        r"(?: {10}.*\n)+? {10}exit \"\$rc\"\n",
+        "run: bash scripts/lint/check_deps_audit.sh\n",
+        "нет предохранителя «python-зависимости не проверены»",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "old", "new", "named"), AUDIT_COPIES, ids=[c[0] for c in AUDIT_COPIES]
+)
+def test_a103_a389_audit_step_copies_are_red_and_named(
+    case: str, old: str, new: str, named: str
+) -> None:
+    """A102, A103, A389, копии находки 3: снят предохранитель JS или Python, итог шага — `exit 0`,
+    шаг — голый вызов гейта — красный, названо правило: непроверенная половина и рост над снимком
+    иначе прошли бы зелёным."""
+    text = QUALITY.read_text(encoding="utf-8")
+    spoiled, count = re.subn(old, lambda _: new, text, count=1)
+    assert count == 1, f"{case}: в quality.yml нет места порчи {old!r}"
+    assert named in "\n".join(quality_check(spoiled)), case
