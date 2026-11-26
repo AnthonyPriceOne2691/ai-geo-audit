@@ -169,6 +169,15 @@ def mark(run_dir: Path, label: str, reason: str) -> None:
     (folder / f"{label or 'clean_tests'}.txt").write_text(reason + "\n", encoding="utf-8")
 
 
+def mark_refused(reason: str) -> None:
+    """Сессия не началась: сервера тестов нет. В процессе самого mutmut — метка с именем порчи: гейт
+    её не засчитывает убитой (A285). Вложенный pytest, унаследовавший `MUTANT_UNDER_TEST`, метки не
+    кладёт: его исход судит тест, и бывает, что он нарочно идёт без сервера."""
+    label = phase()
+    if label is not None and mutmut_process():
+        mark(RUN_DIR, label, reason)
+
+
 def copies_at_once(lines: Iterable[str], until: float) -> tuple[int, int]:
     """(наибольшее число копий разом, копий без сноса в своей сессии) по журналу. Копия без
     строки сноса живёт до `until` — до уборки в конце прогона; новый клон того же имени (pid

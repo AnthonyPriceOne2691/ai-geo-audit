@@ -1,7 +1,7 @@
 """Окружение тестов (A31): до первого импорта пакета из окружения уходит всё, что читает сервис
 или драйвер. Имена — из `.env.example` (он полон по тесту A8), без импорта конфига: конфиг
 собрался бы раньше вычистки. Сравнение без регистра: конфиг читает окружение так же.
-`TEST_DATABASE_URL` остаётся — его читает `dbtools`.
+`TEST_DATABASE_URL` и `TEST_REDIS_URL` остаются — их читают `dbtools` и `redistools`.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ EXAMPLE = ROOT / ".env.example"
 #: Ключи провайдеров и переменные libpq (`PGSSLMODE=require` ронял бы каждое соединение тестов).
 PREFIXES = ("OPENAI_", "ANTHROPIC_", "DATAFORSEO_", "AHREFS_", "GEMINI_", "GOOGLE_", "PERPLEXITY_")
 PROXIES = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "ENV_FILE"})
-KEEP = frozenset({"TEST_DATABASE_URL"})
+KEEP = frozenset({"TEST_DATABASE_URL", "TEST_REDIS_URL"})
 
 
 def _dirty(name: str, known: frozenset[str]) -> bool:

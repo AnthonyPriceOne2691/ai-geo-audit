@@ -7,6 +7,8 @@ import os
 import socket
 from pathlib import Path
 
+import redistools
+
 
 def free_port() -> int:
     with socket.socket() as probe:
@@ -15,7 +17,8 @@ def free_port() -> int:
 
 
 def live_env(port: int, url: str, src: Path) -> dict[str, str]:
-    """Окружение сервера: адрес базы `url`, пакет — из каталога `src`, порт на петле, журнал —
+    """Окружение сервера: адрес базы `url`, Redis теста (A243), пакет — из каталога `src`, порт на
+    петле, журнал —
     JSON; `.env` не читается, переменные разработчика не доходят, `COVERAGE_*` — проходят."""
     env = {
         "PATH": os.environ.get("PATH", ""),
@@ -24,6 +27,7 @@ def live_env(port: int, url: str, src: Path) -> dict[str, str]:
         "PYTHONPATH": str(src),
         "ENV_FILE": os.devnull,
         "DATABASE_URL": url,
+        "REDIS_URL": redistools.current_url(),
         "APP_ENV": "dev",
         "API_HOST": "127.0.0.1",
         "API_PORT": str(port),

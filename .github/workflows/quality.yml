@@ -279,6 +279,21 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
+      # Redis тестов — как сервис redis в docker-compose.dev.yml: строка образа стека
+      # «линия@дайджест» (A100), публичный пароль стенда в `command`; готовность — `redis-cli -e`
+      # с паролем из `REDISCLI_AUTH`: без `-e` ответ-ошибка даёт код 0 (L60).
+      redis:
+        image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+        command: redis-server --requirepass audit-dev-redis  # pragma: allowlist secret
+        env:
+          REDISCLI_AUTH: audit-dev-redis  # pragma: allowlist secret
+        ports:
+          - 127.0.0.1:6462:6379
+        options: >-
+          --health-cmd "redis-cli -h 127.0.0.1 -e ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -371,6 +386,19 @@ jobs:
           - 127.0.0.1:5462:5432
         options: >-
           --health-cmd "pg_isready -h 127.0.0.1 -U audit -d audit"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      # Redis — как служба джобы `tests`, строка в строку (A289).
+      redis:
+        image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+        command: redis-server --requirepass audit-dev-redis  # pragma: allowlist secret
+        env:
+          REDISCLI_AUTH: audit-dev-redis  # pragma: allowlist secret
+        ports:
+          - 127.0.0.1:6462:6379
+        options: >-
+          --health-cmd "redis-cli -h 127.0.0.1 -e ping"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30

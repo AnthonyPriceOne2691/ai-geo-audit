@@ -1,6 +1,7 @@
 # Postgres разработки и тестов на этой машине. Порт — только 127.0.0.1:5462: 5432 и 5442 здесь
 # заняты или бывают заняты соседними проектами. Пароль разработки публичен; в бою адрес базы
-# задаётся явно и проходит проверку старта.
+# задаётся явно и проходит проверку старта. Redis разработки и тестов — 127.0.0.1:6462: 6379 займёт
+# любой Redis по умолчанию. Образ — строка стека из docker-compose.yml, пароль стенда публичен.
 name: ai-geo-audit-dev
 
 services:
@@ -16,6 +17,23 @@ services:
       - db:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U audit -d audit"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    command: ["redis-server", "--requirepass", "audit-dev-redis"]  # pragma: allowlist secret
+    environment:
+      REDISCLI_AUTH: audit-dev-redis  # pragma: allowlist secret
+    ports:
+      - "127.0.0.1:6462:6379"
+    # Образ объявляет `VOLUME /data`: без tmpfs каждый новый контейнер оставлял бы безымянный том.
+    tmpfs:
+      - /data
+    # Без `-e` ответ-ошибка `NOAUTH` даёт код 0 (L60): готовность — только `PONG` с паролем.
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "127.0.0.1", "-e", "ping"]
       interval: 2s
       timeout: 3s
       retries: 30
