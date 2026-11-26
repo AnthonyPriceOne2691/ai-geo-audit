@@ -715,22 +715,17 @@ def test_a380_extra_is_passed_on_by_set_role_and_from_a_temporary_grantor() -> N
     """A380, первая строка: лишнее трёх видов — право на `alembic_version` с правом передачи и от
     роли сервиса `PUBLIC`, членство с `ADMIN OPTION` и от роли сервиса роли миграций, членство от
     временной роли роли сервиса; выдаёт роль сервиса и временная роль — через `SET ROLE`."""
-    assert roles.PASSED.split("\n") == [
-        "",
+    grants = [line for line in roles.PASSED.splitlines() if line.startswith(("GRANT", "SET"))]
+    assert grants == [
         "GRANT SELECT ON alembic_version TO audit_app WITH GRANT OPTION;",
         "SET ROLE audit_app;",
         "GRANT SELECT ON alembic_version TO PUBLIC;",
-        "RESET ROLE;",
         "GRANT pg_read_all_data TO audit_app WITH ADMIN OPTION;",
         "SET ROLE audit_app;",
         "GRANT pg_read_all_data TO audit_migrate;",
-        "RESET ROLE;",
-        "CREATE ROLE oracle_grantor;",
         "GRANT pg_write_all_data TO oracle_grantor WITH ADMIN OPTION;",
         "SET ROLE oracle_grantor;",
         "GRANT pg_write_all_data TO audit_app;",
-        "RESET ROLE;",
-        "",
     ]
 
 

@@ -497,61 +497,31 @@ def test_a177_a178_lines_name_service_and_variable_without_values(
 
 ROLE_SPOILS = {name: spoil for name, spoil, _ in ROLE_PROBES}
 AUTH_SPOILS = {name: spoil for name, spoil, _ in AUTH_PROBES}
-SCRIPT_AT = "/docker-entrypoint-initdb.d/roles.sql"
-# Строка нарушения целиком — по пробе на каждую причину `db-roles` и `redis-auth`.
-LINES = [
-    (ROLE_SPOILS["no-user"], "db-roles: сервис db, переменная POSTGRES_USER — не задана явно"),
-    (
-        ROLE_SPOILS["migrate-password-literal"],
-        "db-roles: сервис db, переменная POSTGRES_MIGRATE_PASSWORD — пароль роли — не "
-        "${VAR:?причина}",
-    ),
-    (ROLE_SPOILS["no-script"], f"db-roles: сервис db — скрипт ролей не смонтирован: {SCRIPT_AT}"),
-    (
-        ROLE_SPOILS["script-read-write-short"],
-        f"db-roles: сервис db — скрипт ролей смонтирован на запись: {SCRIPT_AT}",
-    ),
-    (
-        ROLE_SPOILS["migrate-from-api"],
-        "db-roles: сервис migrate, переменная DATABASE_URL — адрес базы — не из "
-        "MIGRATE_DATABASE_URL",
-    ),
-    (
-        ROLE_SPOILS["web-postgres-password"],
-        "db-roles: сервис web, переменная POSTGRES_PASSWORD — пароль базы — только у db",
-    ),
-    (
-        AUTH_SPOILS["password-literal"],
-        "redis-auth: сервис redis, переменная REDIS_PASSWORD — пароль очереди — не ${VAR:?причина}",
-    ),
-    (AUTH_SPOILS["no-user"], "redis-auth: сервис redis — нет user: redis"),
-    (
-        AUTH_SPOILS["no-exec"],
-        "redis-auth: сервис redis — команда — не sh -c с exec redis-server - и requirepass на "
-        "входе",
-    ),
-    (
-        AUTH_SPOILS["health-no-auth"],
-        "redis-auth: сервис redis — проверка здоровья — без REDISCLI_AUTH или сверки с PONG",
-    ),
-    (
-        AUTH_SPOILS["web-password"],
-        "redis-auth: сервис web, переменная REDIS_PASSWORD — пароль очереди — только у redis",
-    ),
-    (
-        AUTH_SPOILS["web-a-flag"],
-        "redis-auth: сервис web — пароль флагом redis-cli виден в списке процессов",
-    ),
+AT = "/docker-entrypoint-initdb.d/roles.sql"
+# Причина целиком — по пробе на каждую причину `db-roles` и `redis-auth`.
+WHY = [
+    (ROLE_SPOILS["no-user"], "не задана явно"),
+    (ROLE_SPOILS["migrate-password-literal"], "пароль роли — не ${VAR:?причина}"),
+    (ROLE_SPOILS["no-script"], f"скрипт ролей не смонтирован: {AT}"),
+    (ROLE_SPOILS["script-read-write-short"], f"скрипт ролей смонтирован на запись: {AT}"),
+    (ROLE_SPOILS["migrate-from-api"], "адрес базы — не из MIGRATE_DATABASE_URL"),
+    (ROLE_SPOILS["web-postgres-password"], "пароль базы — только у db"),
+    (AUTH_SPOILS["password-literal"], "пароль очереди — не ${VAR:?причина}"),
+    (AUTH_SPOILS["no-user"], "нет user: redis"),
+    (AUTH_SPOILS["no-exec"], "команда — не sh -c с exec redis-server - и requirepass на входе"),
+    (AUTH_SPOILS["health-no-auth"], "проверка здоровья — без REDISCLI_AUTH или сверки с PONG"),
+    (AUTH_SPOILS["web-password"], "пароль очереди — только у redis"),
+    (AUTH_SPOILS["web-a-flag"], "пароль флагом redis-cli виден в списке процессов"),
 ]
 
 
-@pytest.mark.parametrize(("spoil", "line"), LINES, ids=[line[:40] for _, line in LINES])
-def test_a177_a178_each_reason_is_the_whole_line(spoil: Callable, line: str) -> None:
-    """A177, A178: у каждой причины `db-roles` и `redis-auth` строка нарушения сверяется целиком —
-    регистр и лишние знаки в причине тест видит."""
+@pytest.mark.parametrize(("spoil", "why"), WHY, ids=[why[:30] for _, why in WHY])
+def test_a177_a178_each_reason_is_exact(spoil: Callable, why: str) -> None:
+    """A177, A178: причина каждого нарушения `db-roles` и `redis-auth` сверяется целиком — регистр
+    и лишние знаки тест видит; код, сервис и переменная — в таблицах проб."""
     config = valid()
     spoil(config)
-    assert [violation.line() for violation in sr.check(config)] == [line]
+    assert [violation.why for violation in sr.check(config)] == [why]
 
 
 @pytest.mark.parametrize(
