@@ -66,6 +66,14 @@ describe('образцы вида', () => {
     expect(link.getAttribute('href')).toBe(`#${screen.getByRole('table').id}`);
   });
 
+  it('F20: карточка образца — снова Card, без своего фона: фон даёт тема', () => {
+    renderWithProviders(<StubPage />);
+    const heading = screen.getByRole('heading', { level: 2, name: words.samples.title });
+    const card = heading.closest<HTMLElement>('.mantine-Card-root');
+    expect(card, 'образцы не на Card').not.toBeNull();
+    expect(card?.style.backgroundColor).toBe(cssVar('surface'));
+  });
+
   it('F20: таблица из трёх строк по центру, статусы — словом на подложке токенов', () => {
     renderWithProviders(<StubPage />);
     const table = within(screen.getByRole('table'));

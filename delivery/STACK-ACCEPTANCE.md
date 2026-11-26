@@ -53,7 +53,7 @@ stale_after: 2026-12-20
 | Длинные промпты — в файлы | `check_ast_gate.py --rule inline-prompt` | хук `inline-prompt-gate`, коммит; CI: `gates`; граница правила названа в A120 | как есть |
 | Event loop не голодает | `check_ast_gate.py --rule cpu-in-async` | хук `cpu-in-async-gate`, коммит; CI: `gates` | как есть |
 | Список-эндпоинт имеет границу | `check_ast_gate.py --rule unbounded-list` | хук `unbounded-list-gate`, коммит; CI: `gates` | как есть |
-| Длина файлов под контролем | `check_file_length.sh` | хук `file-length`, коммит; маски `*.py *.ts *.tsx *.mjs`; CI: `gates` | как есть |
+| Длина файлов под контролем | `check_file_length.sh` | хук `file-length`, коммит; маски `*.py *.ts *.tsx *.mjs *.js`; CI: `gates` | как есть |
 | Копипаст не растёт | `check_jscpd_gate.sh` | хук `jscpd-dry-gate`, коммит — стоит и пропускает: jscpd нет | n/a — jscpd — пакет npm, без него не судит и половина Python; npm в CI — поставка В1б. Дублирование Python до В1б не судит никто |
 | Warnings линтера не растут | `check_eslint_warnings.sh` | хуки eslint, ратчета и prettier сняты до В1б (`.pre-commit-config.yaml`) | n/a — гейт фронта; npm в CI — поставка В1б |
 | Сложность функций под контролем | `check_complexity_gate.sh` | хук `complexity-gate`, коммит; область `backend/src`; CI: `gates` | как есть — половина Python (ruff); TS-половина (eslint) — n/a до В1б |

@@ -43,6 +43,9 @@ const DARK =
   ':root[data-mantine-color-scheme=dark]' +
   '{--audit-bg: oklch(17% .012 255);--audit-ink: oklch(95% .006 250)}';
 const PAGE = ':root body{background-color:var(--audit-bg);color:var(--audit-ink)}';
+// Скрипт схемы из public/ (F12): Vite кладёт его в корень сборки как есть, без хеша в имени.
+const SCHEME = 'color-scheme.js';
+const SCHEME_TAG = `<script src="/${SCHEME}"></script>`;
 // Сборка-образец — как у Vite: страница, свой код, код пакетов с узлами из списка, стили.
 const SAMPLE = {
   'index.html': `<!doctype html>
@@ -50,6 +53,7 @@ const SAMPLE = {
   <head>
     <meta charset="UTF-8" />
     <title>${NAME}</title>
+    ${SCHEME_TAG}
     <script type="module" crossorigin src="/${JS}"></script>
     <link rel="modulepreload" crossorigin href="/${VENDOR}">
     <link rel="stylesheet" crossorigin href="/${CSS}">
@@ -57,6 +61,7 @@ const SAMPLE = {
   <body><div id="root"></div></body>
 </html>
 `,
+  [SCHEME]: 'document.documentElement.setAttribute("data-mantine-color-scheme","light");',
   [JS]: 'import"./vendor-Cq2fP0aZ.js";document.title="x";',
   [VENDOR]: 'const s="http://www.w3.org/2000/svg",r="https://react.dev/",m="https://mantine.dev/";',
   [CSS]: `body{margin:0}${LIGHT}${DARK}${PAGE}.logo{background:url(./logo-AbCd1234.svg)}`,
@@ -123,9 +128,9 @@ afterAll(() => {
 });
 
 describe('оракул сборки', () => {
-  it('F5: чистая сборка-образец — код 0 и «проверено N файлов»', () => {
+  it('F5, F12: чистая сборка-образец со скриптом схемы — код 0 и «проверено N файлов»', () => {
     const { code, out } = oracle();
-    expect(out.trim()).toBe('проверено 7 файлов');
+    expect(out.trim()).toBe('проверено 8 файлов');
     expect(code).toBe(0);
   });
 
@@ -222,6 +227,44 @@ describe('оракул сборки', () => {
   ])('F7: встроенный скрипт в разметке (%s) — красный', (_kind, change, reason) => {
     const { code, out } = oracle((dist) => edit(dist, 'index.html', change));
     expect(out).toContain(`index.html: встроенный скрипт — ${reason}`);
+    expect(code).toBe(1);
+  });
+
+  // Скрипт схемы ставит атрибут до первой отрисовки только обычным блокирующим тегом в <head>:
+  // отложенный, асинхронный или модуль исполнятся после разбора страницы — вспыхнет светлая.
+  it.each([
+    ['с defer', `<script defer src="/${SCHEME}"></script>`, 'с defer'],
+    ['с async', `<script async src="/${SCHEME}"></script>`, 'с async'],
+    ['модулем', `<script type="module" src="/${SCHEME}"></script>`, 'с type="module"'],
+  ])('F12: тег скрипта схемы %s — красный', (_kind, tag, reason) => {
+    const spoil = (dist) => edit(dist, 'index.html', (html) => html.replace(SCHEME_TAG, tag));
+    expectRed(
+      spoil,
+      `index.html: скрипт схемы /${SCHEME} ${reason} — нужен обычный блокирующий тег`,
+    );
+  });
+
+  it('F12: тег скрипта схемы в <body> — красный', () => {
+    const move = (html) => html.replace(SCHEME_TAG, '').replace('</body>', `${SCHEME_TAG}</body>`);
+    expectRed(
+      (dist) => edit(dist, 'index.html', move),
+      `index.html: скрипт схемы /${SCHEME} — не в <head>`,
+    );
+  });
+
+  it('F12: тега скрипта схемы нет — красный', () => {
+    const drop = (html) => html.replace(SCHEME_TAG, '');
+    expectRed((dist) => edit(dist, 'index.html', drop), `index.html: нет скрипта схемы /${SCHEME}`);
+  });
+
+  it('F12: исключение «хеш в имени» — только поимённое: другой файл без хеша — красный', () => {
+    const spoil = (dist) => {
+      renameSync(join(dist, SCHEME), join(dist, 'theme.js'));
+      edit(dist, 'index.html', (html) => html.replace(`/${SCHEME}`, '/theme.js'));
+    };
+    const { code, out } = oracle(spoil);
+    expect(out).toContain('index.html: ссылка /theme.js: в имени файла нет хеша');
+    expect(out).toContain(`index.html: нет скрипта схемы /${SCHEME}`);
     expect(code).toBe(1);
   });
 
