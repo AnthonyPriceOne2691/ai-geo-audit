@@ -303,9 +303,10 @@ def test_a171_slow_stop_is_red(
     assert str(red.value) == "остановка — код 0, выход 0, 10.0 с"
 
 
-def test_a171_redis_steps_come_last_in_the_oracle_table() -> None:
-    """A171: шаги redis — два, номер A171, последними в таблице оракула: вторая строка
-    останавливает redis."""
+def test_a171_redis_steps_come_last_before_the_final_search() -> None:
+    """A171: шаги redis — два, номер A171, последними в таблице оракула перед поиском секретов
+    после всех шагов (A172, первая строка): вторая строка останавливает redis."""
     oracle = importlib.import_module("stack_oracle")
+    search = importlib.import_module("stack_oracle_search")
     assert [examples for examples, *_ in redis.REDIS_STEPS] == ["A171", "A171"]
-    assert oracle.STEPS[-2:] == redis.REDIS_STEPS
+    assert oracle.STEPS[-3:] == [*redis.REDIS_STEPS, *search.FINAL_SEARCH]

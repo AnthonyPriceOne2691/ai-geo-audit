@@ -212,16 +212,18 @@ def test_a88_stop_steps_go_after_hardening_and_before_a67() -> None:
     A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков. A170:
     шаги ролей — после остановки и падения api и до A67: смена пароля роли сервиса на время шага
     отнимает у api вход в базу, шаги api идут раньше. A173: отказ старта — после шагов ролей и
-    до A67: разовые контейнеры живут на поднятом стеке. A171: шаги redis — после A67,
-    последними: вторая строка останавливает redis."""
+    до A67: разовые контейнеры живут на поднятом стеке. A172, первая строка: поиск секретов — на
+    живом стеке перед A67 и последним шагом. A171: шаги redis — после A67, перед последним
+    поиском: вторая строка останавливает redis."""
     hard = importlib.import_module("stack_oracle_hardening")
     stop = importlib.import_module("stack_oracle_stop")
     roles = importlib.import_module("stack_oracle_roles")
     redis = importlib.import_module("stack_oracle_redis")
     start = importlib.import_module("stack_oracle_start")
+    search = importlib.import_module("stack_oracle_search")
     tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *roles.ROLE_STEPS, *start.START_STEPS]
-    tail += compose.BREAKING_STEPS
-    tail += redis.REDIS_STEPS
+    tail += search.LIVE_SEARCH + compose.BREAKING_STEPS
+    tail += redis.REDIS_STEPS + search.FINAL_SEARCH
     assert oracle.STEPS[-len(tail) :] == tail
     assert [step.__name__ for _, _, step, _ in stop.STOP_STEPS] == ["step_stop", "step_crash"]
 
