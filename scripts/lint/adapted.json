@@ -29,8 +29,8 @@
     "changed": "root_packages = ai_geo_audit; контракт слоёв api → storage → logs → config → refusal в контейнере ai_geo_audit, api обязательный (A95); контракты integrations-are-leaves и core-models-leaf не заведены — пакета интеграций нет, а «модели не импортируют верхние слои» держит контракт слоёв: storage стоит под api"
   },
   "frontend/eslint.config.js": {
-    "reason": "не адаптация шаблона канона: свой конфиг фронта из Ч1.4а; шаблон eslint канона — поставка В1б",
-    "changed": "файл написан в Ч1.4а под фронт проекта, а не извлечён из payload; путь совпадает с конфигом канона eslint.config.js в каталоге фронта. Обновление контура его не перезаписывает: решение о шаблоне канона — в В1б"
+    "reason": "шаблон канона CQG `<frontend>/eslint.config.js` с объявленными блоками проекта (В1б, решение ведущей 2026-11-26): доктор сверяет тело с каноном, свой конфиг Ч1.4а висел бы расхождением",
+    "changed": "правила блока `src/**/*.{ts,tsx}` — как в шаблоне; переносы строк — по prettier проекта, шапка-комментарий и импорт `globals`; после блока шаблона — три блока проекта: З14 (`no-restricted-syntax` по `src/**/*.{ts,tsx}`: `dangerouslySetInnerHTML`, присваивание `innerHTML` и `outerHTML`, `insertAdjacentHTML`, `document.write` и `writeln` — A391), `scripts/**/*.mjs` с глобальными именами Node (оракул сборки), `public/**/*.js` — классический скрипт браузера до приложения (F12)"
   },
   ".github/workflows/quality.yml": {
     "reason": "шаблон канона под раскладку backend/ и frontend/, uv и npm: права, закрепление действий, установка из замка; фронт — своей джобой (В1б)",
