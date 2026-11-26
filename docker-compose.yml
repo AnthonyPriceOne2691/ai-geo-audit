@@ -41,6 +41,8 @@ services:
       retries: 12
       start_period: 10s
 
+  # Пароль очереди — на входе redis-server here-doc'ом, не аргументом: его нет ни в строке процесса,
+  # ни в описании контейнера; `$$` раскрывает оболочка в контейнере, а не compose (A171, A172).
   redis:
     <<: *hardened
     image: redis:7.4-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
@@ -48,8 +50,18 @@ services:
     read_only: true
     restart: unless-stopped
     networks: [data]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?пароль очереди — .env.example, блок стека}
+    command:
+      - sh
+      - -c
+      - |
+        exec redis-server - <<EOF
+        requirepass $$REDIS_PASSWORD
+        EOF
+    # Без `-e` redis-cli выходит с кодом 0 и на ответ-ошибку: успех — только ответ PONG.
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -x PONG"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -93,8 +105,7 @@ services:
       # Слушает все адреса контейнера: api слышит сеть стека; наружу портов нет (правило ports).
       API_HOST: 0.0.0.0
       DATABASE_URL: ${API_DATABASE_URL:?задайте адрес базы api — .env.example}
-      # Очередь без пароля до «Учёток хранилищ»; там адрес — переменная сервера API_REDIS_URL.
-      REDIS_URL: redis://redis:6379/0
+      REDIS_URL: ${API_REDIS_URL:?задайте адрес очереди api с паролем — .env.example}
       JWT_SECRET: ${JWT_SECRET:?задайте секрет подписи — openssl rand -hex 32}
       KEYS_MASTER_KEY_FILE: /run/secrets/master_key
       API_TRUSTED_PROXIES: ${WEB_ADDRESS:?задайте адрес web — единственный доверенный прокси}

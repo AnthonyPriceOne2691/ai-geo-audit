@@ -1,8 +1,8 @@
-"""Шаги оракула «Учёток-1» — роли базы на живом стеке: права роли сервиса и роли миграций
+"""Шаги оракула «Учёток хранилищ» — роли базы на живом стеке: права роли сервиса и роли миграций
 изнутри контейнеров процессов (A85), повтор скрипта ролей на поднятом томе, смена пароля, стенд
-до поставки и снятие лишнего (A170), ошибка в скрипте ролей (A172, вторая строка). Проба базы —
-`scripts/oracle_db_probe.py` на входе `python -` (L87); запросы суперпользователя — psql в
-контейнере db через сокет.
+до поставки и снятие лишнего (A170), лишнее с передачей (A380, первая строка), ошибка в скрипте
+ролей (A172, вторая строка). Проба базы — `scripts/oracle_db_probe.py` на входе `python -` (L87);
+запросы суперпользователя — psql в контейнере db через сокет.
 
 Импорт в одну сторону: `stack_oracle.py` ставит эти шаги на живом стеке после шагов остановки
 api и до A67: смена пароля в A170 на время шага отнимает у api вход в базу.
@@ -135,6 +135,38 @@ EXTRA_ROWS = [
     "по умолчанию S SELECT,USAGE",
     "членств 0",
 ]
+#: A380, первая строка: лишнее четырёх видов; дальше передают роль сервиса и временная роль —
+#: через `SET ROLE` (пробы S5–S7 2026-11-25T12:50Z и 13:07Z); прямое членство роли миграций от
+#: суперпользователя держит снятие её членств (находка проверяющей на `0013506`).
+PASSED = """
+GRANT SELECT ON alembic_version TO audit_app WITH GRANT OPTION;
+SET ROLE audit_app;
+GRANT SELECT ON alembic_version TO PUBLIC;
+RESET ROLE;
+GRANT pg_read_all_data TO audit_app WITH ADMIN OPTION;
+SET ROLE audit_app;
+GRANT pg_read_all_data TO audit_migrate;
+RESET ROLE;
+CREATE ROLE oracle_grantor;
+GRANT pg_write_all_data TO oracle_grantor WITH ADMIN OPTION;
+SET ROLE oracle_grantor;
+GRANT pg_write_all_data TO audit_app;
+RESET ROLE;
+GRANT pg_monitor TO audit_migrate;
+"""
+PASSED_CHECK = """
+SELECT 'членств ' || count(*) FROM pg_auth_members
+ WHERE member IN ('audit_app'::regrole, 'audit_migrate'::regrole);
+SELECT 'права audit_app ' || coalesce(string_agg(x.privilege_type
+       || CASE WHEN x.is_grantable THEN ' с передачей' ELSE '' END, ','
+       ORDER BY x.privilege_type), '-')
+  FROM pg_class c, aclexplode(c.relacl) x
+ WHERE c.oid = 'public.alembic_version'::regclass AND x.grantee = 'audit_app'::regrole;
+SELECT 'права PUBLIC ' || count(*) FROM pg_class c, aclexplode(c.relacl) x
+ WHERE c.oid = 'public.alembic_version'::regclass AND x.grantee = 0;
+"""
+PASSED_ROWS = ["членств 0", "права audit_app DELETE,INSERT,SELECT,UPDATE", "права PUBLIC 0"]
+GRANTOR_DROP = "DROP ROLE oracle_grantor;\n"
 
 
 def compose_with(
@@ -352,6 +384,28 @@ def step_extra_revoked(run: Run) -> str:
     )
 
 
+def step_passed_extra(run: Run) -> str:
+    """A380, первая строка: суперпользователь заводит лишнее четырёх видов, затем скрипт
+    ролей той же командой, что в A170, — код 0; членств у обеих ролей нет, у роли сервиса на
+    `alembic_version` — четыре права без права передачи, у `PUBLIC` — ни одного; временная роль
+    удаляется — и после отказа."""
+    try:
+        superuser(run, PASSED)
+        done = rerun(run)
+        rows = superuser(run, PASSED_CHECK)
+    finally:
+        dropped = compose_with(run, {}, *SUPERUSER, stdin=GRANTOR_DROP.encode())
+    problems = code_problems("скрипт ролей", done)
+    problems += row_problems("лишнее с передачей", rows, PASSED_ROWS)
+    problems += code_problems("удаление oracle_grantor", dropped)
+    if problems:
+        raise StepError("; ".join(problems))
+    return (
+        "скрипт ролей — код 0; членств 0; у роли сервиса на alembic_version — DELETE, INSERT, "
+        "SELECT, UPDATE без права передачи, у PUBLIC — нет; oracle_grantor удалена"
+    )
+
+
 def step_broken_script(run: Run) -> str:
     """A172, вторая строка: копия скрипта ролей с лишним словом сразу после пароля роли сервиса на
     входе `psql -e`, с новым паролем роли миграций (`exec -e POSTGRES_MIGRATE_PASSWORD`) — код 3;
@@ -392,5 +446,6 @@ ROLE_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A170", "новый пароль роли сервиса и возврат", step_new_password, False),
     ("A170", "таблицы стенда до поставки — роли миграций", step_legacy_table, False),
     ("A170", "лишнее у роли сервиса снимается", step_extra_revoked, False),
+    ("A380", "лишнее с передачей снимается, временная роль удалена", step_passed_extra, False),
     ("A172", "ошибка в скрипте ролей: откат, паролей в выводе нет", step_broken_script, False),
 ]

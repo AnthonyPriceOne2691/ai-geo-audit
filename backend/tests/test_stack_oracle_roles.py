@@ -1,8 +1,8 @@
-"""Шаги ролей базы оракула без Docker (A85, три строки; A170, четыре; A172, вторая): проба базы
-на входе `python -` в контейнере api и разовом migrate, запросы суперпользователя в db, повтор
-скрипта ролей, судьи ответов; итог шага — строкой целиком, у каждой ветки — свой тест (L88),
-флаги команд судятся (L84), значения `-e ИМЯ` — только в окружении команды. Модули `scripts/`
-лежат вне пакета."""
+"""Шаги ролей базы оракула без Docker (A85, три строки; A170, четыре; A380, первая; A172,
+вторая): проба базы на входе `python -` в контейнере api и разовом migrate, запросы
+суперпользователя в db, повтор скрипта ролей, судьи ответов; итог шага — строкой целиком, у
+каждой ветки — свой тест (L88), флаги команд судятся (L84), значения `-e ИМЯ` — только в
+окружении команды. Модули `scripts/` лежат вне пакета."""
 
 from __future__ import annotations
 
@@ -677,6 +677,109 @@ def test_a170_extra_step_stops_when_the_table_is_not_made(
     assert fake.calls == [((*MIGRATE, "extra-make"), PROBE_TEXT)]
 
 
+PASSED_ROWS = ["членств 0", "права audit_app DELETE,INSERT,SELECT,UPDATE", "права PUBLIC 0"]
+#: Лишнее на месте — скрипт упал до конца транзакции (порча «отзыв без `CASCADE`»).
+KEPT_ROWS = [
+    "членств 3",
+    "права audit_app DELETE,INSERT,SELECT с передачей,UPDATE",
+    "права PUBLIC 1",
+]
+
+
+def passed_rows(rows: list[str] | Exception = PASSED_ROWS) -> dict[str, Any]:
+    return {roles.PASSED: rows if isinstance(rows, Exception) else [], roles.PASSED_CHECK: rows}
+
+
+def test_a380_passed_extra_is_revoked_and_the_grantor_is_dropped(
+    monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace
+) -> None:
+    """A380, первая строка: суперпользователь заводит лишнее четырёх видов, затем скрипт
+    ролей той же командой, что в A170; членств у обеих ролей нет, у роли сервиса на
+    `alembic_version` — четыре права без права передачи, у `PUBLIC` — ни одного; временная роль
+    удаляется. Итог — строкой целиком."""
+    fake = stack(monkeypatch, {}, passed_rows(), codes=(0, 0))
+    assert roles.step_passed_extra(run) == (
+        "скрипт ролей — код 0; членств 0; у роли сервиса на alembic_version — DELETE, INSERT, "
+        "SELECT, UPDATE без права передачи, у PUBLIC — нет; oracle_grantor удалена"
+    )
+    assert fake.calls == [
+        (DB, roles.PASSED.encode()),
+        ((*RERUN, RERUN_TEXT), None),
+        (DB, roles.PASSED_CHECK.encode()),
+        (DB, b"DROP ROLE oracle_grantor;\n"),
+    ]
+    assert fake.extras == [{}, {}]
+
+
+def test_a380_extra_is_passed_on_by_set_role_and_from_a_temporary_grantor() -> None:
+    """A380, первая строка: лишнее четырёх видов — право на `alembic_version` с правом передачи и от
+    роли сервиса `PUBLIC`, членство с `ADMIN OPTION` и от роли сервиса роли миграций, членство от
+    временной роли роли сервиса; выдаёт роль сервиса и временная роль — через `SET ROLE`; прямое
+    членство роли миграций от суперпользователя — порча «снятие членств без роли миграций»."""
+    grants = [line for line in roles.PASSED.splitlines() if line.startswith(("GRANT", "SET"))]
+    assert grants == [
+        "GRANT SELECT ON alembic_version TO audit_app WITH GRANT OPTION;",
+        "SET ROLE audit_app;",
+        "GRANT SELECT ON alembic_version TO PUBLIC;",
+        "GRANT pg_read_all_data TO audit_app WITH ADMIN OPTION;",
+        "SET ROLE audit_app;",
+        "GRANT pg_read_all_data TO audit_migrate;",
+        "GRANT pg_write_all_data TO oracle_grantor WITH ADMIN OPTION;",
+        "SET ROLE oracle_grantor;",
+        "GRANT pg_write_all_data TO audit_app;",
+        "GRANT pg_monitor TO audit_migrate;",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("codes", "rows", "why"),
+    [
+        (
+            (3, 3),
+            KEPT_ROWS,
+            "скрипт ролей — код 3, ждали 0; лишнее с передачей: «членств 3»; лишнее с передачей: "
+            "«права audit_app DELETE,INSERT,SELECT с передачей,UPDATE»; лишнее с передачей: "
+            "«права PUBLIC 1»; удаление oracle_grantor — код 3, ждали 0",
+        ),
+        (
+            (0, 3),
+            ["членств 1", *PASSED_ROWS[1:]],
+            "лишнее с передачей: «членств 1»; удаление oracle_grantor — код 3, ждали 0",
+        ),
+        ((0, 0), [*PASSED_ROWS[:2], "права PUBLIC 1"], "лишнее с передачей: «права PUBLIC 1»"),
+        (
+            (0, 0),
+            PASSED_ROWS[:2],
+            "лишнее с передачей: строк 2, ждали 3",
+        ),
+    ],
+    ids=["без-cascade", "без-granted-by", "public", "строк-меньше"],
+)
+def test_a380_step_is_red_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch,
+    run: SimpleNamespace,
+    codes: tuple[int, int],
+    rows: list[str],
+    why: str,
+) -> None:
+    """A380, первая строка: порчи «отзыв прав роли сервиса без `CASCADE`» — скрипт с кодом 3 и
+    лишнее на месте — и «снятие членств без `GRANTED BY`» — членство от временной роли осталось, и
+    она не удаляется; право `PUBLIC` осталось — красное с причиной целиком."""
+    stack(monkeypatch, {}, passed_rows(rows), codes=codes)
+    assert red(roles.step_passed_extra, run) == why
+
+
+def test_a380_grantor_is_dropped_when_making_the_extra_fails(
+    monkeypatch: pytest.MonkeyPatch, run: SimpleNamespace
+) -> None:
+    """A380, первая строка: суперпользователь не завёл лишнее — красное его причиной, скрипт ролей
+    не идёт, временная роль удаляется и тогда."""
+    failed = roles.StepError("docker exec — код 3: ERROR:  role exists")
+    fake = stack(monkeypatch, {}, passed_rows(failed), codes=(0,))
+    assert red(roles.step_passed_extra, run) == "docker exec — код 3: ERROR:  role exists"
+    assert fake.calls == [(DB, roles.PASSED.encode()), (DB, b"DROP ROLE oracle_grantor;\n")]
+
+
 ECHOED = 'psql -X -e -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 BROKEN = ("exec", "-T", "-e", "POSTGRES_MIGRATE_PASSWORD", "db", "sh", "-c", ECHOED)
 BROKEN_TEXT = SCRIPT_TEXT.replace(APP_LINE, "PASSWORD :'app_password' oracle_extra_word;")
@@ -761,9 +864,10 @@ def test_a172_broken_script_step_needs_exactly_one_service_password_line(
 
 
 def test_a85_a170_a172_role_steps_go_in_order_and_none_stops_the_rest() -> None:
-    """A85, A170, A172: шаги ролей по порядку — три A85, четыре A170 (смена пароля — после шагов,
-    которым нужен вход api по прежнему адресу), вторая строка A172; ни один не нужен следующим:
-    красный шаг ролей не останавливает остальные."""
+    """A85, A170, A380, A172: шаги ролей по порядку — три A85, четыре A170 (смена пароля — после
+    шагов, которым нужен вход api по прежнему адресу), первая строка A380 — после шагов A170,
+    вторая строка A172; ни один не нужен следующим: красный шаг ролей не останавливает
+    остальные."""
     assert [(n, step.__name__, needed) for n, _, step, needed in roles.ROLE_STEPS] == [
         ("A85", "step_service_denied", False),
         ("A85", "step_migrate_role", False),
@@ -772,5 +876,6 @@ def test_a85_a170_a172_role_steps_go_in_order_and_none_stops_the_rest() -> None:
         ("A170", "step_new_password", False),
         ("A170", "step_legacy_table", False),
         ("A170", "step_extra_revoked", False),
+        ("A380", "step_passed_extra", False),
         ("A172", "step_broken_script", False),
     ]

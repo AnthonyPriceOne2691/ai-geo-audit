@@ -22,7 +22,8 @@ from ai_geo_audit.config import master_key
 PLACEHOLDER = "CHANGE_ME"
 #: Секрет подписи короче 32 байт перебирается; `openssl rand -hex 32` даёт 64 знака.
 MIN_SECRET_BYTES = 32
-#: Пароль базы в бою — не короче, по знакам после раскодирования процентной записи (A21).
+#: Пароль базы и очереди в бою — не короче, по знакам после раскодирования процентной записи
+#: (A21, A175).
 MIN_DB_PASSWORD = 12
 #: Причина, когда драйвер и `urlsplit` читают адрес базы по-разному: без адреса и его кусков.
 DB_URL_UNENCODED_CHARS = "в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23"
@@ -112,20 +113,38 @@ def _read_by_both(url: str) -> tuple[object, ...] | None:
     return (*by_driver, driver.database)
 
 
+def _address(env_name: str, url: str, what: str) -> tuple[object, ...] | Problem:
+    """Адрес с паролем в бою читается одинаково обоими разборщиками, пароль — не короче 12 знаков
+    после раскодирования (A21, A175). → части адреса или причина, без адреса и его кусков."""
+    parts = _read_by_both(url)
+    if parts is None:
+        return Problem(env_name, DB_URL_UNENCODED_CHARS)
+    password = parts[1] if isinstance(parts[1], str) else ""
+    if len(password) < MIN_DB_PASSWORD:
+        return Problem(env_name, f"пароль {what} короче {MIN_DB_PASSWORD} знаков")
+    return parts
+
+
 def _database(storage: config.StorageSettings, process: Process) -> Problem | None:
     """Адрес базы в бою: задан явно, без заглушки, читается одинаково, пароль не короче 12, имя
     после раскодирования — роль процесса (A174). Одна причина на переменную, роль — последней."""
     if problem := _explicit("DATABASE_URL", storage, "database_url"):
         return problem
-    parts = _read_by_both(storage.database_url.get_secret_value())
-    if parts is None:
-        return Problem("DATABASE_URL", DB_URL_UNENCODED_CHARS)
-    password = parts[1] if isinstance(parts[1], str) else ""
-    if len(password) < MIN_DB_PASSWORD:
-        return Problem("DATABASE_URL", f"пароль базы короче {MIN_DB_PASSWORD} знаков")
+    parts = _address("DATABASE_URL", storage.database_url.get_secret_value(), "базы")
+    if isinstance(parts, Problem):
+        return parts
     if parts[0] != DB_ROLES[process]:
         return Problem("DATABASE_URL", DB_ROLE_FOREIGN.format(DB_ROLES[process]))
     return None
+
+
+def _queue(storage: config.StorageSettings) -> Problem | None:
+    """Адрес очереди в бою (A175): задан явно, без заглушки, читается одинаково, пароль не короче
+    12 знаков после раскодирования. Одна причина на переменную, заглушка — первой."""
+    if problem := _explicit("REDIS_URL", storage, "redis_url"):
+        return problem
+    parts = _address("REDIS_URL", storage.redis_url.get_secret_value(), "очереди")
+    return parts if isinstance(parts, Problem) else None
 
 
 def _master_key(path: str) -> Problem | None:
@@ -159,7 +178,7 @@ def problems(
     secret = (access or config.access).jwt_secret.get_secret_value()
     checks = {
         "DATABASE_URL": _database(storage, process),
-        "REDIS_URL": _explicit("REDIS_URL", storage, "redis_url"),
+        "REDIS_URL": _queue(storage),
         "JWT_SECRET": _secret("JWT_SECRET", secret, "подпись пропусков: openssl rand -hex 32"),
         "KEYS_MASTER_KEY_FILE": _master_key((keys or config.keys).master_key_file),
         "API_TRUSTED_PROXIES": _explicit(

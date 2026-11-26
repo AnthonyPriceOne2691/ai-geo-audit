@@ -246,9 +246,10 @@ def build_open_body() -> FastAPI:
     return app
 
 
-#: Пароли адресов баз в пробах — из слов-заглушек; в адрес они подставляются.
+#: Пароли адресов баз и очереди в пробах — из слов-заглушек; в адрес они подставляются.
 CLOSED_WORDS = "probe-words-123456"
 PROD_DB_WORDS = "prod-db-words-123456"
+PROD_QUEUE_WORDS = "prod-queue-words-123456"
 PROD_JWT_WORDS = "prod-jwt-from-plain-words-for-tests-only"
 
 
@@ -266,7 +267,7 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     env = {
         "APP_ENV": "prod",
         "DATABASE_URL": f"postgresql+asyncpg://audit_app:{PROD_DB_WORDS}@db:5432/audit",
-        "REDIS_URL": "redis://redis:6379/0",
+        "REDIS_URL": f"redis://:{PROD_QUEUE_WORDS}@redis:6379/0",
         "JWT_SECRET": PROD_JWT_WORDS,
         "KEYS_MASTER_KEY_FILE": str(key),
         "API_TRUSTED_PROXIES": "10.9.9.9",
