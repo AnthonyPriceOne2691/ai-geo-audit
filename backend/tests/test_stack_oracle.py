@@ -667,20 +667,24 @@ def test_a73_a87_a179_rules_step_wants_five_services_and_twenty_six_rules(
 @pytest.mark.parametrize(
     ("text", "red"),
     [
-        ("итог: сервисов 5, правил 29, нарушений 0\n", ""),
+        ("итог: сервисов 5, правил 31, нарушений 0\n", ""),
+        (
+            "итог: сервисов 5, правил 29, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 29,",
+        ),
         (
             "итог: сервисов 5, правил 26, нарушений 0\n",
             "правила — код 0: итог: сервисов 5, правил 26,",
         ),
     ],
-    ids=["29", "без-боевых"],
+    ids=["31", "без-правил-боя-6а-2", "без-боевых"],
 )
 def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     tmp_path: Path, text: str, red: str
 ) -> None:
-    """A89, вторая строка: шаг правил на основном файле с боевым наложением — оба файла названы
-    явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5, правил 29,
-    нарушений 0»."""
+    """A89, вторая строка, A181, вторая строка: шаг правил на основном файле с боевым наложением —
+    оба файла названы явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5,
+    правил 31, нарушений 0» — блок замены подписанных чисел."""
     docker = RulesAnswer()
     docker.answer = (0, text)
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
@@ -688,7 +692,7 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
         with pytest.raises(oracle.StepError, match=red):
             compose.step_rules_on_prod(run)
     else:
-        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 29")
+        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 31")
     files = ["-f", str(run.copy / "docker-compose.yml"), "-f", str(run.copy / compose.PROD)]
     configs = [args for args in docker.seen if "config" in args]
     assert configs
@@ -696,7 +700,7 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     *_, rules = docker.seen
     assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
     assert compose.PROD == "docker-compose.prod.yml"
-    assert compose.PROD_RULES == 29
+    assert compose.PROD_RULES == 31
 
 
 def test_a65_a220_oracle_master_key_passes_the_startup_parse(tmp_path: Path) -> None:
