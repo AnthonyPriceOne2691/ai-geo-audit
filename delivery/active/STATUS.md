@@ -17,10 +17,16 @@
        владельца: спека, план, шесть пакетов. -->
 - **builder:** agent:front-session
 - **verifier:** agent:reviewer2-session
-- **human_ok_spec:** pending
-- **human_ok_plan:** pending
-  <!-- Строки `new_dependency` для шести пакетов — после слова владельца, с `by=human:owner`
-       (L93). -->
+- **human_ok_spec:** yes (by=human:owner at=2026-11-26T10:54Z)
+- **human_ok_plan:** yes (by=human:owner at=2026-11-26T10:54Z)
+  <!-- Слово владельца 2026-11-26T10:54:08Z «Подписываю Ч2.1 и В1б, публикуем Схему, открой окна
+       подписи» на показ ведущей (`docs/deliveries/contour-b1b-sign-show.md`), вершина `c803a27`:
+       спека `29e795e020ed` (197 строк), план `c9e635da5eb3`, строк примеров 15 — `582037fcc36b`.
+       Тем же словом: шесть пакетов (jscpd, dependency-cruiser, knip, `@stryker-mutator/core`,
+       `@stryker-mutator/vitest-runner`, fast-check) — строки `new_dependency` с `by=human:owner`
+       и этим временем вносит исполнитель на срезе 1 вместе с `approved-packages.json` (L93,
+       A394); обязательная проверка `frontend` в защите main — ведущая сразу после слияния В1б.
+       Окно подписи необратимого — тем же словом, запускает ведущая. -->
 - **shape-oracles:** cqg-deployed
   <!-- Половина Python — с В1а; TS-половина — эта поставка. -->
 - **behavior-oracles:** tests-present — pytest: контракт CI и хуков, мета-гейт; Vitest: F17, правило З14, свойство fast-check; гейты на копиях с нарушением
