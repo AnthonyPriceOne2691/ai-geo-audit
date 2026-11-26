@@ -2,7 +2,9 @@
 // Шаблон канона CQG `<frontend>/eslint.config.js` с объявленной адаптацией (решение
 // проверяющего 2026-11-18, В2; объявление в `scripts/lint/adapted.json` — с волной В1):
 // - блок `scripts/**/*.mjs` с глобальными именами Node: оракул сборки — скрипт Node без
-//   зависимостей, каталога скриптов в шаблоне нет. Остальное — как в шаблоне.
+//   зависимостей, каталога скриптов в шаблоне нет;
+// - блок `public/**/*.js` с глобальными именами браузера: скрипт схемы — классический скрипт до
+//   приложения (F12), каталога `public/` в шаблоне нет. Остальное — как в шаблоне.
 import js from '@eslint/js';
 import ts from 'typescript-eslint';
 import reactPlugin from 'eslint-plugin-react';
@@ -84,6 +86,12 @@ export default ts.config(
   {
     files: ['scripts/**/*.mjs'],
     languageOptions: { globals: globals.node },
+  },
+
+  // Адаптация: скрипт схемы из public/ — классический скрипт браузера до приложения (F12).
+  {
+    files: ['public/**/*.js'],
+    languageOptions: { sourceType: 'script', globals: globals.browser },
   },
 
   // Prettier — ПОСЛЕДНИМ, чтобы отключить конфликтующие стилевые правила

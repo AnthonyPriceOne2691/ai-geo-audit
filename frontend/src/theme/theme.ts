@@ -3,6 +3,7 @@ import {
   Container,
   Paper,
   Radio,
+  SegmentedControl,
   Table,
   Text,
   createTheme,
@@ -113,6 +114,17 @@ export const theme = createTheme({
     Text: Text.extend({ styles: { root: { '--text-color': 'currentColor' } } }),
     Checkbox: Checkbox.extend({ vars: iconOnFill('--checkbox-icon-color') }),
     Radio: Radio.extend({ vars: iconOnFill('--radio-icon-color') }),
+    // Бегунок и подписи переключателя — токеном 260 мс и общей кривой (F19): у Mantine 200 мс, а
+    // кривая бегунка — прямо `ease`. При «меньше движения» токен — 0, движения нет.
+    SegmentedControl: SegmentedControl.extend({
+      vars: () => ({
+        root: {
+          '--sc-transition-duration': cssVar('motionSlow'),
+          '--sc-transition-timing-function': cssVar('motionEase'),
+        },
+      }),
+      styles: { indicator: { transitionTimingFunction: cssVar('motionEase') } },
+    }),
     // Таблица по центру умолчанием темы (F18): заголовок и ячейки, первая колонка тоже. Стиль
     // ложится на сам элемент — в месте вызова выравнивание не задаётся.
     Table: Table.extend({
