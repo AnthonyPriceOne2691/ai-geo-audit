@@ -156,6 +156,25 @@ def test_a176_queue_password_is_scrubbed_in_both_forms(
     assert "redis=" in out and "decoded=" in out
 
 
+#: Токен бота тревог (A192): свой у теста, чтобы маску дала только отметка домена тревог.
+# pragma: allowlist nextline secret
+BOT_TOKEN = "123456789:journal-bot-token-value-0002"
+
+
+def test_a192_bot_token_is_masked_without_a_manual_mark(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A192: токена бота нет в журнале: `setup_logging` сама отмечает домен тревог, без ручной
+    отметки. Порча «домен тревог не отмечен» — токен в выводе."""
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setattr(config, "alerts", config.AlertSettings())
+    logs.setup_logging(fmt="text")
+    # Запись — мимо метода логгера, как в A6: страж исполнения ловит секрет в вызове лога.
+    log = logging.getLogger("x")
+    log.handle(log.makeRecord("x", logging.WARNING, __file__, 0, "bot=%s", (BOT_TOKEN,), None))
+    assert BOT_TOKEN not in capsys.readouterr().err
+
+
 def test_a21_redis_url_is_a_secret_in_repr_and_dump(monkeypatch: pytest.MonkeyPatch) -> None:
     """A21: `repr` настроек и `model_dump()` пароля Redis не показывают: адрес — `SecretStr`."""
     monkeypatch.setenv("REDIS_URL", REDIS_URL)

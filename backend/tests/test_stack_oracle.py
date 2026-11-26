@@ -20,6 +20,7 @@ import dbtools
 import pytest
 
 from ai_geo_audit.config import master_key
+from ai_geo_audit.config import startup_checks as sc
 
 sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 _spec = importlib.util.spec_from_file_location(
@@ -383,6 +384,7 @@ def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet:
 #: Выдуманные значения прогона для окружения compose: у роли миграций — с «@».
 SUPER, MIG, APP = "super-value-123456", "mig@role-value-123456", "app-role-value-123456"
 QUEUE = "queue-value-123456"
+BOT, CHAT = "bot-token-value-123456", "-1009876543210"
 
 
 def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
@@ -396,8 +398,26 @@ def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
         migrate_password=MIG,
         app_password=APP,
         redis_password=QUEUE,
+        bot_token=BOT,
+        chat_id=CHAT,
         copy=Path("/work/copy"),
     )
+
+
+def test_a192_bot_pair_goes_to_the_stack_environment() -> None:
+    """A192, A65 — вход строится иначе: окружение compose несёт выдуманную пару бота — токен и
+    номер чата; токена нет ни в одном другом значении окружения."""
+    env = compose.stack_env(stack_run())
+    assert (env["ALERT_TELEGRAM_BOT_TOKEN"], env["ALERT_TELEGRAM_CHAT_ID"]) == (BOT, CHAT)
+    assert [name for name, value in env.items() if BOT in value] == ["ALERT_TELEGRAM_BOT_TOKEN"]
+
+
+def test_a64_build_arg_names_are_the_startup_lists() -> None:
+    """A64: выдуманные `--build-arg` — ровно имена списков проверки старта пакета. Шаг сверяет
+    их со списками в образе, а этот тест — без Docker: новое имя (пара бота, A192) не уходит
+    мимо шага."""
+    lists = set().union(*map(sc.required, ("api", "worker", "migrate")))
+    assert set(oracle.BUILD_ARG_NAMES) == lists
 
 
 def test_a171_queue_password_goes_to_redis_and_the_api_queue_address() -> None:
