@@ -18,9 +18,15 @@ CI фронт не гоняет (`v1a-spec.md:57–58`).
       `package-lock.json`.
 
 ## Шаг живого прогона через web — вне подписанных строк
-Решение проверяющего 2026-11-19T13:10Z; строка 2 списка полосы. Стек Ч1.5б с web, собранный с
-кодом ветки; способ подъёма — строкой здесь на срезе 1. Скрипт шага —
-`docs/deliveries/front-tools/`, вне git.
+Решение проверяющего 2026-11-19T13:10Z; строка 2 списка полосы. Скрипт шага — вне git (у
+исполнителя — в своей временной папке сессии).
+
+Подъём: образ web этой ветки, без api — страницу и скрипт схемы отдаёт `location /` nginx Ч1.5б,
+резолвер `/api/` нужен только запросу к api. Из корня копии:
+`docker build -f deploy/web/Dockerfile --target web -t ai-geo-audit-web:scheme .` — в сборке
+образа идёт и оракул сборки; затем `docker run -d --rm --name scheme-web --read-only --tmpfs /tmp
+-p 127.0.0.1:<порт>:8080 ai-geo-audit-web:scheme`. После шага — `docker rm -f scheme-web` и
+`docker image rm ai-geo-audit-web:scheme`; тома нет: образ nginx его не объявляет.
 - [ ] `GET /color-scheme.js` через web — 200 и ровно один заголовок `Cache-Control: no-cache`
       (правило A78 Ч1.5б: год и `immutable` — только `/assets/`).
 - [ ] Страница через web в Chrome без окна, обе схемы выбраны переключателем — в консоли ноль
