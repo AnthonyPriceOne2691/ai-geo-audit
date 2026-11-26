@@ -12,7 +12,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** specify
+- **phase:** implement
 - **builder:** agent:hands-session
 - **verifier:** agent:reviewer3-session
   <!-- Третья проверяющая — решение ведущей 2026-11-26: чтение черновиков, приёмка с первого
