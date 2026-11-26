@@ -90,6 +90,7 @@ REVISION_CASES = [
     ("number-0", [{"number": 0}], "ck_reference_revisions_number"),
     ("file-without-sha", [{"file_sha256": None}], "ck_reference_revisions_file"),
     ("sha-63", [{"file_sha256": SHA[:63]}], "ck_reference_revisions_file"),
+    ("sha-65", [{"file_sha256": SHA + "0"}], "ck_reference_revisions_file"),
     ("sha-upper", [{"file_sha256": SHA.upper()}], "ck_reference_revisions_file"),
     ("edit-with-sha", [EDIT | {"file_sha256": SHA}], "ck_reference_revisions_file"),
     ("file-without-reason", [{"reason": ""}], "ck_reference_revisions_reason"),
@@ -211,6 +212,7 @@ PARAM_CASES: list[tuple[str, dict[str, Any], str | None]] = [
     ("unit-furlong", {"unit": "furlong"}, "ck_reference_params_unit"),
     ("check-missing", {"check_id": 99}, "fk_reference_params_check_id_reference_checks"),
     ("name-40", {"name": "a" * 40}, None),
+    ("name-with-digit", {"name": "p95_ms"}, None),
     ("value-60", {"value": Decimal("60")}, None),
     ("value-0.1", {"value": Decimal("0.1")}, None),
 ]
