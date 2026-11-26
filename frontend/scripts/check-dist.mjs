@@ -1,6 +1,7 @@
 // Оракул сборки фронта (F5, F6, F7, F12): страница не ссылается на несуществующее, в сборке нет
 // карт, адресов разработки, чужих узлов и встроенных скриптов — CSP для скриптов обойдётся без
-// хешей; шрифт — только наборами латиницы и кириллицы; фон и цвет текста обеих схем — в CSS сборки. Запуск из `frontend/`: node scripts/check-dist.mjs
+// хешей; шрифт — только наборами латиницы и кириллицы; фон и цвет текста обеих схем — в CSS сборки;
+// скрипт схемы — обычным тегом в <head>. Запуск из `frontend/`: node scripts/check-dist.mjs
 // [папка сборки = dist] [файл имени = src/brand.ts] [файл токенов = src/theme/tokens.css].
 // Без зависимостей: оракул работает и тогда, когда сломаны пакеты.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -19,6 +20,12 @@ const DEV = /localhost|127\.0\.0\.1/gi;
 // Имя, как у Vite: `assets/<имя>-<хеш из 8 знаков>.<расширение>` — без хеша кеш браузера
 // отдаст старый файл после выката.
 const HASHED = /^assets\/[^/]+-[\w-]{8}\.\w+$/;
+// Скрипт схемы (F12) ставит схему до первой отрисовки: файлом из public/, имя постоянное.
+const SCHEME_SCRIPT = 'color-scheme.js';
+// Файлы без хеша в имени — поимённо, с причиной. Новый — словом человека.
+const UNHASHED = new Map([
+  [SCHEME_SCRIPT, 'скрипт схемы из public/: имя постоянное, свежесть — no-cache правилом web'],
+]);
 const ATTR = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 const CODE = new Set(['.html', '.js', '.mjs', '.css']);
 
@@ -87,6 +94,27 @@ function checkMarkup(html) {
 const found = (text, re, group) =>
   new Set([...text.matchAll(re)].map((m) => m[group].toLowerCase()));
 
+const pathOf = (ref) => ref.replace(/[?#].*$/, '').replace(/^\.?\//, '');
+
+/** Скрипт схемы — обычным блокирующим тегом в <head> (F12): модуль, `defer` и `async` исполнятся
+ *  после разбора страницы, и первая отрисовка выйдет светлой. */
+function checkSchemeScript(html) {
+  const ref = `/${SCHEME_SCRIPT}`;
+  const isScheme = (attrs) => pathOf(attrs.get('src') ?? '') === SCHEME_SCRIPT;
+  const head = /<head\b[^>]*>([\s\S]*?)<\/head>/i.exec(html)?.[1] ?? '';
+  const inHead = tags(head, 'script').filter(isScheme);
+  if (inHead.length === 0) {
+    const elsewhere = tags(html, 'script').some(isScheme);
+    return say(page, elsewhere ? `скрипт схемы ${ref} — не в <head>` : `нет скрипта схемы ${ref}`);
+  }
+  for (const attrs of inHead) {
+    const late = ['defer', 'async'].filter((key) => attrs.has(key));
+    if ((attrs.get('type') ?? '').toLowerCase() === 'module') late.push('type="module"');
+    for (const what of late)
+      say(page, `скрипт схемы ${ref} с ${what} — нужен обычный блокирующий тег`);
+  }
+}
+
 /** Страница: язык, имя сервиса в заголовке, ссылки — на свои файлы с хешем, скрипты — файлами. */
 function checkPage(files, name) {
   const html = read(page);
@@ -100,11 +128,14 @@ function checkPage(files, name) {
   const inline = scripts.filter((attrs) => !attrs.get('src')).length;
   if (inline > 0) say(page, `встроенных скриптов: ${inline} — у каждого <script> нужен src`);
   checkMarkup(html);
+  checkSchemeScript(html);
   const links = tags(html, 'link').map((attrs) => attrs.get('href'));
   for (const ref of [...scripts.map((attrs) => attrs.get('src')), ...links].filter(Boolean)) {
-    const path = ref.replace(/[?#].*$/, '').replace(/^\.?\//, '');
+    const path = pathOf(ref);
     if (!files.includes(path)) say(page, `ссылка ${ref}: такого файла в сборке нет`);
-    else if (!HASHED.test(path)) say(page, `ссылка ${ref}: в имени файла нет хеша`);
+    else if (!HASHED.test(path) && !UNHASHED.has(path)) {
+      say(page, `ссылка ${ref}: в имени файла нет хеша`);
+    }
   }
 }
 
