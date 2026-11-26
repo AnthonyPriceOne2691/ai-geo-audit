@@ -1,4 +1,4 @@
-import { Anchor, Container, Group, Paper, Table, Text, Title } from '@mantine/core';
+import { Anchor, Card, Container, Group, Paper, Table, Text, Title } from '@mantine/core';
 
 import { SERVICE_NAME } from './brand';
 import { SchemeSwitch } from './theme/scheme';
@@ -31,12 +31,12 @@ function Status({ tone }: { tone: Tone }) {
   );
 }
 
-/** Образцы вида (F20) — для снимков в обеих темах. Карточка — Paper: у Card свой фон библиотеки. */
+/** Образцы вида (F20) — для снимков в обеих темах. Карточка — Card: фон даёт тема (F11). */
 function Samples() {
   const { samples } = words;
   return (
     <>
-      <Paper mt="xl" p="lg">
+      <Card mt="xl" p="lg">
         <Title order={2}>{samples.title}</Title>
         <Text mt="sm">{samples.text}</Text>
         <Text mt="xs" c="dimmed">
@@ -45,7 +45,7 @@ function Samples() {
         <Text mt="xs">
           <Anchor href={`#${TABLE_ID}`}>{samples.link}</Anchor>
         </Text>
-      </Paper>
+      </Card>
       {/* Таблица во всю рабочую область; центровка — из темы (F18). */}
       <Paper mt="md">
         <Table id={TABLE_ID}>

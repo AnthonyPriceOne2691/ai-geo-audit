@@ -1,4 +1,5 @@
 import {
+  Card,
   Checkbox,
   Container,
   Paper,
@@ -67,6 +68,59 @@ export const cssVariablesResolver: CSSVariablesResolver = (theme) => {
   };
 };
 
+// Ступени нейтральных палитр Mantine → роль токена в той схеме, где библиотека их берёт (F11): ими
+// она красит рамки, линии, подложки и подписи компонентов. Таблица — та же, что в спеке «Схемы»;
+// `gray` — в светлой схеме, `dark` — в тёмной. Белый библиотеки по схемам не переставляется.
+const NEUTRAL_STEPS = {
+  light: {
+    'gray-0': 'sunken',
+    'gray-1': 'sunken',
+    'gray-2': 'line',
+    'gray-3': 'line',
+    'gray-4': 'edge',
+    'gray-5': 'faint',
+    'gray-6': 'faint',
+    'gray-7': 'soft',
+    'gray-8': 'ink',
+    'gray-9': 'ink',
+  },
+  dark: {
+    'dark-0': 'ink',
+    'dark-1': 'soft',
+    'dark-2': 'faint',
+    'dark-3': 'edge',
+    'dark-4': 'line',
+    'dark-5': 'tint',
+    'dark-6': 'surface',
+    'dark-7': 'bg',
+    'dark-8': 'sunken',
+    'dark-9': 'bg',
+  },
+} as const;
+
+const steps = (table: Readonly<Record<string, string>>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(table).map(([step, role]) => [`--mantine-color-${step}`, cssVar(role)]),
+  );
+
+/** Ступени нейтральных палитр на токенах — отдельной функцией рядом с `cssVariablesResolver`:
+ *  таблица ролей Ч1.4б и её тест не меняются, провайдеры сливают обе (F11). */
+export const neutralStepsResolver: CSSVariablesResolver = () => ({
+  variables: {},
+  light: steps(NEUTRAL_STEPS.light),
+  dark: steps(NEUTRAL_STEPS.dark),
+});
+
+/** Роли и ступени вместе — так их ставят провайдеры приложения и тестов (F9, F11). */
+export const appVariablesResolver: CSSVariablesResolver = (theme) => {
+  const [roles, neutral] = [cssVariablesResolver(theme), neutralStepsResolver(theme)];
+  return {
+    variables: { ...roles.variables, ...neutral.variables },
+    light: { ...roles.light, ...neutral.light },
+    dark: { ...roles.dark, ...neutral.dark },
+  };
+};
+
 /** Подпись на заливке основного цвета — `onPrimary`: умолчание Mantine — белый библиотеки, а он в
  *  тёмной схеме на `primary` даёт 1,99 : 1. Остальные виды и цвета — как у умолчания. */
 export const variantColorResolver: VariantColorsResolver = (input) => {
@@ -101,6 +155,8 @@ export const theme = createTheme({
   components: {
     // Card рисуется через Paper: умолчание здесь даёт карточке её 16 px.
     Paper: Paper.extend({ defaultProps: { radius: 'lg' } }),
+    // Фон карточки — `surface` (F11): у Mantine он прямо `white` и `dark-6`, мимо переменных.
+    Card: Card.extend({ styles: { root: { backgroundColor: cssVar('surface') } } }),
     // Рабочая область одна на все экраны: не шире 1360 px вместе с полями по 28 px.
     Container: Container.extend({
       vars: () => ({ root: { '--container-size': cssVar('workspace') } }),
@@ -114,21 +170,37 @@ export const theme = createTheme({
     Text: Text.extend({ styles: { root: { '--text-color': 'currentColor' } } }),
     Checkbox: Checkbox.extend({ vars: iconOnFill('--checkbox-icon-color') }),
     Radio: Radio.extend({ vars: iconOnFill('--radio-icon-color') }),
-    // Бегунок и подписи переключателя — токеном 260 мс и общей кривой (F19): у Mantine 200 мс, а
-    // кривая бегунка — прямо `ease`. При «меньше движения» токен — 0, движения нет.
+    // Переключатель сегментами. Бегунок и подписи — токеном 260 мс и общей кривой (F19): у Mantine
+    // 200 мс, а кривая бегунка — прямо `ease`; при «меньше движения» токен — 0. Выбранное положение
+    // — `surface`, выбранная подпись — `ink` (F11): у Mantine белый и `dark-5`, чёрный и белый.
+    // Подложка, подписи и разделители — ступенями палитр. Подпись — переменной корня: её пишет
+    // только пропс `color`, а его у переключателя нет.
     SegmentedControl: SegmentedControl.extend({
       vars: () => ({
         root: {
+          '--sc-color': cssVar('surface'),
           '--sc-transition-duration': cssVar('motionSlow'),
           '--sc-transition-timing-function': cssVar('motionEase'),
         },
       }),
-      styles: { indicator: { transitionTimingFunction: cssVar('motionEase') } },
+      styles: {
+        root: { '--sc-label-color': cssVar('ink') },
+        indicator: { transitionTimingFunction: cssVar('motionEase') },
+      },
     }),
     // Таблица по центру умолчанием темы (F18): заголовок и ячейки, первая колонка тоже. Стиль
     // ложится на сам элемент — в месте вызова выравнивание не задаётся.
+    // Цвета таблицы (F11): шапка — `sunken`, подписи колонок — `faint`, полоса строки — `sunken`;
+    // подсветка строки — `tint` умолчанием `--table-hover-color`: пропс подсветки пишет свою
+    // переменную, и она сильнее умолчания. Линии строк — ступенями палитр.
     Table: Table.extend({
-      styles: { th: { textAlign: 'center' }, td: { textAlign: 'center' } },
+      vars: () => ({ table: { '--table-striped-color': cssVar('sunken') } }),
+      styles: {
+        table: { '--table-hover-color': cssVar('tint') },
+        thead: { backgroundColor: cssVar('sunken') },
+        th: { textAlign: 'center', color: cssVar('faint') },
+        td: { textAlign: 'center' },
+      },
     }),
   },
 });
