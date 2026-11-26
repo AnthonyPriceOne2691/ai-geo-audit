@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import re
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -29,28 +30,45 @@ def load() -> ModuleType:
 
 
 @pytest.fixture
-def no_copy(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
-    """Скрипт, у которого копия клона — красное: отказ обязан прийти раньше записи."""
+def no_copy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
+    """Скрипт, у которого копия клона — красное: отказ обязан прийти раньше записи. Корни сервера
+    — во временном каталоге, их ещё нет: тест не зависит от корней машины, где идёт."""
     live = load()
 
     def copy(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("запись до проверки машины")
 
     monkeypatch.setattr(live.shutil, "copytree", copy)
+    monkeypatch.setattr(live, "SERVICE", tmp_path / "srv" / "ai-geo-audit")
+    monkeypatch.setattr(live, "ETC", tmp_path / "etc" / "ai-geo-audit")
     return live
 
 
+def tree(root: Path) -> list[str]:
+    """Всё, что лежит под корнем, — и висячие ссылки: «ничего не записано» сверяется по нему."""
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+@pytest.mark.parametrize("ci", [None, "false"], ids=["нет-переменной", "false"])
 def test_a182_live_run_refuses_outside_ci(
-    no_copy: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    no_copy: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    ci: str | None,
 ) -> None:
     """A182: не на машине джобы CI — отказ с кодом 2 и словами: скрипт пишет в `/srv` и `/etc`;
-    на диске ничего не появилось — ни каталога сервиса, ни своего `/etc`."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    roots = (no_copy.SERVICE, no_copy.ETC)
-    before = [os.path.lexists(root) for root in roots]
+    машина CI — только `GITHUB_ACTIONS=true`, не любое значение (мелочь приёмки среза 4). Root
+    подставлен: отказ даёт сама эта защита. На диске ничего не появилось."""
+    if ci is None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_ACTIONS", ci)
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    before = tree(tmp_path)
     assert no_copy.main() == 2
     assert "отказ: только на машине джобы CI" in capsys.readouterr().err
-    assert [os.path.lexists(root) for root in roots] == before
+    assert tree(tmp_path) == before
 
 
 def test_a182_live_run_refuses_without_root(
@@ -61,6 +79,38 @@ def test_a182_live_run_refuses_without_root(
     monkeypatch.setattr(os, "geteuid", lambda: 1001)
     assert no_copy.main() == 2
     assert "отказ: нужен root — шаг джобы под sudo" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("root", "kind"),
+    [("SERVICE", "каталог"), ("ETC", "каталог"), ("SERVICE", "ссылка"), ("ETC", "ссылка")],
+)
+def test_a182_live_run_refuses_on_a_machine_with_server_roots(
+    no_copy: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    root: str,
+    kind: str,
+) -> None:
+    """A182, находка 3 приёмки среза 4: на машине CI от root, но корень сервиса или свой `/etc`
+    уже есть — каждый отдельно, каталогом или висячей ссылкой — отказ с кодом 2 «машина не
+    чистая» до копии клона; ни один шаг не начат, на диске ничего не записано. На машине джобы
+    корней не бывает: живой прогон эту защиту не проверит — только тест."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    path: Path = getattr(no_copy, root)
+    path.parent.mkdir(parents=True)
+    if kind == "каталог":
+        path.mkdir()
+    else:
+        path.symlink_to(tmp_path / "нет")
+    before = tree(tmp_path)
+    assert no_copy.main() == 2
+    out = capsys.readouterr()
+    assert "отказ: корни сервера уже есть — машина не чистая" in out.err
+    assert out.out == ""
+    assert tree(tmp_path) == before
 
 
 def test_a182_live_owner_file_is_exactly_the_owner_names_of_the_sample() -> None:
