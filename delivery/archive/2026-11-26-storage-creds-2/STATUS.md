@@ -11,7 +11,7 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
   <!-- Слово владельца 2026-11-26T09:25:50Z — «Подписываю Учётки-2, да на оба» на показ ведущей
        (`docs/deliveries/storage-creds-2-publish-show.md`): 1) подпись под утверждениями тестов —
        дайджест против `b4fd595`: 97 новых и изменённых, без примера 10 (verify-report, «Дайджест
@@ -84,6 +84,6 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния «Учёток-2» (`quality`, `ubuntu-24.04`): джоба `stack` — шагов 42, красных 0; A171 (две строки), A172 (поиск на живом стеке перед A67 и после всех шагов — совпадений 0), A173 и A380 — «ок»; шаг A73 — «правил 26», A89 — «правил 29»; доли порч — четыре success, убито не меньше 1174 из 1293
+- **observe_until:** 2026-12-03 — неделя прогонов CI на main после «Учёток-2»: джоба `stack` (A171–A173, A380, A73, A89) и доли порч
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
