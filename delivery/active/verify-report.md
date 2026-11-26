@@ -202,7 +202,15 @@ asserts_without_example: 0
 
 ## Прогон в чистом клоне — ведущая
 
-Ведущая.
+Клон `--no-local` из корня, ветка `ch2-01-thresholds`, вершина `1d01aea8fa8cb5049a28ea71844c399c31282b0f`, автор — из основной папки; 2026-11-26T13:10:01Z–13:14:38Z.
+- `uv sync --frozen` — код 0; main `d70f04d` в клоне есть.
+- Гейт `--diff-base d70f04d --require-spec` — 0 ошибок, одно предупреждение: два рисковых пути (`backend/migrations/versions/`, `backend/src/ai_geo_audit/reference/`) при пороге 1 (§12.6) — к слову владельца `max_runtime_paths=2` до сдачи; `files=27 net_loc=2395 (+2454/-59)`. С `--require-verify` и с `--require-ci --require-spec --require-verify` — 0 ошибок, то же предупреждение.
+- pytest `-q -W error -p no:cacheprovider` — 2079 из 2079, код 0.
+- pre-commit `--all-files` — код 0 (27 Passed, 1 Skipped); `--hook-stage pre-push --all-files` — код 0 (5 Passed).
+- Дайджест с `LINT_SPEC=delivery/active/spec.md` против `d70f04d` — без примера 0: каждое утверждение ведёт к подписанному примеру (A300–A308, A310, A312).
+- `delivery/evals/smoke/run.sh` — 3 из 3, код 0.
+- A23 (шаблоны правила LOGIC-10 и «пояс машины»): добавленных строк 3808 — 0 совпадений; файлов A/M/R 37 — 0; коммитов 20, даты только `+0000`; в сообщениях — 0.
+- Дерево клона чистое; баз `audit_test_%` клона на 5462 нет; клон снят после прогона.
 
 ## Убрано исполнителем (CONSTITUTION, п. 10)
 
