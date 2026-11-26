@@ -11,7 +11,9 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
+  <!-- Handoff — 2026-11-26: вердикт READY второй проверяющей, чистый клон ведущей, слово
+       владельца о двух путях исполнения; публикация — ведущая. -->
   <!-- Verify — с 2026-11-26T13:06Z: срезы 1–3 и приёмка закрыты проверяющей (`d3f5b4e`, `57bc69e`
        сверены), main `d70f04d` влит; живой шаг, smoke и ручные порчи плана — на `6640d04`
        (`verify-report.md`); чистый клон — ведущая, «Verdict» — проверяющая. -->
@@ -45,7 +47,10 @@
 - **parallel_sessions:** manual-deploy
 - **hooks:** not-deployed
 - **blockers:** none
-- **waivers:** none
+- **waivers:** max_runtime_paths=2 reason=ревизия справочника и вход его команды — одна поставка по разрезу 26.11, оба пути исполнены (CI stack, живой шаг) by=human:owner at=2026-11-26T14:23Z
+  <!-- Слово владельца 2026-11-26T14:23:45Z «Подписываю Ч2.1 и 6а-2, да на все четыре» на показ
+       ведущей (`docs/deliveries/ch2-01-publish-show.md`): пункт 1 — публикация Ч2.1, пункт 2 —
+       два пути исполнения одной поставкой (порог `max_runtime_paths`, §12.6); время — от ведущей. -->
 - **runtime_paths:** backend/migrations/versions/, backend/src/ai_geo_audit/reference/
   <!-- Ревизию под настоящими ролями видит только стек — migrate под ролью миграций (шаг `stack`
        CI); вход `python -m` в образе api — только исполнение (L123). Каталог `reference/`
@@ -58,8 +63,8 @@
 - **canon_drift_waiver:** no
 - **baseline_growth_waiver:** no
 - **observability:** 1
-- **observe_signal:** первый прогон CI на main после слияния Ч2.1: `tests` — A300–A312 зелёные, ветвь A16 сервиса — сверка с базой; доли порч — пакет `reference` одной долей в бюджете; `stack` — migrate кладёт `0003` под ролью миграций, api healthy
-- **observe_until:** pending — назначается на сдаче
+- **observe_signal:** первый прогон CI на main после слияния Ч2.1 (`quality`): `tests` — набор не меньше 2079, A300–A312 зелёные, ветвь A16 сервиса — сверка моделей с базой; доли порч — пакет `reference` одной долей, в бюджете; `stack` — шагов 42, красных 0, A65 — `alembic current = heads ['0003']` под ролью миграций, api healthy; на первом выкате (после 6в) — migrate кладёт `0003` на боевую базу, `check` в образе api до файла ведущей — «манифест не заполнен»
+- **observe_until:** 2026-12-03 — неделя прогонов CI на main после Ч2.1: `tests`, доли порч и `stack` (A65 — ревизия `0003`); первый выкат — после 6в, сверка ведущей на шаге выката
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
   <!-- Предел 2500 строк вместе с тестами и 50 файлов — слова владельца 2026-11-19T14:26Z и
        14:36Z; порог «сказать до сдачи» — 2300. -->
