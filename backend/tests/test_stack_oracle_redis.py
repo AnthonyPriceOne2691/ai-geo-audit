@@ -165,7 +165,8 @@ class Redis:
         top: str = TOP_5X,
         stop: Done | None = None,
     ) -> None:
-        self.states = states or [healthy(), {"State": {"ExitCode": 0}, "Config": {}}]
+        # Копия: `inspect` снимает состояния по очереди, а список может быть данными `parametrize`.
+        self.states = list(states or [healthy(), {"State": {"ExitCode": 0}, "Config": {}}])
         self.answers = {"exec": done(inside), "top": done(top), "stop": stop or done()}
         self.calls: list[tuple[str, ...]] = []
 
