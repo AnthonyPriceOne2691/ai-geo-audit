@@ -13,6 +13,7 @@ import redistools
 from pydantic import Field, SecretStr
 
 from ai_geo_audit import config
+from ai_geo_audit.config import startup_checks as sc
 from ai_geo_audit.config.startup_checks import PLACEHOLDER
 
 ENV_EXAMPLE = dbtools.ROOT / ".env.example"
@@ -173,6 +174,78 @@ def test_a8_setting_named_as_a_secret_must_be_secret_str() -> None:
     даже с заглушкой в образце: такую настройку печатает `repr`."""
     problems, _ = sample_problems({"PROBE_API_TOKEN": PLACEHOLDER}, [_Probe])
     assert "PROBE_API_TOKEN: имя секрета, а тип не SecretStr — его напечатает repr" in problems
+
+
+#: Блок переменных сервера в образце (A176): строки `# ИМЯ=значение` читает compose, а не
+#: процессы, поэтому A8 их не видит. Пароли — только заглушкой.
+SERVER_PASSWORDS = (
+    "DB_PASSWORD",
+    "POSTGRES_MIGRATE_PASSWORD",
+    "POSTGRES_APP_PASSWORD",
+    "REDIS_PASSWORD",
+)
+#: Адрес сервера → процесс, чья роль базы стоит в адресе; у адреса очереди роли нет.
+SERVER_URLS: dict[str, sc.Process | None] = {
+    "MIGRATE_DATABASE_URL": "migrate",
+    "API_DATABASE_URL": "api",
+    "API_REDIS_URL": None,
+}
+GOOD_BLOCK = dict.fromkeys(SERVER_PASSWORDS, PLACEHOLDER) | {
+    # pragma: allowlist nextline secret
+    "MIGRATE_DATABASE_URL": "postgresql+asyncpg://audit_migrate:CHANGE_ME@db:5432/audit",
+    # pragma: allowlist nextline secret
+    "API_DATABASE_URL": "postgresql+asyncpg://audit_app:CHANGE_ME@db:5432/audit",
+    "API_REDIS_URL": "redis://:CHANGE_ME@redis:6379/0",
+}
+
+
+def _server_block() -> dict[str, str]:
+    text = ENV_EXAMPLE.read_text(encoding="utf-8")
+    return dict(re.findall(r"(?m)^# ([A-Z][A-Z0-9_]*)=(.*)$", text))
+
+
+def server_problems(block: dict[str, str]) -> tuple[list[str], int]:
+    """Что не так с блоком сервера — имя переменной и что не так, без значения; и сколько
+    переменных просмотрено."""
+    problems = [
+        f"{name}: в образце не заглушка {PLACEHOLDER}"
+        for name in SERVER_PASSWORDS
+        if block.get(name) != PLACEHOLDER
+    ]
+    for name, process in SERVER_URLS.items():
+        parts = urlsplit(block.get(name, ""))
+        if parts.password != PLACEHOLDER:
+            problems.append(f"{name}: на месте пароля не заглушка {PLACEHOLDER}")
+        if process is not None and parts.username != sc.DB_ROLES[process]:
+            problems.append(f"{name}: в адресе не роль {sc.DB_ROLES[process]}")
+    return problems, len(SERVER_PASSWORDS) + len(SERVER_URLS)
+
+
+def test_a176_server_block_has_placeholders_and_process_roles() -> None:
+    """A176: блок переменных сервера в `.env.example` — заглушка `CHANGE_ME` у четырёх паролей
+    сервера (база, роль миграций, роль сервиса, очередь) и на месте пароля у адресов
+    `MIGRATE_DATABASE_URL`, `API_DATABASE_URL` и `API_REDIS_URL`; имя роли в адресах базы — из
+    таблицы ролей `startup_checks`. Число просмотренных — в выводе."""
+    problems, checked = server_problems(_server_block())
+    print(f"A176: просмотрено переменных сервера: {checked}")
+    assert checked == len(SERVER_PASSWORDS) + len(SERVER_URLS) == 7
+    assert problems == []
+
+
+def test_a176_real_password_and_migrate_role_in_api_url_are_caught() -> None:
+    """A176: порчи «настоящий пароль в образце» и «в адресе api — роль миграций» — красное с
+    именем переменной, без значения; годный блок — без замечаний (держится до кода)."""
+    assert server_problems(GOOD_BLOCK) == ([], 7)
+    spoiled = GOOD_BLOCK | {
+        "POSTGRES_APP_PASSWORD": "looks-real-pass-123",  # pragma: allowlist secret
+        "API_DATABASE_URL": GOOD_BLOCK["MIGRATE_DATABASE_URL"],
+    }
+    problems, _ = server_problems(spoiled)
+    assert problems == [
+        f"POSTGRES_APP_PASSWORD: в образце не заглушка {PLACEHOLDER}",
+        "API_DATABASE_URL: в адресе не роль audit_app",
+    ]
+    assert not any("looks-real" in p or "audit_migrate" in p for p in problems)
 
 
 COMPOSE = dbtools.ROOT / "docker-compose.dev.yml"

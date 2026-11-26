@@ -134,6 +134,28 @@ def test_a21_redis_password_never_reaches_output(
     assert REDIS_PASSWORD not in capsys.readouterr().err
 
 
+#: Адрес очереди строки A176 — пароль с «@» в процентной записи; значение — из спеки (A122).
+# pragma: allowlist nextline secret
+A176_QUEUE_URL = "redis://:r3dis%40pass-123456@redis:6379/0"
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_a176_queue_password_is_scrubbed_in_both_forms(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fmt: str
+) -> None:
+    """A176: `REDIS_URL=redis://:r3dis%40pass-123456@redis:6379/0`, оба формата журнала, запись с
+    адресом и с паролем в обоих видах — в выводе нет ни `r3dis%40pass-123456`, ни
+    `r3dis@pass-123456`. Закрепляет вычистку Ч1.2в для адреса очереди (держится с Ч1.2в)."""
+    monkeypatch.setenv("REDIS_URL", A176_QUEUE_URL)
+    logs.register_config_secrets(config.StorageSettings())
+    logs.setup_logging(fmt=fmt)
+    encoded, decoded = "r3dis%40pass-123456", "r3dis@pass-123456"
+    logging.getLogger("x").warning("redis=%s pw=%s decoded=%s", A176_QUEUE_URL, encoded, decoded)
+    out = capsys.readouterr().err
+    assert encoded not in out and decoded not in out
+    assert "redis=" in out and "decoded=" in out
+
+
 def test_a21_redis_url_is_a_secret_in_repr_and_dump(monkeypatch: pytest.MonkeyPatch) -> None:
     """A21: `repr` настроек и `model_dump()` пароля Redis не показывают: адрес — `SecretStr`."""
     monkeypatch.setenv("REDIS_URL", REDIS_URL)

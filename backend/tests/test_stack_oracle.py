@@ -181,11 +181,13 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
 #: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
-#: Ч1.5в, срез 3 — A88, срез 4 — A89; «Учётки-1», срез 2 — A85, A170 и A172 (вторая строка).
+#: Ч1.5в, срез 3 — A88, срез 4 — A89; «Учётки-1», срез 2 — A85, A170 и A172 (вторая строка);
+#: «Учётки-2», срез 3 — A171, срез 5 — A173 и A380 (первая строка).
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
 STEP_EXAMPLES |= {"A88", "A89"}
 STEP_EXAMPLES |= {"A85", "A170", "A172"}
+STEP_EXAMPLES |= {"A171", "A173", "A380"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -197,11 +199,11 @@ def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
     return problems + [f"пример {number} без шага" for number in sorted(STEP_EXAMPLES - seen)]
 
 
-def test_a76_steps_table_has_exactly_examples_a60_to_a67_a69_a73_a77_to_a89_a170_a172() -> None:
+def test_a76_steps_table_has_exactly_the_oracle_examples() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
     A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89, с «Учётками-1» — A85, A170 и
-    A172."""
+    A172, с «Учётками-2» — A171, A173 и A380."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -209,11 +211,19 @@ def test_a88_stop_steps_go_after_hardening_and_before_a67() -> None:
     """A88: остановка и падение api ломают api — шаги стоят после шагов web и защиты стека и до
     A67, который ломает стек; остановка — до падения: падение растит счётчик перезапусков. A170:
     шаги ролей — после остановки и падения api и до A67: смена пароля роли сервиса на время шага
-    отнимает у api вход в базу, шаги api идут раньше."""
+    отнимает у api вход в базу, шаги api идут раньше. A173: отказ старта — после шагов ролей и
+    до A67: разовые контейнеры живут на поднятом стеке. A172, первая строка: поиск секретов — на
+    живом стеке перед A67 и последним шагом. A171: шаги redis — после A67, перед последним
+    поиском: вторая строка останавливает redis."""
     hard = importlib.import_module("stack_oracle_hardening")
     stop = importlib.import_module("stack_oracle_stop")
     roles = importlib.import_module("stack_oracle_roles")
-    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *roles.ROLE_STEPS, *compose.BREAKING_STEPS]
+    redis = importlib.import_module("stack_oracle_redis")
+    start = importlib.import_module("stack_oracle_start")
+    search = importlib.import_module("stack_oracle_search")
+    tail = [*hard.HARDENING_STEPS, *stop.STOP_STEPS, *roles.ROLE_STEPS, *start.START_STEPS]
+    tail += search.LIVE_SEARCH + compose.BREAKING_STEPS
+    tail += redis.REDIS_STEPS + search.FINAL_SEARCH
     assert oracle.STEPS[-len(tail) :] == tail
     assert [step.__name__ for _, _, step, _ in stop.STOP_STEPS] == ["step_stop", "step_crash"]
 
@@ -372,6 +382,7 @@ def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet:
 
 #: Выдуманные значения прогона для окружения compose: у роли миграций — с «@».
 SUPER, MIG, APP = "super-value-123456", "mig@role-value-123456", "app-role-value-123456"
+QUEUE = "queue-value-123456"
 
 
 def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
@@ -384,8 +395,19 @@ def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
         jwt="j",
         migrate_password=MIG,
         app_password=APP,
+        redis_password=QUEUE,
         copy=Path("/work/copy"),
     )
+
+
+def test_a171_queue_password_goes_to_redis_and_the_api_queue_address() -> None:
+    """A171, A65 — вход строится иначе: окружение compose несёт выдуманный пароль очереди — у
+    redis `REDIS_PASSWORD`, у api адрес `API_REDIS_URL` с тем же паролем (A175: не короче 12);
+    паролей базы в адресе очереди нет."""
+    env = compose.stack_env(stack_run())
+    assert env["REDIS_PASSWORD"] == QUEUE
+    assert env["API_REDIS_URL"] == f"redis://:{QUEUE}@redis:6379/0"
+    assert not [word for word in (SUPER, MIG, APP) if word in env["API_REDIS_URL"]]
 
 
 def test_a65_migrate_and_api_addresses_carry_their_roles() -> None:
@@ -589,33 +611,33 @@ class RulesAnswer(oracle.Docker):
 @pytest.mark.parametrize(
     ("code", "text", "red"),
     [
-        (0, "итог: сервисов 5, правил 24, нарушений 0\n", ""),
+        (0, "итог: сервисов 5, правил 26, нарушений 0\n", ""),
         (
             0,
-            "итог: сервисов 5, правил 23, нарушений 0\n",
-            "правила — код 0: итог: сервисов 5, правил 23,",
+            "итог: сервисов 5, правил 25, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 25,",
         ),
-        (0, "итог: сервисов 4, правил 24, нарушений 0\n", "правила — код 0: итог: сервисов 4,"),
+        (0, "итог: сервисов 4, правил 26, нарушений 0\n", "правила — код 0: итог: сервисов 4,"),
         (
             1,
-            "stop-grace: сервис api — срок\nитог: сервисов 5, правил 24, нарушений 1\n",
+            "stop-grace: сервис api — срок\nитог: сервисов 5, правил 26, нарушений 1\n",
             "правила — код 1: stop-grace: сервис api — срок | итог",
         ),
     ],
-    ids=["24", "23", "сервисов-4", "нарушение"],
+    ids=["26", "25", "сервисов-4", "нарушение"],
 )
-def test_a73_a87_rules_step_wants_five_services_and_twenty_four_rules(
+def test_a73_a87_a179_rules_step_wants_five_services_and_twenty_six_rules(
     tmp_path: Path, code: int, text: str, red: str
 ) -> None:
-    """A73, A87: шаг правил на настоящем файле — зелёный только при коде 0 и итоге «сервисов 5,
-    правил 24, нарушений 0»: шестнадцать кодов Ч1.5а, семь A87 и `stop-grace` A88; иначе
-    красное с кодом и хвостом вывода."""
+    """A73, A87, A179, третья строка: шаг правил на настоящем файле — зелёный только при коде 0
+    и итоге «сервисов 5, правил 26, нарушений 0»: 24 кода Ч1.5а–Ч1.5в, `db-roles` и
+    `redis-auth`; иначе красное с кодом и хвостом вывода."""
     docker = RulesAnswer()
     docker.answer = (code, text)
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
     if not red:
         done = compose.step_rules_on_file(run)
-        assert done == "итог: сервисов 5, правил 24, нарушений 0; config --services — 5"
+        assert done == "итог: сервисов 5, правил 26, нарушений 0; config --services — 5"
         return
     with pytest.raises(oracle.StepError) as failure:
         compose.step_rules_on_file(run)
@@ -625,19 +647,19 @@ def test_a73_a87_rules_step_wants_five_services_and_twenty_four_rules(
 @pytest.mark.parametrize(
     ("text", "red"),
     [
-        ("итог: сервисов 5, правил 27, нарушений 0\n", ""),
+        ("итог: сервисов 5, правил 29, нарушений 0\n", ""),
         (
-            "итог: сервисов 5, правил 24, нарушений 0\n",
-            "правила — код 0: итог: сервисов 5, правил 24,",
+            "итог: сервисов 5, правил 26, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 26,",
         ),
     ],
-    ids=["27", "без-боевых"],
+    ids=["29", "без-боевых"],
 )
 def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     tmp_path: Path, text: str, red: str
 ) -> None:
     """A89, вторая строка: шаг правил на основном файле с боевым наложением — оба файла названы
-    явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5, правил 27,
+    явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5, правил 29,
     нарушений 0»."""
     docker = RulesAnswer()
     docker.answer = (0, text)
@@ -646,7 +668,7 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
         with pytest.raises(oracle.StepError, match=red):
             compose.step_rules_on_prod(run)
     else:
-        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 27")
+        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 29")
     files = ["-f", str(run.copy / "docker-compose.yml"), "-f", str(run.copy / compose.PROD)]
     configs = [args for args in docker.seen if "config" in args]
     assert configs
@@ -654,7 +676,7 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     *_, rules = docker.seen
     assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
     assert compose.PROD == "docker-compose.prod.yml"
-    assert compose.PROD_RULES == 27
+    assert compose.PROD_RULES == 29
 
 
 def test_a65_a220_oracle_master_key_passes_the_startup_parse(tmp_path: Path) -> None:

@@ -104,20 +104,22 @@ def test_a65_executor_cleanup_names_what_was_not_removed(monkeypatch: pytest.Mon
 
 def test_a172_run_puts_every_invented_secret_in_the_mask(tmp_path: Path) -> None:
     """A172: секреты прогона выдумывает оракул — пароль суперпользователя, секрет подписи, пароли
-    ролей миграций и сервиса; у роли миграций — с «@»; все не короче 12 знаков (A21). С созданием
-    прогона все — в маске исполнителя, пароль роли миграций — и в процентной записи."""
+    ролей миграций и сервиса и пароль очереди (A171); у роли миграций — с «@»; все не короче 12
+    знаков (A21, A175). С созданием прогона все — в маске исполнителя, пароль роли миграций — и в
+    процентной записи."""
     docker = docker_mod.Docker()
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", "label", {})
-    invented = (run.password, run.jwt, run.migrate_password, run.app_password)
+    invented = (run.password, run.jwt, run.migrate_password, run.app_password, run.redis_password)
     assert "@" in run.migrate_password
     assert min(len(secret) for secret in invented) >= 12
-    assert len(set(invented)) == 4
+    assert len(set(invented)) == 5
     assert docker.mask == [
         run.password,
         run.jwt,
         run.migrate_password,
         quote(run.migrate_password, safe=""),
         run.app_password,
+        run.redis_password,
     ]
 
 

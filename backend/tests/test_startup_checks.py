@@ -30,10 +30,16 @@ def master_key(master_file: masterkeys.MasterFile) -> str:
     return str(master_file.path)
 
 
+def queue(password: str | None, rest: str = "redis:6379/0") -> str:
+    """Адрес очереди (A175): пароль — после двоеточия без имени, как в образце окружения."""
+    auth = "" if password is None else f":{password}@"
+    return f"redis://{auth}{rest}"
+
+
 def full_env(master_key: str) -> dict[str, str]:
     return {
         "DATABASE_URL": DSN,
-        "REDIS_URL": "redis://redis:6379/0",
+        "REDIS_URL": queue("pw-1234567890"),
         "JWT_SECRET": "a" * 64,
         "KEYS_MASTER_KEY_FILE": master_key,
         "API_TRUSTED_PROXIES": "10.9.9.9",
@@ -217,7 +223,7 @@ def test_a21_db_password_of_11_signs_is_refused_and_12_starts(
     "url",
     [
         db("ab%40cdefghij"),
-        db(quote("пароль-длин")),
+        db(quote("парольдлина")),
         db(None),
         # pragma: allowlist nextline secret
         "postgresql+asyncpg://audit:audit@localhost:5462/audit",
@@ -332,6 +338,92 @@ def test_a174_outside_prod_a_foreign_role_is_silent(monkeypatch: pytest.MonkeyPa
 def test_a174_process_roles_come_from_one_table() -> None:
     """A174: роли процессов — одна таблица `startup_checks.DB_ROLES`; её же сверяет A179."""
     assert sc.DB_ROLES == ROLE
+
+
+#: Процессы, которым нужен адрес очереди (A175); у `migrate` его нет в списке.
+QUEUE_PROCESSES: list[sc.Process] = ["api", "worker"]
+QUEUE_SHORT = sc.Problem("REDIS_URL", f"пароль очереди короче {sc.MIN_DB_PASSWORD} знаков")
+#: Пароль на месте имени — вход без двоеточия: адрес читается как имя без пароля.
+NAME_PLACE = "Name-Pass-123456"
+SHORT_QUEUES = {
+    "no-password": queue(None),
+    "11-signs": queue("a" * 11),
+    "percent-13-is-11": queue("ab%40cdefghij"),
+    "cyrillic-11-is-22-bytes": queue(quote("парольдлина")),
+    "password-in-name-place": f"redis://{NAME_PLACE}@redis:6379/0",
+}
+GOOD_QUEUES = {
+    "12-signs": queue("a" * 12),
+    "upper-host": queue("pass-word-123456", "Redis.Internal:6379/0"),
+    "ipv6": queue("pass-word-123456", "[::1]:6379/0"),
+    "no-port": queue("pass-word-123456", "redis/0"),
+    "query": queue("pass-word-123456", "redis:6379/0?socket_timeout=5"),
+    "percent-at": queue("pa%40ss-word-123456"),
+    "cyrillic-12": queue(quote("пароль-длин1")),
+}
+
+
+@pytest.mark.parametrize("url", list(SHORT_QUEUES.values()), ids=list(SHORT_QUEUES))
+@pytest.mark.parametrize("process", QUEUE_PROCESSES)
+def test_a175_short_queue_password_is_refused_counted_after_decoding(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process, url: str
+) -> None:
+    """A175: в бою у `api` и `worker` адрес очереди без пароля, с паролем в 11 знаков,
+    `ab%40cdefghij` (13 в записи, 11 после раскодирования), кириллицей в 11 знаков (22 байта) и с
+    паролем на месте имени — отказ ровно «пароль очереди короче 12 знаков»: длина — по знакам после
+    раскодирования, а не по байтам; ни адреса, ни куска пароля в тексте нет."""
+    found = prod(monkeypatch, process, **full_env(master_key) | {"REDIS_URL": url})
+    assert found == [QUEUE_SHORT]
+    with pytest.raises(sc.ConfigError) as refusal:
+        sc.check_startup(process, found)
+    assert str(refusal.value).splitlines()[1:] == [f"  REDIS_URL — {QUEUE_SHORT.why}"]
+    for piece in ("redis:6379", "aaaaaaaaaaa", "cdefghij", "парольдлин", "%D0", NAME_PLACE):
+        assert piece not in str(refusal.value)
+
+
+@pytest.mark.parametrize("password", UNENCODED)
+@pytest.mark.parametrize("process", QUEUE_PROCESSES)
+def test_a175_unencoded_sign_in_the_queue_password_is_refused(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process, password: str
+) -> None:
+    """A175: в бою в пароле очереди не закодирован `@`, `#`, `?` или `/` — у `api` и `worker`
+    причина «в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23», а не
+    «короче 12»: та же сверка двух разборщиков и тот же текст, что у адреса базы (A21)."""
+    found = prod(monkeypatch, process, **full_env(master_key) | {"REDIS_URL": queue(password)})
+    assert found == [sc.Problem("REDIS_URL", sc.DB_URL_UNENCODED_CHARS)]
+
+
+@pytest.mark.parametrize("url", list(GOOD_QUEUES.values()), ids=list(GOOD_QUEUES))
+@pytest.mark.parametrize("process", QUEUE_PROCESSES)
+def test_a175_queue_password_of_12_signs_and_good_urls_start(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process, url: str
+) -> None:
+    """A175: 12 знаков и годные адреса — заглавные в имени хоста, IPv6 в скобках, без порта,
+    параметры после «?», `%40` в пароле, пароль кириллицей в 12 знаков — старт у `api` и `worker`:
+    сверка двух разборщиков не даёт ложного отказа (держится до кода)."""
+    assert prod(monkeypatch, process, **full_env(master_key) | {"REDIS_URL": url}) == []
+
+
+@pytest.mark.parametrize("process", QUEUE_PROCESSES)
+def test_a175_queue_placeholder_is_one_reason(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, process: sc.Process
+) -> None:
+    """A175: заглушка `CHANGE_ME` на месте пароля очереди — одна причина, заглушка; «короче 12» с
+    ней не идёт (держится до кода: заглушку ловит `_explicit` Ч1.2в)."""
+    env = full_env(master_key) | {"REDIS_URL": queue(sc.PLACEHOLDER)}
+    assert prod(monkeypatch, process, **env) == [
+        sc.Problem("REDIS_URL", "стоит заглушка из .env.example — подключение")
+    ]
+
+
+def test_a175_migrate_does_not_check_the_queue(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A175: `migrate` с адресом очереди без пароля — старт: адреса очереди нет в списке процесса
+    (держится до кода)."""
+    env = full_env(master_key) | {"DATABASE_URL": DSN_MIGRATE, "REDIS_URL": queue(None)}
+    assert prod(monkeypatch, "migrate", **env) == []
+    assert "REDIS_URL" not in sc.required("migrate")
 
 
 @pytest.mark.parametrize("case", list(masterkeys.BAD_FILES))
