@@ -61,6 +61,12 @@ const SAMPLES: [string, string, boolean][] = [
   ],
   ['Object.assign innerHTML', fn('Object.assign(el, { innerHTML: h });'), false],
   ["Object.assign 'outerHTML'", fn("Object.assign(el, { 'outerHTML': h });"), false],
+  // Заметки второй проверяющей к находке 4 — решение ведущей 2026-11-26: формы через скобки и
+  // `setAttribute`, образец на каждый селектор.
+  ["el['setHTMLUnsafe'](…)", fn("el['setHTMLUnsafe'](h);"), false],
+  ["frame['srcdoc'] = …", fn("(el as HTMLIFrameElement)['srcdoc'] = h;"), false],
+  ["setAttribute('srcdoc', …)", fn("el.setAttribute('srcdoc', h);"), false],
+  ["el['setAttribute']('srcDoc', …)", fn("el['setAttribute']('srcDoc', h);"), false],
 ];
 
 describe('правило З14 — текст в разметку только как текст', () => {
