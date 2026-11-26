@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -57,6 +58,8 @@ _ENUMS: Final[dict[str, tuple[str, type[StrEnum]]]] = {
     "importance": ("важность", Importance),
     "scope": ("область", Scope),
 }
+_SCOPES: Final = frozenset(Scope)
+_UNITS: Final = frozenset(Unit)
 _NEEDS_SHARE: Final = {
     Scope.PAGES: "у проверки по всем страницам нужна доля",
     Scope.SAMPLE: "у выборки нужна доля",
@@ -116,6 +119,19 @@ class _ConstantError(ValueError):
     """`NaN` или `Infinity` в тексте JSON."""
 
 
+class _Object(dict[str, Any]):
+    """Объект JSON с его повторёнными ключами: причину называет тот, кто разбирает объект."""
+
+    repeated: tuple[str, ...] = ()
+
+
+def _pairs(pairs: list[tuple[str, Any]]) -> _Object:
+    """Повтор ключа объекта — отказ, а не «побеждает последний» (строгая схема З46)."""
+    found = _Object(pairs)
+    found.repeated = tuple(key for key, count in Counter(k for k, _ in pairs).items() if count > 1)
+    return found
+
+
 def read(stream: IO[bytes]) -> bytes:
     """Байты файла — не больше предела и одного байта сверх: больше — дальше не читается (A306)."""
     data = stream.read(MAX_BYTES + 1)
@@ -137,7 +153,13 @@ def _decode(data: bytes) -> object:
     except UnicodeDecodeError:
         raise FileRefusedError(["файл не в UTF-8"]) from None
     try:
-        return json.loads(text, parse_float=Decimal, parse_int=Decimal, parse_constant=_constant)
+        return json.loads(
+            text,
+            parse_float=Decimal,
+            parse_int=Decimal,
+            parse_constant=_constant,
+            object_pairs_hook=_pairs,
+        )
     except _ConstantError:
         raise FileRefusedError(["в файле NaN или Infinity — числа только конечные"]) from None
     except json.JSONDecodeError as bad:
@@ -150,7 +172,8 @@ def parse(data: bytes) -> ReferenceFile:
     doc = _decode(data)
     if not isinstance(doc, dict):
         raise FileRefusedError(["файл — не объект с полями format, source_date и rows"])
-    reasons = [f"лишнее поле верхнего уровня{_key(key)}" for key in doc if key not in _TOP]
+    reasons = [f"повторяется поле{_key(key)}" for key in getattr(doc, "repeated", ())]
+    reasons += [f"лишнее поле верхнего уровня{_key(key)}" for key in doc if key not in _TOP]
     reasons += [f"нет поля {key}" for key in _TOP if key not in doc]
     if "format" in doc and not _is_format(doc["format"]):
         reasons.append(f"формат{_number(doc['format'])} не поддерживается — нужен {FORMAT}")
@@ -202,7 +225,8 @@ def _key(key: str) -> str:
 
 
 def _row(n: int, raw: object, seen: dict[str, int]) -> tuple[RowIn | None, list[str]]:
-    """Строка или её причины: код, булево на месте числа, схема, правила строки."""
+    """Строка или её причины по порядку: код, повтор ключа, булево на месте числа, схема, правила
+    строки — и у строки с ошибкой схемы, по полям годного типа (решение ведущей 2026-11-26)."""
     if not isinstance(raw, dict):
         return None, [f"строка {n} — не объект"]
     code = raw.get("code")
@@ -212,15 +236,15 @@ def _row(n: int, raw: object, seen: dict[str, int]) -> tuple[RowIn | None, list[
         seen.setdefault(code, n)
     else:
         where, why = f"строка {n}", [f"строка {n}: код — номер вида 7 или 1.3"]
-    why += [f"{where}: {reason}" for reason in _booleans(raw)]
+    reasons = [f"повторяется поле{_key(key)}" for key in getattr(raw, "repeated", ())]
+    reasons += _booleans(raw)
+    row = None
     try:
         row = RowIn.model_validate(raw)
     except ValidationError as invalid:
-        for error in invalid.errors(include_input=False, include_url=False):
-            reason = _word(error["loc"], error["type"], raw)
-            why += [f"{where}: {reason}"] if reason else []
-        return None, why
-    why += [f"{where}: {reason}" for reason in _rules(row)]
+        errors = invalid.errors(include_input=False, include_url=False)
+        reasons += [word for e in errors if (word := _word(e["loc"], e["type"], raw))]
+    why += [f"{where}: {reason}" for reason in reasons + _rules(raw)]
     return (None if why else row), why
 
 
@@ -292,27 +316,52 @@ def _param_word(loc: tuple[int | str, ...], kind: str, params: list[Any]) -> str
     return f"порог {i + 1}: имя — нужен текст"
 
 
-def _rules(row: RowIn) -> list[str]:
-    """Правила строки поверх схемы: доля и область, нулевой знак в текстах, пороги."""
-    why = []
-    if row.scope is Scope.SITE and row.share_percent is not None:
-        why.append("доля — только у проверок по страницам и выборке")
-    if row.scope is not Scope.SITE and row.share_percent is None:
-        why.append(_NEEDS_SHARE[row.scope])
-    if row.share_percent is not None and not Decimal(0) < row.share_percent <= 100:
-        why.append("доля — больше 0 и не больше 100")
+def _rules(raw: dict[str, Any]) -> list[str]:
+    """Правила строки поверх схемы — по полям годного типа: правило на негодном поле молчит, без
+    каскада ложных причин. Порядок: доля и область, нулевой знак в текстах, пороги."""
+    why = _share_rules(raw.get("scope"), raw.get("share_percent"))
     for field, (word, _, _) in _TEXTS.items():
-        if "\x00" in getattr(row, field):
+        if isinstance(raw.get(field), str) and "\x00" in raw[field]:
             why.append(f"{word} — в тексте нулевой знак: база такой текст не примет")
+    params = raw.get("params")
+    return why + (_param_rules(params) if isinstance(params, list) else [])
+
+
+def _share_rules(scope: object, share: object) -> list[str]:
+    """У «сайта» доли нет, у страниц и выборки она есть — больше 0 и не больше 100."""
+    if not (share is None or isinstance(share, Decimal)):
+        return []  # не число: причину назвали схема или проверка булевых
+    why = []
+    if isinstance(scope, str) and scope in _SCOPES:
+        if scope == Scope.SITE and share is not None:
+            why.append("доля — только у проверок по страницам и выборке")
+        if scope != Scope.SITE and share is None:
+            why.append(_NEEDS_SHARE[Scope(scope)])
+    if isinstance(share, Decimal) and not Decimal(0) < share <= 100:
+        why.append("доля — больше 0 и не больше 100")
+    return why
+
+
+def _param_rules(params: list[Any]) -> list[str]:
+    """Пороги по полям годного типа: повтор ключа, имя, повтор имени, пределы единицы."""
+    why: list[str] = []
     names: set[str] = set()
-    for i, param in enumerate(row.params, 1):
-        if not _NAME.fullmatch(param.name):
+    for i, param in enumerate(params, 1):
+        if not isinstance(param, dict):
+            continue  # вид порога назвала схема
+        repeated = getattr(param, "repeated", ())
+        why += [f"{_label(param, i)}: повторяется поле{_key(key)}" for key in repeated]
+        name, value, unit = param.get("name"), param.get("value"), param.get("unit")
+        if not isinstance(name, str):
+            continue
+        if not _NAME.fullmatch(name):
             why.append(f"порог {i}: имя — латиница a–z, цифры и _, с буквы, до 40 знаков")
             continue
-        if param.name in names:
-            why.append(f"порог {param.name} повторяется")
-        names.add(param.name)
-        low, high = UNITS[param.unit]
-        if not low <= param.value <= high:
-            why.append(f"{param.name} вне пределов единицы {param.unit}: {low}–{high}")
+        if name in names:
+            why.append(f"порог {name} повторяется")
+        names.add(name)
+        if isinstance(value, Decimal) and isinstance(unit, str) and unit in _UNITS:
+            low, high = UNITS[Unit(unit)]
+            if not low <= value <= high:
+                why.append(f"{name} вне пределов единицы {unit}: {low}–{high}")
     return why

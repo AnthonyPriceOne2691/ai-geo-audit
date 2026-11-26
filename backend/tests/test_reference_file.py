@@ -209,6 +209,7 @@ ROW_CASES: list[tuple[str, bytes, str]] = [
     ("schema-and-rule", SCHEMA_AND_RULE, R1 + IMPORTANCE + NL + AT_SITE),
     ("unit-and-bounds", UNIT_AND_BOUNDS, R2 + "max_seconds: единица — " + UNITS + NL + P95),
     ("scope-no-cascade", r2(scope="everywhere", share_percent=None), R2 + "область — " + SCOPES),
+    ("site-share-text-no-cascade", with_row(1, share_percent="10"), R1 + "доля — нужно число"),
     (
         "code-and-importance",
         r2(code="9a", importance="urgent"),
