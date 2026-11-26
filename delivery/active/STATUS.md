@@ -1,0 +1,57 @@
+# Active delivery status
+
+- **slug:** ch1-04-scheme
+- **stack:** delivery@2.30, cqg@3.30, okf@absent
+- **stack-selftest:** external (корень проекта, вне git: копии из ~/Documents/Prepare @ 212443d)
+- **class:** M
+  <!-- Класс — черновик 2026-11-19 (L35): тема, скрипт схемы и обвязка тестов в нескольких
+       файлах — по работе, а не по объёму. Приёмка — вторая проверяющая (полоса третьей). -->
+- **kind:** feature
+- **repro_test:** n/a reason=не bugfix
+- **diagnosis:** n/a reason=не bugfix
+- **phase:** plan
+  <!-- Полоса фронта — слово владельца 2026-11-26T08:53:28Z «да на всё» на список ведущей:
+       «Схема» → В1б → «Клиент API и связь» → 4г. Черновик сессии фронта 2026-11-19 (вторая
+       редакция, локальные `docs/deliveries/ch1-04-scheme-spec.md` и `-plan.md`) освежён
+       исполнителем на main `b4fd595` 2026-11-26: Ч1.5б, В1а, уроки L42–L157, «Сверка с ТЗ»,
+       мера по L125; таблица примеров побайтно подписанная (`193fe70b5b32`). Черновики —
+       ведущей на чтение; код — после её слова. -->
+- **builder:** agent:front-session
+- **verifier:** agent:reviewer2-session
+- **human_ok_spec:** pending
+  <!-- Примеры подписаны словом владельца 2026-11-19T13:13Z («подписываю все 5», п. 5: спека
+       `4658140a4447`, шесть строк, хеш строк `193fe70b5b32`). Строку вносит ведущая своим
+       коммитом. -->
+- **human_ok_plan:** n/a reason=класс M
+- **shape-oracles:** weak
+  <!-- TS-половины гейтов CQG — с В1б (`v1a-spec.md:185`, :286); форма фронта до тех пор —
+       eslint, prettier и tsc цепочкой `npm run check` у исполнителя. -->
+- **behavior-oracles:** tests-present — Vitest и jsdom, не больше двух воркеров, цепочка `npm run check`; проба первого кадра в Chrome протоколом DevTools; снимки в обеих схемах; шаг живого прогона через web — `eval-smoke.md`
+- **artifact_oracle:** frontend/scripts/check-dist.mjs
+- **ci-oracles:** weak
+  <!-- До В1б CI фронт не гоняет: поставка «держится рукой» — цепочка у исполнителя и чистый
+       клон ведущей (`v1a-spec.md:57–58`). -->
+- **worktree:** .claude/worktrees/smoke-run
+  <!-- Четвёртая поставка в копии smoke (smoke, Ч1.12а, Ч1.14а1, «Схема»): новую копию в общем
+       `.claude/worktrees/` изолированная сессия исполнителя не заводит; копия — решение
+       ведущей. -->
+- **parallel_sessions:** manual-deploy
+- **hooks:** not-deployed
+- **blockers:** none
+- **waivers:** none
+- **runtime_paths:** frontend/
+  <!-- Первый кадр, смену схемы и вид компонентов видит только исполнение — проба в Chrome и
+       снимки; скрипт схемы ложится в `frontend/public/`, поэтому путь — весь `frontend/`. -->
+- **irreversible_surfaces:** публикация репозитория (публичный GitHub — создание и push), выкат на общий сервер, любая трата на платных сервисах, выпуск отчёта клиенту
+  <!-- Строка — как в `delivery/CONSTITUTION.md` и STATUS Ч1.14а1. Подпись объявления — окном
+       `scripts/sign_irreversible.sh` касанием владельца, по поставке. -->
+- **model_surface:** n/a reason=модель продукт не вызывает; поверхность объявляется с первым вызовом модели — волна В3 (§14)
+- **rule_enforcers:** n/a reason=model_surface не объявлена
+- **canon_drift_waiver:** no
+- **baseline_growth_waiver:** no
+- **observability:** 1
+- **observe_signal:** первый прогон проверок фронта в CI (В1б): `npm ci && npm run check` зелёный, в сборке 6 файлов — со скриптом схемы из `public/`; на первом выкате — `GET /color-scheme.js` через web с `Cache-Control: no-cache`, в консоли ноль нарушений CSP, выбранная схема переживает перезагрузку без вспышки
+- **observe_until:** pending — назначается на сдаче
+- **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
+  <!-- Предел 2500 строк вместе с тестами и 50 файлов — слова владельца 2026-11-19T14:26Z и
+       14:36Z; порог «сказать до сдачи» — 2300. -->
