@@ -41,7 +41,7 @@ class Once:
     """Подставной `docker`: ответ разовому контейнеру — по сервису и переменной; журнал —
     аргументы и окружение."""
 
-    def __init__(self, answers: dict[tuple[str, str], tuple[int, str]]) -> None:
+    def __init__(self, answers: dict[tuple[str, str], tuple[int, str] | Exception]) -> None:
         self.answers = answers
         self.calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
 
@@ -49,7 +49,10 @@ class Once:
         self, *args: str, env: dict[str, str], **kw: Any
     ) -> subprocess.CompletedProcess[bytes]:
         self.calls.append((args, env))
-        code, text = self.answers[args[-1], args[-2]]
+        found = self.answers[args[-1], args[-2]]
+        if isinstance(found, Exception):  # команда не уложилась в предел — отказ исполнителя
+            raise found
+        code, text = found
         return subprocess.CompletedProcess(["docker"], code, b"", text.encode())
 
 
@@ -59,7 +62,7 @@ def run_of(monkeypatch: pytest.MonkeyPatch) -> Callable[..., SimpleNamespace]:
     очереди, команда подставного `alembic` — в `asked`."""
 
     def make(
-        revisions: list[list[str]] | None = None, **answers: tuple[int, str]
+        revisions: list[list[str]] | None = None, **answers: tuple[int, str] | Exception
     ) -> SimpleNamespace:
         spoiled = {tuple(key.split("_", 1)): value for key, value in answers.items()}
         full = {key: (1, refusal(*key)) for key in REASONS} | spoiled
@@ -192,6 +195,15 @@ def test_a173_two_problems_of_one_container_are_both_named(
             run_of(migrate_DATABASE_URL=(0, refusal("migrate", "DATABASE_URL") + SUPER))
         )
     assert str(red.value) == "migrate, DATABASE_URL: код 0; адрес или пароль в выводе"
+
+
+def test_a173_limit_names_the_case(run_of: Callable[..., SimpleNamespace]) -> None:
+    """A173: разовый контейнер не уложился в предел — красное с сервисом и переменной случая и
+    причиной исполнителя."""
+    late = compose_mod.StepError("docker compose -p не уложился в 120 с")
+    with pytest.raises(compose_mod.StepError) as red:
+        start.step_refusal(run_of(api_REDIS_URL=late))
+    assert str(red.value) == "api, REDIS_URL: docker compose -p не уложился в 120 с"
 
 
 def test_a173_changed_revision_is_red(run_of: Callable[..., SimpleNamespace]) -> None:
