@@ -98,6 +98,15 @@ export default ts.config(
           "CallExpression[callee.property.value='insertAdjacentHTML']",
           "CallExpression[callee.object.name='document'][callee.property.name=/^write(ln)?$/]",
           "CallExpression[callee.object.property.name='document'][callee.property.name=/^write(ln)?$/]",
+          // Сверх образцов спеки — решение ведущей 2026-11-26: разбор строки в узлы, превью
+          // страницы в рамке и присваивание свойств пачкой.
+          'CallExpression[callee.property.name=/^(setHTMLUnsafe|createContextualFragment)$/]',
+          'CallExpression[callee.property.value=/^(setHTMLUnsafe|createContextualFragment)$/]',
+          "AssignmentExpression > MemberExpression.left[property.name='srcdoc']",
+          "AssignmentExpression > MemberExpression.left[property.value='srcdoc']",
+          "JSXAttribute[name.name='srcDoc']",
+          "CallExpression[callee.object.name='Object'][callee.property.name='assign'] > ObjectExpression > Property[key.name=/^(inner|outer)HTML$/]",
+          "CallExpression[callee.object.name='Object'][callee.property.name='assign'] > ObjectExpression > Property[key.value=/^(inner|outer)HTML$/]",
         ].map((selector) => ({
           selector,
           message: 'З14: HTML строкой в разметку нельзя — только текст (UI_RULES.md, «Текст»)',

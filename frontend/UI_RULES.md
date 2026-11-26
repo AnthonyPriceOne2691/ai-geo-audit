@@ -69,8 +69,11 @@
 - Geologica — со своего адреса, только наборы латиницы и кириллицы. Числа табличные, одной ширины.
 - Щит цвета текста: чужая `--text-color` выше по дереву не перекрашивает текст темы.
 - Текст страниц клиентов и ответы моделей выводятся только как текст, не как разметка. Держит
-  правило eslint З14 (`eslint.config.js`): `dangerouslySetInnerHTML`, присваивание `innerHTML` и
-  `outerHTML`, `insertAdjacentHTML`, `document.write` — ошибка (A391).
+  правило eslint З14 (`eslint.config.js`, A391) — ошибка на приёмниках HTML строкой:
+  `dangerouslySetInnerHTML` и `srcDoc` в JSX; присваивание `innerHTML`, `outerHTML` и `srcdoc`, в
+  том числе через скобки и `Object.assign`; `insertAdjacentHTML`, `setHTMLUnsafe`,
+  `createContextualFragment`, `document.write` и `writeln`. Разбор `DOMParser` со вставкой узлов
+  не запрещён: это путь для очищенного содержимого, а очистку правило не проверяет.
 
 ## Таблицы
 
