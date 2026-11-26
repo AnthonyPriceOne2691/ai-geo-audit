@@ -426,12 +426,11 @@ def test_a72_secret_field_inside_a_union_is_still_a_secret(monkeypatch: pytest.M
 def test_a72_rules_read_the_process_list_from_startup_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A72: список процесса — из `startup_checks.required()`: новое обязательное имя, а compose
-    не правлен — красное."""
+    """A72, A192: список процесса — из `startup_checks.required()`, у api в нём и пара бота: новое
+    обязательное имя, а compose не правлен — красное."""
     assert startup_checks.required("migrate") == frozenset({"DATABASE_URL"})
-    assert startup_checks.required("api") == frozenset(
-        {"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE", "API_TRUSTED_PROXIES"}
-    )
+    api = {"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE", "API_TRUSTED_PROXIES"}
+    assert startup_checks.required("api") == frozenset(api | set(BOT_PAIR))
     grown = startup_checks.required("api") | {"AUDIT_NEW_SECRET"}
     monkeypatch.setitem(startup_checks._NEEDS, "api", grown)
     assert found(valid()) == {("required-vars", "api", "AUDIT_NEW_SECRET")}

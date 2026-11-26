@@ -65,6 +65,7 @@ def prod(monkeypatch: pytest.MonkeyPatch, process: sc.Process, **env: str) -> li
         access=config.AccessSettings(),
         keys=config.KeySettings(),
         api=config.ApiSettings(),
+        alerts=config.AlertSettings(),
     )
 
 

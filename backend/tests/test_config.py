@@ -58,6 +58,8 @@ CASES = [
     ("API_HOST", "0.0.0.0", config.ApiSettings, "host", "0.0.0.0"),
     ("API_PORT", "8200", config.ApiSettings, "port", 8200),
     ("API_TRUSTED_PROXIES", "10.9.9.9", config.ApiSettings, "trusted_proxies_text", "10.9.9.9"),
+    ("ALERT_TELEGRAM_BOT_TOKEN", "123:bot-token-x", config.AlertSettings, "bot_token", None),
+    ("ALERT_TELEGRAM_CHAT_ID", "-1009", config.AlertSettings, "chat_id", "-1009"),
 ]
 
 

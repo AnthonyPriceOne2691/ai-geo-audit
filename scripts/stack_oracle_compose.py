@@ -160,6 +160,8 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
         "REDIS_PASSWORD": run.redis_password,
         "API_REDIS_URL": f"redis://:{run.redis_password}@redis:6379/0",
         "JWT_SECRET": run.jwt,
+        "ALERT_TELEGRAM_BOT_TOKEN": run.bot_token,
+        "ALERT_TELEGRAM_CHAT_ID": run.chat_id,
         "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
     }
