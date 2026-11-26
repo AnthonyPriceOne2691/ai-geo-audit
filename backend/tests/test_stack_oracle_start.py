@@ -56,7 +56,7 @@ class Once:
 @pytest.fixture
 def run_of(monkeypatch: pytest.MonkeyPatch) -> Callable[..., SimpleNamespace]:
     """Прогон с подставным `docker`: верные отказы, кроме названных в `answers`; ревизии — по
-    очереди."""
+    очереди, команда подставного `alembic` — в `asked`."""
 
     def make(
         revisions: list[list[str]] | None = None, **answers: tuple[int, str]
@@ -65,14 +65,21 @@ def run_of(monkeypatch: pytest.MonkeyPatch) -> Callable[..., SimpleNamespace]:
         full = {key: (1, refusal(*key)) for key in REASONS} | spoiled
         docker = Once(full)
         left = revisions or [["0002"], ["0002"]]
+        asked: list[str] = []
+
+        def revision(run: object, command: str) -> list[str]:
+            asked.append(command)
+            return left.pop(0)
+
         monkeypatch.setattr(start, "compose_base", lambda run: ["compose", "-p", "stack"])
         monkeypatch.setattr(start, "stack_env", lambda run: {"KEEP": "yes"})
-        monkeypatch.setattr(start, "alembic", lambda run, command: left.pop(0))
+        monkeypatch.setattr(start, "alembic", revision)
         return SimpleNamespace(
             docker=docker,
             app_password=APP,
             migrate_password=MIGRATE,
             invented=INVENTED,
+            asked=asked,
         )
 
     return make
@@ -91,13 +98,15 @@ def test_a173_step_runs_three_refusals_and_keeps_the_revision(
     run_of: Callable[..., SimpleNamespace],
 ) -> None:
     """A173: три разовых контейнера — migrate с адресом роли сервиса, api с адресом роли миграций и
-    с адресом очереди без пароля; `run -e ИМЯ` без значения, значение — в окружении команды."""
+    с адресом очереди без пароля; `run -e ИМЯ` без значения, значение — в окружении команды;
+    ревизия до и после — `alembic current`."""
     run = run_of()
     line = start.step_refusal(run)
     assert line == (
         "отказ старта: migrate — DATABASE_URL, код 1; api — DATABASE_URL, код 1; api — REDIS_URL,"
         " код 1; адресов, паролей и Traceback нет; ревизия прежняя"
     )
+    assert run.asked == ["current", "current"]
     calls = [(args[-1], args[-2], env) for args, env in run.docker.calls]
     assert [(service, name) for service, name, _ in calls] == list(REASONS)
     for (args, env), key in zip(run.docker.calls, REASONS, strict=True):

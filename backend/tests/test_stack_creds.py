@@ -26,12 +26,15 @@ from test_stack_rules import (
     valid,
 )
 
+from ai_geo_audit.ops import stack_rules as sr
+
 # Правила учёток хранилищ (A177, A178): проба каждого условия — ровно её нарушение; без правила
 # проба проходит, и тест красный. Значений нет нигде: в выводе — код, сервис и имя переменной.
 LITERAL = "literal-pass-12"
 API_ADDRESS = "${API_DATABASE_URL:?адрес}"
 MIGRATE_ADDRESS = "${MIGRATE_DATABASE_URL:?адрес}"
 SCRIPT_SHORT = "./deploy/db/roles.sql:/docker-entrypoint-initdb.d/roles.sql"
+SCRIPT_REF = "${ROLES_DIR:-./deploy/db}/roles.sql:/docker-entrypoint-initdb.d/roles.sql:ro"
 DATA = {"type": "volume", "source": "db-data", "target": "/var/lib/data"}
 
 
@@ -162,14 +165,27 @@ def test_a177_db_password_at_a_process_is_caught_by_both_rules(service: str, var
         volumes("db-data:/var/lib/data", f"{SCRIPT_SHORT}:ro"),
         volumes(DATA, {**DB_SCRIPT, "source": "/srv/db/roles.sql"}),
         volumes(DATA, f"{SCRIPT_SHORT}:ro,z"),
+        volumes("/var/lib/data", f"{SCRIPT_SHORT}:ro"),
+        volumes(DATA, SCRIPT_REF),
+        volumes(DATA, {**DB_SCRIPT, "source": "roles.sql"}),
         addresses("${MIGRATE_DATABASE_URL:?другая причина}", "migrate"),
         put(env("db"), "POSTGRES_PASSWORD", "${DB_PASSWORD:?пароль}"),
     ],
-    ids=["short-ro", "other-file", "short-ro-z", "other-reason", "own-password"],
+    ids=[
+        "short-ro",
+        "other-file",
+        "short-ro-z",
+        "short-anonymous",
+        "short-ref-colon",
+        "source-no-dir",
+        "other-reason",
+        "own-password",
+    ],
 )
 def test_a177_neighbour_cases_are_not_violations(change: Callable) -> None:
-    """A177, соседние случаи (L53): скрипт короткой записью с `:ro` и с режимами, другой файл,
-    другая причина у ссылки, пароль суперпользователя у db — не нарушения."""
+    """A177, соседние случаи (L53): скрипт короткой записью с `:ro` и с режимами, рядом
+    безымянный том одной частью, двоеточие внутри `${…}` источника — не разделитель, источник без
+    каталога, другой файл, другая причина у ссылки, пароль суперпользователя у db — не нарушения."""
     config = valid()
     change(config)
     assert found(config) == set()
@@ -190,6 +206,7 @@ def auth(service: str = "redis", var: str | None = None) -> Found:
 
 
 QUEUE_URL = "redis://:" + LITERAL + "@redis:6379/0"
+PASS_DOC = f"exec redis-server - <<EOF\n{PASS_LINE}\nEOF"
 CLI = "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -x PONG"
 FLAG_CLI = CLI.replace("redis-cli ping", "redis-cli -a $$REDIS_PASSWORD ping")
 QUEUE_REF = "${REDIS_PASSWORD:?пароль}"
@@ -276,6 +293,29 @@ AUTH_PROBES = [
         redis_script("exec redis-server - --requirepass=$$REDIS_PASSWORD", PASS_LINE),
         auth(),
     ),
+    (
+        "sh-c-extra-argument",
+        put(svc("redis"), "command", ["sh", "-c", f"{PASS_DOC}\n", "redis"]),
+        auth(),
+    ),
+    (
+        "here-doc-tab-delimiter",
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<EOF\n{PASS_LINE}\n\tEOF\n"],
+        ),
+        auth(),
+    ),
+    (
+        "here-doc-dash-space-delimiter",
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<-EOF\n\t{PASS_LINE}\n  EOF\n"],
+        ),
+        auth(),
+    ),
     ("health-no-auth", health(["CMD-SHELL", "redis-cli ping | grep -x PONG"]), auth()),
     (
         "health-no-pong",
@@ -352,6 +392,7 @@ AUTH_PROBES = [
         put(svc("api"), "command", ["redis-cli", "--pass=x", "ping"]),
         auth("api"),
     ),
+    ("api-a-flag-string", put(svc("api"), "command", "redis-cli -a x ping"), auth("api")),
     ("db-password", put(env("db"), "REDIS_PASSWORD", QUEUE_REF), auth("db", "REDIS_PASSWORD")),
     (
         "web-password",
@@ -406,6 +447,16 @@ def test_a178_queue_password_at_a_process_is_caught_by_both_rules(service: str) 
             {"test": ["CMD", "redis-cli", "-u", "redis://redis:6379/0", "ping"]},
         ),
         put(svc("web"), "healthcheck", {"test": ["CMD", "grep", "-a", "x", "/dev/null"]}),
+        put(
+            svc("redis"),
+            "command",
+            ["sh", "-c", f"exec redis-server - <<-XEOF\n\t{PASS_LINE}\n\tXEOF\n"],
+        ),
+        put(
+            svc("web"),
+            "healthcheck",
+            {"test": ["CMD", "redis-cli", "-u", "redis://[::1", "ping"]},
+        ),
     ],
     ids=[
         "flags",
@@ -415,11 +466,15 @@ def test_a178_queue_password_at_a_process_is_caught_by_both_rules(service: str) 
         "test-string",
         "u-no-password",
         "a-no-cli",
+        "here-doc-dash-x-word",
+        "u-unparsable",
     ],
 )
 def test_a178_neighbour_cases_are_not_violations(change: Callable) -> None:
     """A178, соседние случаи (L53): флаги наложения после `-`, команда строкой, `grep -q`, проверка
-    здоровья строкой, `-u` с адресом без пароля, `-a` без redis-cli — не нарушения."""
+    здоровья строкой, `-u` с адресом без пароля и с адресом, который не разобрать, `-a` без
+    redis-cli, `<<-` снимает у ограничителя только табуляции — и слово на «X» цело, — не
+    нарушения."""
     config = valid()
     change(config)
     assert found(config) == set()
@@ -438,3 +493,80 @@ def test_a177_a178_lines_name_service_and_variable_without_values(
     assert "db-roles: сервис db, переменная POSTGRES_APP_PASSWORD" in out
     assert "redis-auth: сервис redis —" in out
     assert LITERAL not in out
+
+
+ROLE_SPOILS = {name: spoil for name, spoil, _ in ROLE_PROBES}
+AUTH_SPOILS = {name: spoil for name, spoil, _ in AUTH_PROBES}
+SCRIPT_AT = "/docker-entrypoint-initdb.d/roles.sql"
+# Строка нарушения целиком — по пробе на каждую причину `db-roles` и `redis-auth`.
+LINES = [
+    (ROLE_SPOILS["no-user"], "db-roles: сервис db, переменная POSTGRES_USER — не задана явно"),
+    (
+        ROLE_SPOILS["migrate-password-literal"],
+        "db-roles: сервис db, переменная POSTGRES_MIGRATE_PASSWORD — пароль роли — не "
+        "${VAR:?причина}",
+    ),
+    (ROLE_SPOILS["no-script"], f"db-roles: сервис db — скрипт ролей не смонтирован: {SCRIPT_AT}"),
+    (
+        ROLE_SPOILS["script-read-write-short"],
+        f"db-roles: сервис db — скрипт ролей смонтирован на запись: {SCRIPT_AT}",
+    ),
+    (
+        ROLE_SPOILS["migrate-from-api"],
+        "db-roles: сервис migrate, переменная DATABASE_URL — адрес базы — не из "
+        "MIGRATE_DATABASE_URL",
+    ),
+    (
+        ROLE_SPOILS["web-postgres-password"],
+        "db-roles: сервис web, переменная POSTGRES_PASSWORD — пароль базы — только у db",
+    ),
+    (
+        AUTH_SPOILS["password-literal"],
+        "redis-auth: сервис redis, переменная REDIS_PASSWORD — пароль очереди — не ${VAR:?причина}",
+    ),
+    (AUTH_SPOILS["no-user"], "redis-auth: сервис redis — нет user: redis"),
+    (
+        AUTH_SPOILS["no-exec"],
+        "redis-auth: сервис redis — команда — не sh -c с exec redis-server - и requirepass на "
+        "входе",
+    ),
+    (
+        AUTH_SPOILS["health-no-auth"],
+        "redis-auth: сервис redis — проверка здоровья — без REDISCLI_AUTH или сверки с PONG",
+    ),
+    (
+        AUTH_SPOILS["web-password"],
+        "redis-auth: сервис web, переменная REDIS_PASSWORD — пароль очереди — только у redis",
+    ),
+    (
+        AUTH_SPOILS["web-a-flag"],
+        "redis-auth: сервис web — пароль флагом redis-cli виден в списке процессов",
+    ),
+]
+
+
+@pytest.mark.parametrize(("spoil", "line"), LINES, ids=[line[:40] for _, line in LINES])
+def test_a177_a178_each_reason_is_the_whole_line(spoil: Callable, line: str) -> None:
+    """A177, A178: у каждой причины `db-roles` и `redis-auth` строка нарушения сверяется целиком —
+    регистр и лишние знаки в причине тест видит."""
+    config = valid()
+    spoil(config)
+    assert [violation.line() for violation in sr.check(config)] == [line]
+
+
+@pytest.mark.parametrize(
+    "check",
+    [
+        {"test": ["NONE"], **HEALTH},
+        {"test": ["CMD", "NONE"], **HEALTH},
+        {"disable": True, "test": ["CMD-SHELL", "redis-cli ping"], **HEALTH},
+    ],
+    ids=["none", "cmd-none", "disabled-over-test"],
+)
+def test_a178_health_off_is_judged_by_the_healthcheck_rule(check: dict[str, Any]) -> None:
+    """A178: проверки здоровья у redis по сути нет — `NONE`, `CMD NONE` или `disable` поверх
+    команды (так compose 5.7.1 пишет наложение, проба 2026-11-26T08:16:41Z) — нарушение
+    `healthcheck` Ч1.5а; `redis-auth` её не судит."""
+    config = valid()
+    put(svc("redis"), "healthcheck", check)(config)
+    assert found(config) == {("healthcheck", "redis", None)}
