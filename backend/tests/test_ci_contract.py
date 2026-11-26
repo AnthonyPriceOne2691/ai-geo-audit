@@ -386,9 +386,31 @@ def frontend_problems(workflow: dict[Any, Any]) -> list[str]:
     return problems + [f"frontend: {message}" for ok, message in checks if not ok]
 
 
+def audit_step_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A102, A103, A389, находка 3 второй проверяющей: шаг аудита в `gates` — предохранители обеих
+    половин и итог кодом гейта: непроверенная половина у гейта — «проверено НЕ ВСЁ» с кодом 0."""
+    found = [
+        str(step.get("run", ""))
+        for step in workflow["jobs"].get("gates", {}).get("steps", [])
+        if "check_deps_audit.sh" in str(step.get("run", ""))
+    ]
+    if len(found) != 1:
+        return [f"аудит: шагов гейта аудита в gates {len(found)}, ждём 1"]
+    guard = r'grep -q "{}-зависимости не проверены"; then\n[^\n]*::error::[^\n]*\n\s*exit 1\n\s*fi'
+    problems = [
+        f"аудит: нет предохранителя «{half}-зависимости не проверены»"
+        for half in ("python", "js")
+        if not re.search(guard.format(half), found[0])
+    ]
+    if not re.search(r'^exit "\$rc"$', found[0], re.M):
+        problems.append('аудит: итог шага — не `exit "$rc"`')
+    return problems
+
+
 def quality_check(text: str) -> list[str]:
     workflow = yaml.safe_load(text)
     return [
+        *audit_step_problems(workflow),
         *frontend_problems(workflow),
         *declared_problems(workflow),
         *uses_problems(text, workflow),
