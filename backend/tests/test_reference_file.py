@@ -44,6 +44,9 @@ INFINITE = "в файле NaN или Infinity — числа только кон
 DATE = "дата снимка — вида 2026-11-18"
 FORMAT = "формат не поддерживается — нужен 1"
 UNREADABLE = "манифест не читается или не того вида: format, rows, sha256, source_date"
+REPEATED = "повторяется поле: format"
+SCOPES = "site, pages или sample"
+P95 = R2 + "p95_ms вне пределов единицы s: 0.1–60"
 
 
 def quiet(monkeypatch: MP, calls: list[str] | None = None) -> None:
@@ -120,6 +123,9 @@ FILE_CASES: list[tuple[str, bytes, str]] = [
     ("date-otherwise", dump(document(source_date="18.11.2026")), DATE),
     ("date-impossible", dump(document(source_date="2026-13-01")), DATE),
     ("date-number", dump(document(source_date=20261118)), DATE),
+    ("date-digits-only", dump(document(source_date="20261118")), DATE),
+    ("format-1000", dump(document(format=1000)), FORMAT),
+    ("repeated-top", SAMPLE_BYTES.replace(b'"format": 1,', b'"format": 1, "format": 1,'), REPEATED),
 ]
 
 
@@ -137,6 +143,15 @@ NUL = R2 + "норма — в тексте нулевой знак: база т�
 METHODS = R2 + "способ — rules, rules_model, model, platforms или external"
 AT_SITE = R1 + "доля — только у проверок по страницам и выборке"
 NO_UNIT = {"name": "max_seconds", "value": Decimal("3.25")}
+ALMOST_LATIN = dump(document([*SAMPLE[:1], SAMPLE[1] | {"aполе": 1}, *SAMPLE[2:]]))
+BLOCK_92 = '"block": "блок 92"'
+REPEATED_ROW = SAMPLE_BYTES.replace(BLOCK_92.encode(), f"{BLOCK_92}, {BLOCK_92}".encode())
+REPEATED_PARAM = SAMPLE_BYTES.replace(b'"unit": "s"', b'"unit": "s", "unit": "s"')
+REPEATED_CYRILLIC = SAMPLE_BYTES.replace(BLOCK_92.encode(), f'"п": 1, "п": 2, {BLOCK_92}'.encode())
+SCHEMA_AND_RULE = with_row(1, importance="urgent", share_percent=Decimal(10))
+NOT_LATIN_PARAM = r2(params=[param(name="порог_м", unit="furlong")])
+UNIT_AND_BOUNDS = r2(params=[param(unit="furlong"), param(name="p95_ms", value=Decimal(61))])
+CYRILLIC = "лишнее поле с именем не латиницей"
 #: Порча строки Ф: имя, байты, поток ошибок без последнего перевода строки.
 ROW_CASES: list[tuple[str, bytes, str]] = [
     ("code-again", r2(code="91"), "строка 2, код 91: код уже был в строке 1"),
@@ -184,6 +199,32 @@ ROW_CASES: list[tuple[str, bytes, str]] = [
     ("row-extra-not-latin", NOT_LATIN_ROW, R2 + "лишнее поле с именем не латиницей"),
     ("row-without-norm", without(2, "norm"), R2 + "нет поля norm"),
     ("row-not-object", instead(2, 5), "строка 2 — не объект"),
+    ("row-extra-almost-latin", ALMOST_LATIN, R2 + CYRILLIC),
+    (
+        "block-nul",
+        r2(block="блок" + chr(0)),
+        R2 + "блок — в тексте нулевой знак: база такой текст не примет",
+    ),
+    ("param-not-latin", NOT_LATIN_PARAM, R2 + "порог 1: единица — " + UNITS + NL + PARAM_NAME),
+    ("schema-and-rule", SCHEMA_AND_RULE, R1 + IMPORTANCE + NL + AT_SITE),
+    ("unit-and-bounds", UNIT_AND_BOUNDS, R2 + "max_seconds: единица — " + UNITS + NL + P95),
+    ("scope-no-cascade", r2(scope="everywhere", share_percent=None), R2 + "область — " + SCOPES),
+    (
+        "code-and-importance",
+        r2(code="9a", importance="urgent"),
+        CODE + NL + "строка 2: " + IMPORTANCE,
+    ),
+    ("repeated-row-key", REPEATED_ROW, R2 + REPEATED.replace("format", "block")),
+    (
+        "repeated-param-key",
+        REPEATED_PARAM,
+        R2 + "max_seconds: " + REPEATED.replace("format", "unit"),
+    ),
+    (
+        "repeated-cyrillic",
+        REPEATED_CYRILLIC,
+        R2 + "повторяется поле с именем не латиницей" + NL + R2 + CYRILLIC,
+    ),
 ]
 
 
@@ -267,6 +308,15 @@ def padded(size: int) -> bytes:
 def test_a306_a_file_over_1_mb_is_not_read_further(check: Run) -> None:
     """A306: 1 048 577 байт — «файл больше 1 МБ — дальше не читается»."""
     assert check(padded(1_048_577)) == (1, "", "файл больше 1 МБ — дальше не читается" + NL)
+
+
+def test_a306_the_stream_is_not_read_past_the_limit() -> None:
+    """A306: поток в 3 МБ — отказ; прочитано ровно 1 048 577 байт: дальше не читается."""
+    stream = io.BytesIO(b" " * 3_145_728)
+    with pytest.raises(file.FileRefusedError) as refused:
+        file.read(stream)
+    reason = ["файл больше 1 МБ — дальше не читается"]
+    assert (refused.value.reasons, stream.tell()) == (reason, 1_048_577)
 
 
 def test_a306_more_than_200_rows_are_refused(check: Run) -> None:
