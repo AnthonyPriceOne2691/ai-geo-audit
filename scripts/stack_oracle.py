@@ -30,6 +30,7 @@ from urllib.parse import quote
 from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, start_cleanup
 from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError, write_master_key
 from stack_oracle_compose import cleanup as stack_cleanup
+from stack_oracle_deploy import DEPLOY_STEPS
 from stack_oracle_docker import LIMITS, Docker
 from stack_oracle_hardening import HARDENING_STEPS
 from stack_oracle_redis import REDIS_STEPS
@@ -385,6 +386,7 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     *WEB_BUILD_STEPS,
     *STACK_STEPS,
     *WEB_STACK_STEPS,
+    *DEPLOY_STEPS,
     *HARDENING_STEPS,
     *STOP_STEPS,
     *ROLE_STEPS,
