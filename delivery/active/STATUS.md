@@ -17,7 +17,7 @@
        владельца: спека, план, шесть пакетов. -->
 - **builder:** agent:front-session
 - **verifier:** agent:reviewer2-session
-- **human_ok_spec:** yes (by=human:owner at=2026-11-26T10:54Z)
+- **human_ok_spec:** yes (by=human:owner at=2026-11-26T12:05Z)
 - **human_ok_plan:** yes (by=human:owner at=2026-11-26T10:54Z)
   <!-- Слово владельца 2026-11-26T10:54:08Z «Подписываю Ч2.1 и В1б, публикуем Схему, открой окна
        подписи» на показ ведущей (`docs/deliveries/contour-b1b-sign-show.md`), вершина `c803a27`:
@@ -26,7 +26,15 @@
        `@stryker-mutator/vitest-runner`, fast-check) — строки `new_dependency` с `by=human:owner`
        и этим временем вносит исполнитель на срезе 1 вместе с `approved-packages.json` (L93,
        A394); обязательная проверка `frontend` в защите main — ведущая сразу после слияния В1б.
-       Окно подписи необратимого — тем же словом, запускает ведущая. -->
+       Окно подписи необратимого — тем же словом, запускает ведущая.
+       Правка A389 (ячейка ожидаемого выхода, `spec.md:141`) — словом владельца
+       2026-11-26T12:05:28Z «Подписываю A389 В1б, да на оба» на показ ведущей
+       (`docs/deliveries/contour-b1b-a389-show.md`): снимок JS-аудита — 11 умеренных вместо 7,
+       спека `b5f65756deec`, строк примеров 15 — `67098ba56ed1`; долг цепочки Stryker — к первой
+       поставке фронта после 2026-12-01. Тем же словом, п. 2: строку `baseline_growth_waiver`
+       (`deps_audit_baseline.txt`, `js_total` 0 → 11) с `by=human:owner` и этим временем вносит
+       исполнитель на срезе, где снимается аудит; на каждом срезе вторая проверяющая сверяет
+       диффом снимков против main, что вырос только `js_total`. -->
 - **shape-oracles:** cqg-deployed
   <!-- Половина Python — с В1а; TS-половина — эта поставка. -->
 - **behavior-oracles:** tests-present — pytest: контракт CI и хуков, мета-гейт; Vitest: F17, правило З14, свойство fast-check; гейты на копиях с нарушением
