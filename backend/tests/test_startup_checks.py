@@ -17,6 +17,7 @@ ROLE: dict[sc.Process, str] = {
     "api": "audit_app",
     "worker": "audit_app",
     "migrate": "audit_migrate",
+    "reference": "audit_app",
 }
 # pragma: allowlist nextline secret
 DSN = "postgresql+asyncpg://audit_app:pw-1234567890@db:5432/audit"
@@ -165,7 +166,7 @@ def test_outside_prod_checks_are_silent(monkeypatch: pytest.MonkeyPatch, env: st
 
 
 UNENCODED = ["pa@ss-word-123456", "pa#ss-word-123456", "pa?ss-word-123456", "pa/ss-word-123456"]
-PROCESSES: list[sc.Process] = ["api", "worker", "migrate"]
+PROCESSES: list[sc.Process] = ["api", "worker", "migrate", "reference"]
 
 
 def db(password: str | None, rest: str = "db:5432/audit", user: str = "audit_migrate") -> str:
@@ -261,6 +262,7 @@ FOREIGN: list[tuple[sc.Process, str]] = [
     ("migrate", "audit_app"),
     ("api", "AUDIT_APP"),
     ("migrate", "audit_migrate_x"),
+    ("reference", "audit_migrate"),
 ]
 LONG = "pw-1234567890"
 
