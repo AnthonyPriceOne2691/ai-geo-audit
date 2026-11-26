@@ -23,6 +23,11 @@ ROLE: dict[sc.Process, str] = {
 DSN = "postgresql+asyncpg://audit_app:pw-1234567890@db:5432/audit"
 # pragma: allowlist nextline secret
 DSN_MIGRATE = "postgresql+asyncpg://audit_migrate:pw-1234567890@db:5432/audit"
+#: Пара бота тревог (A192): выдуманный токен и номер группового чата — с минусом.
+# pragma: allowlist nextline secret
+BOT_TOKEN = "123456789:test-bot-token-value-0001"
+CHAT_ID = "-1001234567890"
+PAIR = ("ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID")
 
 
 @pytest.fixture
@@ -44,6 +49,8 @@ def full_env(master_key: str) -> dict[str, str]:
         "JWT_SECRET": "a" * 64,
         "KEYS_MASTER_KEY_FILE": master_key,
         "API_TRUSTED_PROXIES": "10.9.9.9",
+        "ALERT_TELEGRAM_BOT_TOKEN": BOT_TOKEN,
+        "ALERT_TELEGRAM_CHAT_ID": CHAT_ID,
     }
 
 
@@ -59,6 +66,7 @@ def prod(monkeypatch: pytest.MonkeyPatch, process: sc.Process, **env: str) -> li
         access=config.AccessSettings(),
         keys=config.KeySettings(),
         api=config.ApiSettings(),
+        alerts=config.AlertSettings(),
     )
 
 
@@ -124,12 +132,12 @@ def test_a3_master_key_reason_is_compared_whole(
 
 
 def test_a3_processes_need_different_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A3, A33: миграциям хватает базы; воркеру не нужен секрет входа, api — нужно всё, и ещё
-    адреса прокси (A33)."""
+    """A3, A33, A192: миграциям хватает базы; воркеру не нужен секрет входа, api — нужно всё, и
+    ещё адреса прокси (A33) и пара бота тревог (A192)."""
     assert names(prod(monkeypatch, "migrate", DATABASE_URL=DSN_MIGRATE)) == set()
     worker = {"REDIS_URL", "KEYS_MASTER_KEY_FILE"}
     assert names(prod(monkeypatch, "worker", DATABASE_URL=DSN)) == worker
-    api = worker | {"JWT_SECRET", "API_TRUSTED_PROXIES"}
+    api = worker | {"JWT_SECRET", "API_TRUSTED_PROXIES", *PAIR}
     assert names(prod(monkeypatch, "api", DATABASE_URL=DSN)) == api
 
 
@@ -475,3 +483,87 @@ def test_a221_closed_file_and_folder_are_reasons_in_words(
     for path, reason in cases.items():
         env = full_env(master_key) | {"KEYS_MASTER_KEY_FILE": str(path)}
         assert prod(monkeypatch, "worker", **env) == [sc.Problem("KEYS_MASTER_KEY_FILE", reason)]
+
+
+TOKEN_FOR = "токен бота тревог"
+CHAT_FOR = "номер чата тревог"
+
+
+def without(env: dict[str, str], *gone: str) -> dict[str, str]:
+    return {name: value for name, value in env.items() if name not in gone}
+
+
+def test_a192_prod_api_names_the_missing_bot_pair(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A192: в бою у api нет токена бота и номера чата — api не стартует; причина у каждого имени
+    целиком (L124), токен — первым."""
+    assert prod(monkeypatch, "api", **without(full_env(master_key), *PAIR)) == [
+        sc.Problem("ALERT_TELEGRAM_BOT_TOKEN", f"не задано — {TOKEN_FOR}"),
+        sc.Problem("ALERT_TELEGRAM_CHAT_ID", f"не задано — {CHAT_FOR}"),
+    ]
+
+
+def test_a192_placeholder_token_is_refused(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A192: токен — заглушка `.env.example`: отказ с именем, причина целиком."""
+    env = full_env(master_key) | {"ALERT_TELEGRAM_BOT_TOKEN": "CHANGE_ME"}
+    assert prod(monkeypatch, "api", **env) == [
+        sc.Problem("ALERT_TELEGRAM_BOT_TOKEN", f"стоит заглушка из .env.example — {TOKEN_FOR}")
+    ]
+
+
+#: Не целое: слово, пробел внутри и по краю, дробь, знак без цифр, шестнадцатеричная запись,
+#: цифры не ASCII — `int()` их принял бы.
+NOT_INTEGER = {
+    "слово": "abc",
+    "пробел": "12 34",
+    "пробел-с-края": " 123",
+    "дробь": "1.5",
+    "минус": "-",
+    "минус-в-конце": "12-",
+    "hex": "0x1F",
+    "не-ascii": "١٢٣",
+}
+
+
+@pytest.mark.parametrize("chat", list(NOT_INTEGER.values()), ids=list(NOT_INTEGER))
+def test_a192_chat_that_is_not_an_integer_is_refused_without_its_value(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, chat: str
+) -> None:
+    """A192: номер чата — не целое: отказ с именем; причина целиком, значения в ней нет."""
+    env = full_env(master_key) | {"ALERT_TELEGRAM_CHAT_ID": chat}
+    assert prod(monkeypatch, "api", **env) == [
+        sc.Problem("ALERT_TELEGRAM_CHAT_ID", f"не целое — {CHAT_FOR}")
+    ]
+
+
+@pytest.mark.parametrize("chat", [CHAT_ID, "123456789"], ids=["group", "private"])
+def test_a192_group_and_private_chat_numbers_start(
+    monkeypatch: pytest.MonkeyPatch, master_key: str, chat: str
+) -> None:
+    """A192: номер группы — с минусом, личного чата — без; оба целые, api стартует."""
+    env = full_env(master_key) | {"ALERT_TELEGRAM_CHAT_ID": chat}
+    assert prod(monkeypatch, "api", **env) == []
+
+
+def test_a192_worker_and_migrate_start_without_the_bot_pair(
+    monkeypatch: pytest.MonkeyPatch, master_key: str
+) -> None:
+    """A192: пара — только у api; воркер и миграции без неё стартуют, а в их окружении её держит
+    правило `foreign-secret`."""
+    env = without(full_env(master_key), *PAIR)
+    assert prod(monkeypatch, "worker", **env) == []
+    assert prod(monkeypatch, "migrate", **env | {"DATABASE_URL": DSN_MIGRATE}) == []
+
+
+def test_a192_token_is_a_secret_by_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A192: токен — `SecretStr`: ни `repr`, ни `model_dump()` настроек его не показывают, номер
+    чата — обычная строка."""
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("ALERT_TELEGRAM_CHAT_ID", CHAT_ID)
+    settings = config.AlertSettings()
+    assert (settings.bot_token.get_secret_value(), settings.chat_id) == (BOT_TOKEN, CHAT_ID)
+    assert BOT_TOKEN not in repr(settings)
+    assert BOT_TOKEN not in str(settings.model_dump())

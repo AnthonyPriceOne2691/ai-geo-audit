@@ -473,6 +473,10 @@ jobs:
           persist-credentials: false  # токен не остаётся в .git/config (A100)
       - name: Оракул стека (A60–A67, A69, A73, A77–A84, A86–A89)
         run: python3 scripts/stack_oracle.py
+      # Живые env-init, put-secret и last (A182, A183): настоящий `python3 -I deploy.py` от root на
+      # корнях сервера одноразовой машины; в выводе — имена, права, коды и счёт, без значений.
+      - name: Живые env-init, put-secret и last (A182, A183)
+        run: sudo --preserve-env=GITHUB_ACTIONS python3 scripts/deploy_live.py
 
   # Скан образа (A124–A129): Trivy 0.76.2 файлом выпуска по сумме, канарейка, скан файла образа
   # `docker save` — сокета Docker сканер не получает, опись CycloneDX того же файла. Права —

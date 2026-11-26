@@ -175,3 +175,20 @@ def test_a241_setting_secret_in_a_line_becomes_the_mask(monkeypatch: pytest.Monk
     text = alerts.compose("СБОЙ", f"t {LABEL}", lines, f"d {LABEL}", NOW)
     assert LABEL not in text and SIGNATURE not in text
     assert text.count(log_setup.MASK) == 4
+
+
+#: Токен бота тревог (A192): свой у теста — маску даёт только отметка домена тревог в `compose`.
+BOT_TOKEN = "123456789:alert-bot-token-value-0003"
+
+
+def test_a192_bot_token_in_an_alert_line_becomes_the_mask(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A192, находка 1 третьей проверяющей: тревога из процесса, где журнал не настроен, со строкой
+    «POST …/bot<токен>/sendMessage — 502» — токена в тексте нет, на его месте маска: `compose`
+    сама отмечает домен тревог. Порча «домен тревог в `compose` не отмечен» — токен в тексте
+    тревоги, дальше в исходящих Redis и в Telegram."""
+    monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setattr(config, "alerts", config.AlertSettings())
+    line = f"POST https://api.telegram.example/bot{BOT_TOKEN}/sendMessage — 502"
+    text = alerts.compose("СБОЙ", "доставка", [line], "проверить бота", NOW)
+    assert BOT_TOKEN not in text
+    assert f"/bot{log_setup.MASK}/sendMessage — 502" in text

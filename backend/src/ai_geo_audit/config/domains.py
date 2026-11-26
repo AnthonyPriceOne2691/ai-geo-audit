@@ -65,6 +65,15 @@ class KeySettings(Settings):
     master_key_file: str = Field("", validation_alias="KEYS_MASTER_KEY_FILE")
 
 
+class AlertSettings(Settings):
+    """Пара бота тревог Telegram (A192), в бою обязательна у api; доставку делает хост
+    (Ч1.14а2). Токен — секрет по типу. Номер чата — строка: негодное значение называет проверка
+    старта, а не импорт конфига, у которого в тексте ошибки было бы само значение."""
+
+    bot_token: SecretStr = Field(SecretStr(""), validation_alias="ALERT_TELEGRAM_BOT_TOKEN")
+    chat_id: str = Field("", validation_alias="ALERT_TELEGRAM_CHAT_ID")
+
+
 class LogSettings(Settings):
     """Как сервис пишет о себе: `json` — для боя, `text` — для терминала."""
 

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,36 @@ def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys, monkeypatch) -
     assert [mark for mark in MARKS if mark in seen] == []
     assert "итог: сбой скрипта — ValueError" in seen and "сбой скрипта: ValueError" in seen
     assert "общих 35, перезапусков 1" in seen and "шире 600" in seen
+
+
+def test_a183_env_init_and_put_secret_print_no_values(ctx, capsys) -> None:
+    """A183, растёт на env-init и put-secret (6а-2): значения, что создал скрипт, мастер-ключ и
+    метки входящих файлов — ни в выводе, ни в журнале хода, и при отказе put-secret тоже; внешних
+    команд нет."""
+    ctx.key_owner = os.getuid()
+    ctx.paths.etc.parent.mkdir()
+    ctx.paths.service.joinpath(".env.example").write_bytes((ROOT / ".env.example").read_bytes())
+    assert tool.main(["env-init"], ctx) == 0
+    made = [line.split("=", 1)[1] for line in ctx.paths.env_file.read_text("utf-8").splitlines()]
+    secrets = [value for value in made if len(value) >= 12 and value != tool.PLACEHOLDER]
+    key = ctx.paths.etc.joinpath("master.key").read_text(encoding="ascii").strip()
+    for name, text, code in (
+        (
+            "owner.env",
+            "ALERT_TELEGRAM_BOT_TOKEN=1234567:mkq16\nSITE_DOMAIN=mkq17.example.test\n",
+            0,
+        ),
+        ("foreign.env", "JWT_SECRET=mkq18\n", 1),  # pragma: allowlist secret
+    ):
+        path = ctx.paths.etc / "incoming" / name
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o600)
+        assert tool.main(["put-secret", str(path)], ctx) == code
+    assert tool.main(["last"], ctx) == 0
+    seen = ctx.out.getvalue() + "".join(capsys.readouterr())
+    seen += "".join(p.read_text(encoding="utf-8") for p in ctx.paths.deploy_dir.iterdir())
+    assert [value for value in [*secrets, key, "mkq16", "mkq17", "mkq18"] if value in seen] == []
+    assert ctx.runner.calls == []
 
 
 def test_a183_server_tree_ignores_env_and_journal_secrets_live_outside() -> None:

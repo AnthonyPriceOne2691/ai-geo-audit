@@ -31,8 +31,8 @@ COMPOSE = "docker-compose.yml"
 #: Правил основного набора (A87, A179): шестнадцать кодов Ч1.5а, семь A87, `stop-grace` A88 и
 #: `db-roles`, `redis-auth` «Учёток хранилищ».
 MAIN_RULES = 26
-#: Боевое наложение и правил с флагом `--prod` (A89, A179): 26 основного и три боевых.
-PROD, PROD_RULES = "docker-compose.prod.yml", 29
+#: Боевое наложение и правил с флагом `--prod` (A89, A179, A181): 26 основного и пять боевых.
+PROD, PROD_RULES = "docker-compose.prod.yml", 31
 
 
 #: Адрес базы процесса — роль и пароль (A65). Пароли выдумывает оракул: hex, у роли миграций —
@@ -160,6 +160,8 @@ def stack_env(run: Run, wrong: str | None = None) -> dict[str, str]:
         "REDIS_PASSWORD": run.redis_password,
         "API_REDIS_URL": f"redis://:{run.redis_password}@redis:6379/0",
         "JWT_SECRET": run.jwt,
+        "ALERT_TELEGRAM_BOT_TOKEN": run.bot_token,
+        "ALERT_TELEGRAM_CHAT_ID": run.chat_id,
         "WEB_ADDRESS": web_address(subnet),
         "KEYS_MASTER_KEY_HOST_FILE": str(run.copy.parent / "master.key"),
     }
@@ -263,9 +265,9 @@ def step_rules_on_file(run: Run) -> str:
 
 
 def step_rules_on_prod(run: Run) -> str:
-    """A89, вторая строка: правила с флагом `--prod` на основном файле с боевым наложением —
-    «сервисов 5, правил 29», нарушений 0. Наложение оракул не поднимает: драйвера journald может
-    не быть на машине; первый подъём — Ч1.6."""
+    """A89, вторая строка, A181, вторая строка: правила с флагом `--prod` на основном файле с
+    боевым наложением — «сервисов 5, правил 31», нарушений 0. Наложение оракул не поднимает:
+    драйвера journald может не быть на машине; первый подъём — Ч1.6."""
     return rules_on(run, [COMPOSE, PROD], ["--prod"], PROD_RULES)
 
 

@@ -60,7 +60,10 @@ class Stack:
         psql: str = "",
         db_log: str = "",
     ) -> None:
-        self.probes, self.rows = probes, rows
+        # Очереди ответов — копиями: `sticky` снимает ответ, а данные `parametrize` живут весь
+        # процесс, и mutmut гоняет pytest в одном процессе дважды (CI №37).
+        self.probes = {key: list(v) if isinstance(v, list) else v for key, v in probes.items()}
+        self.rows = {key: list(v) if isinstance(v, list) else v for key, v in rows.items()}
         self.codes, self.psql, self.db_log = list(codes), psql, db_log
         self.calls: list[tuple[tuple[str, ...], bytes | None]] = []
         self.extras: list[dict[str, str]] = []

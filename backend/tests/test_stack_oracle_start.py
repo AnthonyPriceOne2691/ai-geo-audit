@@ -67,7 +67,7 @@ def run_of(monkeypatch: pytest.MonkeyPatch) -> Callable[..., SimpleNamespace]:
         spoiled = {tuple(key.split("_", 1)): value for key, value in answers.items()}
         full = {key: (1, refusal(*key)) for key in REASONS} | spoiled
         docker = Once(full)
-        left = revisions or [["0002"], ["0002"]]
+        left = list(revisions or [["0002"], ["0002"]])  # копия: данные `parametrize` не съедать
         asked: list[str] = []
 
         def revision(run: object, command: str) -> list[str]:

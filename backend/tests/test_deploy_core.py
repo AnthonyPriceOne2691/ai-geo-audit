@@ -14,6 +14,7 @@ import signal
 import sys
 import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -432,6 +433,42 @@ def test_lock_second_run_refused_at_once_stale_mark_named(ctx) -> None:
     ctx.out = io.StringIO()
     assert tool.main(["last"], ctx) == 0
     assert "строка нового" in ctx.out.getvalue() and "строка старого" not in ctx.out.getvalue()
+
+
+def test_runs_in_one_second_each_own_journal_and_last_shows_the_latest(ctx, monkeypatch) -> None:
+    """Находка T5 6а-2 (проба 2026-11-26T12:52:25Z): запуски в одну секунду — каждый в своём
+    журнале; имя — время до микросекунд постоянной ширины, порядок имён — порядок запусков, `last`
+    — поздний. С именем до секунды второй `env-init` дописан в журнал первого, а `last` показывал
+    `put-secret`: «итог: ок» вместо отказа."""
+    runs = [("env-init", 9), ("put-secret", 10), ("env-init", 100000)]
+
+    class Clock:
+        at = datetime(2026, 11, 26, 12, 0, 0, tzinfo=UTC)
+
+        @classmethod
+        def now(cls, _tz: object = None) -> datetime:
+            return cls.at
+
+    monkeypatch.setattr(tool, "datetime", Clock)
+    for number, (command, micro) in enumerate(runs, 1):
+        Clock.at = Clock.at.replace(microsecond=micro)
+        with tool.session(ctx, command) as rep:
+            rep.line(f"запуск {number}")
+    names = sorted(path.name for path in ctx.paths.deploy_dir.glob("*.log"))
+    assert names == [
+        "20261126T120000000009Z-env-init.log",
+        "20261126T120000000010Z-put-secret.log",
+        "20261126T120000100000Z-env-init.log",
+    ]
+    ctx.out = io.StringIO()
+    assert tool.main(["last"], ctx) == 0
+    assert ctx.out.getvalue().splitlines() == [
+        f"журнал {names[-1]}: строк 3, показано 3",
+        "2026-11-26T12:00:00Z env-init: начало",
+        "2026-11-26T12:00:00Z запуск 3",
+        "2026-11-26T12:00:00Z итог: ок",
+        "выката нет",
+    ]
 
 
 def test_journal_written_first_and_lost_terminal_does_not_stop_the_step(ctx) -> None:

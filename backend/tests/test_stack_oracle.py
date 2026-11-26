@@ -20,6 +20,7 @@ import dbtools
 import pytest
 
 from ai_geo_audit.config import master_key
+from ai_geo_audit.config import startup_checks as sc
 
 sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 _spec = importlib.util.spec_from_file_location(
@@ -182,12 +183,14 @@ def test_a65_left_behind_container_or_volume_makes_the_run_red(tmp_path: Path) -
 #: Примеры шагов оракула (A76, первая строка): у каждого шага — номер своего примера; Ч1.5б,
 #: срез 1 — A77 и A82, срез 2 — A78, A79 и A80, срез 3 — A81, A83 и A84, срез 4 — A86 и A87;
 #: Ч1.5в, срез 3 — A88, срез 4 — A89; «Учётки-1», срез 2 — A85, A170 и A172 (вторая строка);
-#: «Учётки-2», срез 3 — A171, срез 5 — A173 и A380 (первая строка).
+#: «Учётки-2», срез 3 — A171, срез 5 — A173 и A380 (первая строка); 6а-2, T5 — A186 и A189
+#: (снимок соседа и разбор конфига скриптом выката на живом стеке).
 STEP_EXAMPLES = {"A60", "A61", "A62", "A63", "A64", "A65", "A66", "A67", "A69", "A73"}
 STEP_EXAMPLES |= {"A77", "A78", "A79", "A80", "A81", "A82", "A83", "A84", "A86", "A87"}
 STEP_EXAMPLES |= {"A88", "A89"}
 STEP_EXAMPLES |= {"A85", "A170", "A172"}
 STEP_EXAMPLES |= {"A171", "A173", "A380"}
+STEP_EXAMPLES |= {"A186", "A189"}
 
 
 def steps_problems(steps: list[tuple[str, str, object, bool]]) -> list[str]:
@@ -203,7 +206,7 @@ def test_a76_steps_table_has_exactly_the_oracle_examples() -> None:
     """A76, первая строка: таблица шагов оракула — у каждого шага номер своего примера; набор
     номеров — ровно A60, A61, A62, A63, A64, A65, A66, A67, A69 и A73, с Ч1.5б — A77, A78, A79,
     A80, A81, A82, A83, A84, A86 и A87, с Ч1.5в — A88 и A89, с «Учётками-1» — A85, A170 и
-    A172, с «Учётками-2» — A171, A173 и A380."""
+    A172, с «Учётками-2» — A171, A173 и A380, с 6а-2 — A186 и A189."""
     assert steps_problems(oracle.STEPS) == []
 
 
@@ -383,6 +386,7 @@ def test_a83_web_address_is_the_last_host_of_the_front_subnet_of_the_run(subnet:
 #: Выдуманные значения прогона для окружения compose: у роли миграций — с «@».
 SUPER, MIG, APP = "super-value-123456", "mig@role-value-123456", "app-role-value-123456"
 QUEUE = "queue-value-123456"
+BOT, CHAT = "bot-token-value-123456", "-1009876543210"
 
 
 def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
@@ -396,8 +400,26 @@ def stack_run(subnet: str = "172.16.0.0/28") -> SimpleNamespace:
         migrate_password=MIG,
         app_password=APP,
         redis_password=QUEUE,
+        bot_token=BOT,
+        chat_id=CHAT,
         copy=Path("/work/copy"),
     )
+
+
+def test_a192_bot_pair_goes_to_the_stack_environment() -> None:
+    """A192, A65 — вход строится иначе: окружение compose несёт выдуманную пару бота — токен и
+    номер чата; токена нет ни в одном другом значении окружения."""
+    env = compose.stack_env(stack_run())
+    assert (env["ALERT_TELEGRAM_BOT_TOKEN"], env["ALERT_TELEGRAM_CHAT_ID"]) == (BOT, CHAT)
+    assert [name for name, value in env.items() if BOT in value] == ["ALERT_TELEGRAM_BOT_TOKEN"]
+
+
+def test_a64_build_arg_names_are_the_startup_lists() -> None:
+    """A64: выдуманные `--build-arg` — ровно имена списков проверки старта пакета. Шаг сверяет
+    их со списками в образе, а этот тест — без Docker: новое имя (пара бота, A192) не уходит
+    мимо шага."""
+    lists = set().union(*map(sc.required, ("api", "worker", "migrate")))
+    assert set(oracle.BUILD_ARG_NAMES) == lists
 
 
 def test_a171_queue_password_goes_to_redis_and_the_api_queue_address() -> None:
@@ -647,20 +669,24 @@ def test_a73_a87_a179_rules_step_wants_five_services_and_twenty_six_rules(
 @pytest.mark.parametrize(
     ("text", "red"),
     [
-        ("итог: сервисов 5, правил 29, нарушений 0\n", ""),
+        ("итог: сервисов 5, правил 31, нарушений 0\n", ""),
+        (
+            "итог: сервисов 5, правил 29, нарушений 0\n",
+            "правила — код 0: итог: сервисов 5, правил 29,",
+        ),
         (
             "итог: сервисов 5, правил 26, нарушений 0\n",
             "правила — код 0: итог: сервисов 5, правил 26,",
         ),
     ],
-    ids=["29", "без-боевых"],
+    ids=["31", "без-правил-боя-6а-2", "без-боевых"],
 )
 def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     tmp_path: Path, text: str, red: str
 ) -> None:
-    """A89, вторая строка: шаг правил на основном файле с боевым наложением — оба файла названы
-    явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5, правил 29,
-    нарушений 0»."""
+    """A89, вторая строка, A181, вторая строка: шаг правил на основном файле с боевым наложением —
+    оба файла названы явно, правила в образе — с флагом `--prod`; зелёный только при «сервисов 5,
+    правил 31, нарушений 0» — блок замены подписанных чисел."""
     docker = RulesAnswer()
     docker.answer = (0, text)
     run = oracle.Run(docker, tmp_path / "copy", "ai-geo-audit-oracle-test", LABEL, {})
@@ -668,7 +694,7 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
         with pytest.raises(oracle.StepError, match=red):
             compose.step_rules_on_prod(run)
     else:
-        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 29")
+        assert compose.step_rules_on_prod(run).startswith("итог: сервисов 5, правил 31")
     files = ["-f", str(run.copy / "docker-compose.yml"), "-f", str(run.copy / compose.PROD)]
     configs = [args for args in docker.seen if "config" in args]
     assert configs
@@ -676,7 +702,7 @@ def test_a89_prod_rules_step_reads_both_files_with_the_flag(
     *_, rules = docker.seen
     assert rules[-3:] == ("-m", "ai_geo_audit.ops.stack_rules", "--prod")
     assert compose.PROD == "docker-compose.prod.yml"
-    assert compose.PROD_RULES == 29
+    assert compose.PROD_RULES == 31
 
 
 def test_a65_a220_oracle_master_key_passes_the_startup_parse(tmp_path: Path) -> None:

@@ -162,6 +162,8 @@ def plain() -> dict[str, Any]:
                     "JWT_SECRET": "${JWT_SECRET:?секрет подписи}",
                     "KEYS_MASTER_KEY_FILE": "/run/secrets/master_key",
                     "API_TRUSTED_PROXIES": "${WEB_ADDRESS:?адрес web}",
+                    "ALERT_TELEGRAM_BOT_TOKEN": "${ALERT_TELEGRAM_BOT_TOKEN:?токен бота}",
+                    "ALERT_TELEGRAM_CHAT_ID": "${ALERT_TELEGRAM_CHAT_ID:?номер чата}",
                 },
                 "secrets": [{"source": "master_key", "target": "/run/secrets/master_key"}],
                 "healthcheck": {"test": ["CMD", "python", "-m", "ai_geo_audit.api.probe"]},
@@ -227,6 +229,7 @@ APP_CONFIG = [{"source": "app_env", "target": "/app/.env"}]
 KEY_IN_APP = [{"source": "master_key", "target": "/app/key"}]
 #: Выключенная проверка с командой: `disable` сильнее `test` (порча M3 проверяющего).
 OFF = {"disable": True, "test": ["CMD", "true"]}
+BOT_PAIR = ("ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID")
 
 # Проба, код, сервис, переменная: ожидается ровно это нарушение.
 STRUCTURE = [
@@ -321,6 +324,13 @@ SECRETS = [
         "redis",
         "DATABASE_URL",
     ),
+    # A192: пара бота — у api по списку проверки старта, токен — секрет, у migrate пара чужая.
+    *[(drop(env("api"), var), "required-vars", "api", var) for var in BOT_PAIR],
+    (put(env("api"), BOT_PAIR[0], "literal-token-12"), "secret-form", "api", BOT_PAIR[0]),
+    *[
+        (put(env("migrate"), var, f"${{{var}:?пара бота}}"), "foreign-secret", "migrate", var)
+        for var in BOT_PAIR
+    ],
     (put(env("api"), "LOG_FROMAT", "json"), "unknown-var", "api", "LOG_FROMAT"),
     (put(svc("redis"), "env_file", ENV_FILE), "env-file", "redis", None),
     (put(svc("migrate"), "secrets", KEY_MOUNT), "master-key", "migrate", None),
@@ -416,12 +426,11 @@ def test_a72_secret_field_inside_a_union_is_still_a_secret(monkeypatch: pytest.M
 def test_a72_rules_read_the_process_list_from_startup_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A72: список процесса — из `startup_checks.required()`: новое обязательное имя, а compose
-    не правлен — красное."""
+    """A72, A192: список процесса — из `startup_checks.required()`, у api в нём и пара бота: новое
+    обязательное имя, а compose не правлен — красное."""
     assert startup_checks.required("migrate") == frozenset({"DATABASE_URL"})
-    assert startup_checks.required("api") == frozenset(
-        {"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE", "API_TRUSTED_PROXIES"}
-    )
+    api = {"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE", "API_TRUSTED_PROXIES"}
+    assert startup_checks.required("api") == frozenset(api | set(BOT_PAIR))
     grown = startup_checks.required("api") | {"AUDIT_NEW_SECRET"}
     monkeypatch.setitem(startup_checks._NEEDS, "api", grown)
     assert found(valid()) == {("required-vars", "api", "AUDIT_NEW_SECRET")}

@@ -20,19 +20,28 @@ sys.path.insert(0, str(dbtools.ROOT / "scripts"))
 search = importlib.import_module("stack_oracle_search")
 compose_mod = importlib.import_module("stack_oracle_compose")
 
-SUPER, JWT, APP, QUEUE, STEP = (
-    f"{n}-value-123456" for n in ("super", "jwt", "app", "queue", "step")
+SUPER, JWT, APP, QUEUE, STEP, BOT = (
+    f"{n}-value-123456" for n in ("super", "jwt", "app", "queue", "step", "bot")
 )
 MIG = "mig@value-123456"
 MIGRATE_URL = compose_mod.DB_URL.format("audit_migrate", quote(MIG, safe=""))
 API_URL = compose_mod.DB_URL.format("audit_app", APP)
 QUEUE_URL = "redis://:" + QUEUE + "@redis:6379/0"
-NAMES = (*search.SECRETS, *search.ADDRESSES)
-STACK = dict(
-    zip(NAMES, (SUPER, MIG, APP, QUEUE, JWT, MIGRATE_URL, API_URL, QUEUE_URL), strict=True)
-)
-#: Маска исполнителя: выдуманные секреты прогона и пароль шага A170.
-MASK = [SUPER, JWT, MIG, quote(MIG, safe=""), APP, QUEUE, STEP]
+#: Окружение compose прогона по именам: секреты, пара бота (A192) и адреса с паролями.
+STACK = {
+    "DB_PASSWORD": SUPER,
+    "POSTGRES_MIGRATE_PASSWORD": MIG,
+    "POSTGRES_APP_PASSWORD": APP,
+    "REDIS_PASSWORD": QUEUE,
+    "JWT_SECRET": JWT,
+    "ALERT_TELEGRAM_BOT_TOKEN": BOT,
+    "ALERT_TELEGRAM_CHAT_ID": "-1001234567890",
+    "MIGRATE_DATABASE_URL": MIGRATE_URL,
+    "API_DATABASE_URL": API_URL,
+    "API_REDIS_URL": QUEUE_URL,
+}
+#: Маска исполнителя: выдуманные секреты прогона, пароль шага A170 и токен бота (A192).
+MASK = [SUPER, JWT, MIG, quote(MIG, safe=""), APP, QUEUE, STEP, BOT]
 ALEMBIC = ("compose", "-p", "s", "--env-file", "/dev/null", "run", "--rm", "migrate", "alembic")
 SERVICES = ("db", "redis", "migrate", "api", "web")
 
@@ -84,11 +93,11 @@ def run_of(monkeypatch: pytest.MonkeyPatch) -> Callable[..., SimpleNamespace]:
 def test_a172_search_counts_texts_and_finds_nothing(run_of: Callable[..., SimpleNamespace]) -> None:
     """A172, первая строка: сырой вывод каждой команды, журнал каждого сервиса, описание каждого
     контейнера без `Config.Env`, `compose top` и `config --no-interpolate`; секреты — четыре
-    пароля и секрет подписи, пароль роли миграций и в процентной записи, три адреса, пароль шага
-    из маски; совпадений нет. Итог — строкой целиком."""
+    пароля, секрет подписи и токен бота (A192), пароль роли миграций и в процентной записи, три
+    адреса, пароль шага из маски; совпадений нет. Итог — строкой целиком."""
     run = run_of()
     assert search.step_search(run) == (
-        "текстов 12: сырой вывод 3, журналы 5, описания 2, процессы 1, config 1; секретов 10, "
+        "текстов 12: сырой вывод 3, журналы 5, описания 2, процессы 1, config 1; секретов 11, "
         "совпадений 0"
     )
     assert run.docker.asked == [("inspect", "c1", "c2")]
@@ -122,6 +131,11 @@ SPOILS = [
         "address-in-a-log",
         put(("logs", "--no-color", "api"), value=API_URL),
         "совпадений 2: POSTGRES_APP_PASSWORD — журнал api; API_DATABASE_URL — журнал api",
+    ),
+    (
+        "bot-token-in-a-log",
+        put(("logs", "--no-color", "api"), value=f"send bot{BOT}"),
+        "совпадений 1: ALERT_TELEGRAM_BOT_TOKEN — журнал api",
     ),
     ("in-top", put(("top",), value=QUEUE), "совпадений 1: REDIS_PASSWORD — compose top"),
     (

@@ -106,7 +106,7 @@ def stamp(moment: datetime) -> str:
 
 def compose(level: Level, title: str, lines: Sequence[str], todo: str, now: datetime) -> str:
     """Текст тревоги по правилам модуля; секреты настроек в частях — маской вычистки журнала."""
-    register_config_secrets(config.storage, config.access, config.keys)
+    register_config_secrets(config.storage, config.access, config.keys, config.alerts)
     env = config.app.env
     name = SERVICE if env == "prod" else f"{SERVICE} · {env}"
     head = [f"[{name}] {level}: {part(title, TITLE_UNITS)}", f"Время: {stamp(now)}"]

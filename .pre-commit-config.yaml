@@ -44,6 +44,14 @@ repos:
         language: system
         entry: uv run --project backend --no-sync check-yaml
         types: [yaml]
+        # Боевое наложение несёт тег compose `!reset` (A181, 6а-2): безопасный разбор его не знает.
+        # Синтаксис наложения — следующий хук, смысл — `docker compose config` шага A89 оракула.
+        exclude: ^docker-compose\.prod\.yml$
+      - id: check-yaml-compose-tags
+        name: check yaml — синтаксис боевого наложения с тегами compose
+        language: system
+        entry: uv run --project backend --no-sync check-yaml --unsafe
+        files: ^docker-compose\.prod\.yml$
       - id: check-json
         name: check json
         language: system
