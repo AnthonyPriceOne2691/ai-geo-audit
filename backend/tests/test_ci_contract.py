@@ -471,8 +471,8 @@ def test_a99_coverage_measures_src_and_migrations_in_subprocesses() -> None:
 
 
 def test_a99_toolchain_step_expects_every_gate_tool() -> None:
-    """A99: шаг инструментов ждёт и `pip-audit`, `mutmut`, `vulture`, `lint-imports`; с В1б —
-    и инструменты TS-половин из `frontend/node_modules`."""
+    """A99, A382: шаг инструментов ждёт и `pip-audit`, `mutmut`, `vulture`, `lint-imports`; с В1б —
+    и инструменты TS-половин из `frontend/node_modules` после `npm ci`."""
     run = next(
         str(step["run"])
         for _, _, step in steps(load(QUALITY))

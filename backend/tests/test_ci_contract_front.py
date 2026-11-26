@@ -77,7 +77,7 @@ TS_HOOK_COPIES = [
 def test_a390_ts_hook_copies_are_red_and_named(
     case: str, hook_id: str, key: str, value: str, named: str
 ) -> None:
-    """Копии: хука prettier нет; eslint по backend/; ратчет на push; prettier пишет вместо
+    """A390, копии: хука prettier нет; eslint по backend/; ратчет на push; prettier пишет вместо
     `--check`; хук слоёв без frontend/src — красный, названо имя хука."""
     cfg = load(HOOKS)
     if not key:
@@ -100,7 +100,7 @@ def test_a393_no_declaration_waits_for_b1b() -> None:
 
 
 def test_a393_copy_with_b1b_declaration_is_red_and_named() -> None:
-    """Копия: объявление TS-половины мёртвого кода «поставка В1б» вернулось — назван ключ."""
+    """A393, копия: объявление TS-половины мёртвого кода «поставка В1б» вернулось — назван ключ."""
     declared = json.loads(NOT_APPLICABLE.read_text(encoding="utf-8"))
     declared["check_dead_code.py:ts"] = "поставка В1б: knip — после В1а"
     assert b1b_declarations(declared) == ["check_dead_code.py:ts"]
@@ -176,7 +176,8 @@ FRONT_COPIES = [
 def test_a381_a382_a386_frontend_copies_are_red_and_named(
     case: str, old: str, new: str, named: str
 ) -> None:
-    """Копии: цепочка с `|| true` и с `continue-on-error`; Node «22»; действие по тегу; права
+    """A381, A382, A386, копии: цепочка с `|| true` и с `continue-on-error`; Node «22»; действие по
+    тегу; права
     записи; `npm install`; фронт после pre-commit; порчи TS на push, по Python, с бюджетом 1200 с и
     порогом 50 % — красный, названо правило."""
     text = QUALITY.read_text(encoding="utf-8")
