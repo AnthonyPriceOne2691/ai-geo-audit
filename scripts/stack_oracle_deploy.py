@@ -26,7 +26,8 @@ CORE = "deploy/deploy.py"
 CHECK = ("python", "-m", "ai_geo_audit.ops.config_check")
 GOOD = re.compile(r"Конфиг процесса «(api|migrate)» годен, режим prod: проверено имён: \d+")
 #: Отказ импорта: имя, значение подмены и причина — поле упавшего домена (A189, decisions).
-BAD = ("DB_POOL_SIZE", "777", "DB_POOL_SIZE — Input should be less than or equal to 50")
+#: Значение — число, которого нет в шуме compose: в имени разового контейнера 12 знаков hex.
+BAD = ("DB_POOL_SIZE", "4000000001", "DB_POOL_SIZE — Input should be less than or equal to 50")
 
 
 def load_core(run: Run) -> ModuleType:
@@ -53,9 +54,13 @@ def keys(names: list[str]) -> set[str]:
     return {hashlib.sha256(name.encode()).hexdigest()[:16] for name in names}
 
 
-def config_check(run: Run, service: str, swap: dict[str, str] | None = None) -> tuple[int, str]:
+def config_check(
+    run: Run, service: str, swap: dict[str, str] | None = None
+) -> tuple[int, str, str]:
     """Разбор конфига процесса в собранном образе: у api без подмены — в живом контейнере, иначе
-    — разовым контейнером сервиса; подмена — `run -e ИМЯ`, значение — в окружении (L84)."""
+    — разовым контейнером сервиса; подмена — `run -e ИМЯ`, значение — в окружении (L84). Ответ —
+    код, stdout команды и весь вывод: годный судится по stdout — в stderr у `compose run` шум
+    самого compose (проба 2026-11-26T13:16:40Z)."""
     swap = swap or {}
     if service == "api" and not swap:
         args: tuple[str, ...] = ("exec", "-T", "api", *CHECK, "api")
@@ -63,7 +68,7 @@ def config_check(run: Run, service: str, swap: dict[str, str] | None = None) -> 
         names = tuple(part for name in swap for part in ("-e", name))
         args = ("run", "--rm", "-T", "--no-deps", *names, service, *CHECK, service)
     done = run.docker.result(*compose_base(run), *args, env=stack_env(run) | swap)
-    return done.returncode, output(done)
+    return done.returncode, done.stdout.decode("utf-8", "replace"), output(done)
 
 
 def refusal_problems(run: Run, code: int, text: str) -> list[str]:
@@ -93,12 +98,15 @@ def step_deploy_on_stack(run: Run) -> str:
     if before.codes != (200,):
         raise StepError(f"адрес web — код {', '.join(map(str, before.codes))}, нужен 200")
     for service in ("api", "migrate"):
-        code, text = config_check(run, service)
-        good = GOOD.fullmatch(text.strip())
-        if code or good is None or good[1] != service:
-            raise StepError(f"{service}: код {code} — нет «годен, режим prod»")
+        code, said, _whole = config_check(run, service)
+        good = GOOD.fullmatch(said.strip())
+        fits = good is not None and good[1] == service
+        if code or not fits:
+            state = "годен, режим prod" if fits else "не «годен, режим prod»"
+            raise StepError(f"{service}: код {code}, вывод — {state}")
     name, value, _why = BAD
-    if problems := refusal_problems(run, *config_check(run, "migrate", {name: value})):
+    code, _said, whole = config_check(run, "migrate", {name: value})
+    if problems := refusal_problems(run, code, whole):
         raise StepError(f"migrate, отказ импорта {name}: {'; '.join(problems)}")
     after_names = stack_names(run)
     after = core.neighbor_snapshot(ctx, url)
