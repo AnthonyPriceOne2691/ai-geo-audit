@@ -71,9 +71,10 @@
 - Текст страниц клиентов и ответы моделей выводятся только как текст, не как разметка. Держит
   правило eslint З14 (`eslint.config.js`, A391) — ошибка на приёмниках HTML строкой:
   `dangerouslySetInnerHTML` и `srcDoc` в JSX; присваивание `innerHTML`, `outerHTML` и `srcdoc`, в
-  том числе через скобки и `Object.assign`; `insertAdjacentHTML`, `setHTMLUnsafe`,
-  `createContextualFragment`, `document.write` и `writeln`. Разбор `DOMParser` со вставкой узлов
-  не запрещён: это путь для очищенного содержимого, а очистку правило не проверяет.
+  том числе через скобки и `Object.assign`; атрибут `srcdoc` через `setAttribute`; вызовы
+  `insertAdjacentHTML`, `setHTMLUnsafe` и `createContextualFragment`, в том числе через скобки;
+  `document.write` и `writeln`. Разбор `DOMParser` со вставкой узлов не запрещён: это путь для
+  очищенного содержимого, а очистку правило не проверяет.
 
 ## Таблицы
 

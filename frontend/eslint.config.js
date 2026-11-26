@@ -105,6 +105,9 @@ export default ts.config(
           "AssignmentExpression > MemberExpression.left[property.name='srcdoc']",
           "AssignmentExpression > MemberExpression.left[property.value='srcdoc']",
           "JSXAttribute[name.name='srcDoc']",
+          // `srcdoc` атрибутом: имя атрибута HTML приводит к нижнему регистру — сверка без регистра.
+          "CallExpression[callee.property.name='setAttribute'][arguments.0.value=/^srcdoc$/i]",
+          "CallExpression[callee.property.value='setAttribute'][arguments.0.value=/^srcdoc$/i]",
           "CallExpression[callee.object.name='Object'][callee.property.name='assign'] > ObjectExpression > Property[key.name=/^(inner|outer)HTML$/]",
           "CallExpression[callee.object.name='Object'][callee.property.name='assign'] > ObjectExpression > Property[key.value=/^(inner|outer)HTML$/]",
         ].map((selector) => ({
