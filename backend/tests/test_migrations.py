@@ -327,6 +327,7 @@ async def test_a18_revision_failing_midway_leaves_the_previous_revision(tmp_path
     finally:
         await back_to_start(ini)
     assert run.returncode != 0
+    # A300: ревизия 0003 — справочник Ч2.1, поэтому пробная ревизия со сбоем — 0004.
     assert "0003 -> 0004" in run.stderr and "сбой посередине ревизии" in run.stderr
     assert ("probe_half" in tables, current) == (False, dbtools.HEAD)
 
@@ -467,6 +468,7 @@ async def test_a236_raw_key_insert_is_refused_by_its_own_constraint(
     """A236: сырая вставка в `service_keys` с одним негодным полем — имя с заглавной и пробелом,
     отпечаток из 11 знаков, номер мастер-ключа из 7, подсказка из 5 и соседние случаи (L53) —
     отказ по имени своего ограничения; годная соседняя строка проходит."""
+    # A301: `refused_by` ушёл в dbtools ради вставок A301 в три таблицы — отсюда форма вызова.
     assert await refused_by(("service_keys", KEY_ROW | {field: value})) == constraint
 
 
@@ -487,4 +489,5 @@ async def test_a236_raw_setting_insert_is_refused_by_its_own_constraint(
     """A236: сырая вставка в `setting_versions`: версия 0 — отказ по `ck_setting_versions_version`;
     та же пара имени и версии — по `uq_setting_versions_name_version`; годные соседние проходят."""
     base = {"name": "audits_parallel", "value": "3"}
+    # A301: `refused_by` ушёл в dbtools ради вставок A301 в три таблицы — отсюда форма вызова.
     assert await refused_by(*(("setting_versions", base | row) for row in rows)) == constraint
