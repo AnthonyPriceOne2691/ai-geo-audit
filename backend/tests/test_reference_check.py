@@ -82,8 +82,15 @@ def check(tmp_path: Path, monkeypatch: MP, capsys: Cap) -> Run:
     return run_check
 
 
-EDITED = [dict(item) for item in SAMPLE]
-EDITED[1] |= {"params": [{"name": "max_seconds", "value": Decimal("3.5"), "unit": "s"}]}
+def with92(rows: list[dict[str, Any]], **fields: Any) -> list[dict[str, Any]]:
+    """Копия строк Ф или Ф2, у `92` (вторая строка) — другие поля."""
+    found = [dict(item) for item in rows]
+    found[1] |= fields
+    return found
+
+
+SLOW = [{"name": "max_seconds", "value": Decimal("3.5"), "unit": "s"}]
+EDITED = with92(SAMPLE, params=SLOW)
 
 
 def test_a304_without_revisions_all_rows_are_new_and_the_sign_is_zero(
@@ -115,6 +122,47 @@ def test_a304_edits_the_file_would_cancel_are_named(seed: Seed, check: Run) -> N
     cancelled = "будут отменены правки редакции 2: 92 · max_seconds 3.5 → 3.25 с"
     assert check(F) == (0, NL.join([GOOD.format(6), cancelled, sign(F, 2), ""]), "")
     assert seed() == before
+
+
+def test_a304_edits_count_from_the_last_file_revision(seed: Seed, check: Run) -> None:
+    """A304: 1 из Ф и 2 из Ф2 в архиве, активна 3 — правка поверх 2 (у `92` `max_seconds` 3.5):
+    `check` Ф2 с долей `92` 20 — доля без пометки (её сменил файл 2, а не правка), порог — с
+    пометкой: правки считаются от последней редакции из файла, а не от первой (находка 1)."""
+    old = {"status": "archived"}
+    edit = {"rows": with92(SAMPLE2, params=SLOW), "number": 3, "source": "edit"}
+    seed({"rows": SAMPLE, "number": 1} | old, {"rows": SAMPLE2, "number": 2} | old, edit)
+    data = dump(document(with92(SAMPLE2, share_percent=Decimal("20"))))
+    cancelled = "будут отменены правки редакции 3: 92 · max_seconds 3.5 → 3.25 с"
+    lines = [GOOD.format(7), "92 · доля: 15 % → 20 %", cancelled, sign(data, 3), ""]
+    assert check(data) == (0, NL.join(lines), "")
+
+
+MS = [{"name": "max_seconds", "value": Decimal("3250"), "unit": "ms"}]
+CLS = [*SAMPLE[1]["params"], {"name": "cls", "value": Decimal("0.175"), "unit": "number"}]
+
+
+@pytest.mark.parametrize(
+    ("rows", "line"),
+    [
+        ([SAMPLE[1], SAMPLE[0], *SAMPLE[2:]], "порядок: строк на других местах 2"),
+        ([*SAMPLE[:2], SAMPLE2[-1], *SAMPLE[2:]], "новая строка 95"),
+        (with92(SAMPLE, params=MS), "92 · max_seconds 3.25 с → 3250 мс"),
+        (with92(SAMPLE, params=[]), "92 · порог max_seconds убран"),
+        (with92(SAMPLE, params=CLS), "92 · cls новый, 0.175"),
+    ],
+    ids=["swapped", "inserted-in-the-middle", "unit", "removed", "new-number"],
+)
+def test_a304_order_and_threshold_changes_are_named(
+    seed: Seed, check: Run, rows: list[dict[str, Any]], line: str
+) -> None:
+    """A304: активна 1 из Ф. Строки 1 и 2 переставлены — «порядок: …» без кодов: места в базе
+    другие, «изменений нет» было бы неправдой. Строка `95` в середине сдвигает места ниже, но
+    порядок общих строк прежний — только «новая строка». Смена единицы — со старой единицей:
+    «3.25 → 3250 мс» читалось бы ростом в тысячу раз. Порог убран и порог новый — по имени; у
+    единицы `number` слова нет."""
+    seed({"rows": SAMPLE, "number": 1})
+    data = dump(document(rows))
+    assert check(data) == (0, NL.join([GOOD.format(len(rows)), line, sign(data, 1), ""]), "")
 
 
 @pytest.mark.parametrize("data", [F, F.replace(b"3.25", b"3.250")], ids=["same", "3.250"])
