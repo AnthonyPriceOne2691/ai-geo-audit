@@ -34,6 +34,18 @@ def test_a5_json_line_carries_ids_and_extra(capsys: pytest.CaptureFixture[str]) 
     assert record["ts"].endswith("+0000")
 
 
+def test_l81_extra_dict_stays_an_object_in_json(capsys: pytest.CaptureFixture[str]) -> None:
+    """L81, долг по пути `logs/setup.py`: поле `extra`, которое словарь, в JSON-журнале — объект,
+    а не строка, как обещает докстрока `JsonFormatter`; секрет внутри — маской, форма та же.
+    Порча «`_scrub` без словарей» — строка вместо объекта, красное."""
+    logs.register_secret(SECRET)
+    logs.setup_logging(level="INFO", fmt="json")
+    nested = {"key": SECRET, "pages": 2, "deep": {"ok": True}}
+    logging.getLogger("ai_geo_audit.test").info("проба", extra={"nested": nested})
+    record = json.loads(lines(capsys)[-1])
+    assert record["nested"] == {"key": logs.MASK, "pages": 2, "deep": {"ok": True}}
+
+
 def test_a5_text_line_keeps_ids_and_extra(capsys: pytest.CaptureFixture[str]) -> None:
     """A5: текстовая строка не теряет поля — они в хвосте."""
     logs.setup_logging(level="INFO", fmt="text")
@@ -164,15 +176,18 @@ BOT_TOKEN = "123456789:journal-bot-token-value-0002"
 def test_a192_bot_token_is_masked_without_a_manual_mark(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A192: токена бота нет в журнале: `setup_logging` сама отмечает домен тревог, без ручной
-    отметки. Порча «домен тревог не отмечен» — токен в выводе."""
+    """A192, L66: токена бота нет в журнале и внутри адреса бота: `setup_logging` сама отмечает
+    домен тревог, без ручной отметки. Порча «домен тревог не отмечен» — токен в выводе."""
     monkeypatch.setenv("ALERT_TELEGRAM_BOT_TOKEN", BOT_TOKEN)
     monkeypatch.setattr(config, "alerts", config.AlertSettings())
     logs.setup_logging(fmt="text")
     # Запись — мимо метода логгера, как в A6: страж исполнения ловит секрет в вызове лога.
     log = logging.getLogger("x")
-    log.handle(log.makeRecord("x", logging.WARNING, __file__, 0, "bot=%s", (BOT_TOKEN,), None))
-    assert BOT_TOKEN not in capsys.readouterr().err
+    url = f"https://api.telegram.example/bot{BOT_TOKEN}/sendMessage"
+    log.handle(log.makeRecord("x", logging.WARNING, __file__, 0, "send %s", (url,), None))
+    out = capsys.readouterr().err
+    assert BOT_TOKEN not in out
+    assert "/sendMessage" in out
 
 
 def test_a21_redis_url_is_a_secret_in_repr_and_dump(monkeypatch: pytest.MonkeyPatch) -> None:
