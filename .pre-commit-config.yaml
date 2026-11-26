@@ -192,11 +192,38 @@ repos:
         entry: bash -c 'R="$(git rev-parse --show-toplevel)" || exit 1; M="$R/backend/.venv/bin/mypy"; [ -x "$M" ] || { printf "\033[31mmypy не найден — %s; cd backend && uv sync --frozen\033[0m\n" "$M"; exit 1; }; F=(); for f in "$@"; do case "$f" in /*) F+=("$f");; *) F+=("$R/$f");; esac; done; cd "$R/backend" || exit 1; exec "$M" --config-file pyproject.toml "${F[@]}"' --
 
   # -------------------------------------------------------------------------
-  # TypeScript / React: ESLint (per-file errors) + warning-ратчет + Prettier —
-  # поставка В1б (адаптация, scripts/lint/adapted.json): npm в CI В1а нет, а
-  # `npx --no-install` без node_modules красит любой прогон. Роль ратчета
-  # предупреждений объявлена в scripts/lint/not-applicable.json с причиной.
+  # TypeScript / React: ESLint (per-file errors) + warning-ратчет + Prettier.
   # -------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint (TypeScript) — вне снимка ошибок
+        language: system
+        types_or: [ts, tsx]
+        files: ^frontend/src/
+        # Файлы, стоящие в снимке ошибок, здесь ПРОПУСКАЮТСЯ: их судит ратчет
+        # (`eslint-error-ratchet`, только вниз). Иначе два хука противоречили бы
+        # друг другу — ратчет разрешает легаси-долг, а этот валил бы на нём всегда,
+        # и для brownfield-фронта не оставалось пути войти (cqg@1.38).
+        # Здесь остаётся то, что ратчет и требует: файл ВНЕ снимка обязан быть чист.
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)"; b=scripts/lint/eslint_warnings_baseline.txt; files=(); for f in "$@"; do rel="${f#frontend/}"; grep -qE "^[0-9]+:${rel}\$" "$b" 2>/dev/null || files+=("$rel"); done; [ ${#files[@]} -eq 0 ] && exit 0; cd frontend && npx --no-install eslint "${files[@]}"' --
+        pass_filenames: true
+
+      - id: eslint-warning-ratchet
+        name: ESLint warnings — рост запрещён (count-ratchet)
+        language: system
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)" && bash scripts/lint/check_eslint_warnings.sh'
+        # Каталогом: eslint судит в src и `.js/.mjs/.cjs`, и то, что назовёт конфиг проекта (`cqg@2.86`).
+        files: ^frontend/src/
+        pass_filenames: false
+
+      - id: prettier
+        name: Prettier (TypeScript / JSON / CSS)
+        language: system
+        types_or: [ts, tsx, javascript, json, css]
+        files: ^frontend/src/
+        entry: bash -c 'cd "$(git rev-parse --show-toplevel)/frontend" && files=(); for f in "$@"; do files+=("${f#frontend/}"); done; npx --no-install prettier --check "${files[@]}"' --
+        pass_filenames: true
 
   # -------------------------------------------------------------------------
   # Файлы кода: prod <= 500 / tests <= 1000 строк (baseline-ratchet).
@@ -308,8 +335,8 @@ repos:
         language: system
         entry: bash scripts/lint/check_layers_gate.sh
         # Область — пакет продукта backend/src и конфиг слоёв в backend/ (адаптация,
-        # scripts/lint/adapted.json); frontend/src — с TS-половиной, поставка В1б.
-        files: ^(backend/src/.*\.py|backend/\.importlinter|\.importlinter|\.dependency-cruiser\..*|pyproject\.toml|setup\.cfg|\.pre-commit-config\.yaml|scripts/lint/.*)$
+        # scripts/lint/adapted.json) и frontend/src — TS-половина (В1б).
+        files: ^(backend/src/.*\.py|backend/\.importlinter|frontend/src/.*|\.importlinter|\.dependency-cruiser\..*|pyproject\.toml|setup\.cfg|\.pre-commit-config\.yaml|scripts/lint/.*)$
         pass_filenames: false
 
   # -------------------------------------------------------------------------

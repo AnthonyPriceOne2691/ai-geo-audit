@@ -17,8 +17,8 @@
     "changed": "`debt_entries`: записи раздела `[exemption]` в долг не входят; раздела `[baseline]` и снимков без разделов — входят. Окно, сумма и «вечные жильцы» — тело канона без правок"
   },
   ".pre-commit-config.yaml": {
-    "reason": "транспорт и раскладка: все хуки repo: local, свои LINT_*, хук варианта D, TS-хуки — поставка В1б",
-    "changed": "блок 0 — check-yaml, check-json, check-toml, check-merge-conflict, check-added-large-files локальными хуками через `uv run --project backend --no-sync` из пакета pre-commit-hooks 6.0.0 dev-группы, с теми же id, args и stages, вместо внешнего repo (A100); хук canon-texts-stay-out рецептом AGENT_STACK §7.1a (вариант D, A97); хуки eslint, eslint-warning-ratchet и prettier сняты до В1б — npm в CI нет, ратчет объявлен в not-applicable.json; LINT_* в entry через export (§6): LINT_PY_SRC=backend у check_grep_gate.sh — вся область вместе с миграциями (A94), backend/src у AST-гейта, сложности, мёртвого кода и jscpd; LINT_COV_PKG=src/ai_geo_audit у mypy; значения export — в кавычках, иначе доктор читает их вместе с «;»; гейт длины — LINT_LENGTH_GLOBS с *.mjs и *.js и javascript в types_or (frontend/scripts, frontend/public); у гейта слоёв files: — backend/src и backend/.importlinter, frontend/src — с TS-половиной в В1б; свои хуки ruff-deploy, ruff-format-deploy и mypy-deploy — ruff и mypy strict с конфигом backend на `deploy/**/*.py` и каждый свой `.py` в `scripts/` — всё, кроме тел канона (`scripts/lint/`, `scripts/delivery_*`, `scripts/okf_*`); перечень тел для теста контракта — замок payload (решение проверяющего 2026-11-20T09:26Z): у файла вне backend/ ruff своего конфига не найдёт и возьмёт умолчания; тела канона под эти хуки не попадают"
+    "reason": "транспорт и раскладка: все хуки repo: local, свои LINT_*, хук варианта D; TS-хуки — как в шаблоне с В1б",
+    "changed": "блок 0 — check-yaml, check-json, check-toml, check-merge-conflict, check-added-large-files локальными хуками через `uv run --project backend --no-sync` из пакета pre-commit-hooks 6.0.0 dev-группы, с теми же id, args и stages, вместо внешнего repo (A100); хук canon-texts-stay-out рецептом AGENT_STACK §7.1a (вариант D, A97); LINT_* в entry через export (§6): LINT_PY_SRC=backend у check_grep_gate.sh — вся область вместе с миграциями (A94), backend/src у AST-гейта, сложности, мёртвого кода и jscpd; LINT_COV_PKG=src/ai_geo_audit у mypy; значения export — в кавычках, иначе доктор читает их вместе с «;»; гейт длины — LINT_LENGTH_GLOBS с *.mjs и *.js и javascript в types_or (frontend/scripts, frontend/public); у гейта слоёв files: — backend/src и backend/.importlinter вместо backend/ шаблона, frontend/src — как в шаблоне (В1б); свои хуки ruff-deploy, ruff-format-deploy и mypy-deploy — ruff и mypy strict с конфигом backend на `deploy/**/*.py` и каждый свой `.py` в `scripts/` — всё, кроме тел канона (`scripts/lint/`, `scripts/delivery_*`, `scripts/okf_*`); перечень тел для теста контракта — замок payload (решение проверяющего 2026-11-20T09:26Z): у файла вне backend/ ruff своего конфига не найдёт и возьмёт умолчания; тела канона под эти хуки не попадают"
   },
   "backend/pyproject.toml": {
     "reason": "фрагмент влит с адаптациями: E501 вне ignore",
@@ -39,6 +39,16 @@
   ".github/workflows/main-guard.yml": {
     "reason": "права токена и раннер: запись — только у джобы alert",
     "changed": "сверху `permissions: contents: read`, `issues: write` — у джобы `alert` (A100); раннер `ubuntu-24.04` вместо `ubuntu-latest`; условие, триггер и тело тревоги — дословно (A117)"
+  },
+  "mutation_ts.sh": {
+    "kind": "upstream-candidate",
+    "reason": "починка дефекта канона: адрес основного отчёта гейт берёт из вывода Stryker, а он — URL (`file://…`, пробел — `%20`); без раскодирования в пути с пробелом `-f` не проходит, и гейт уходит на запасной путь `reports/mutation/mutation.json`. Отчёт проекта — в `reports/stryker/` от корня (`stryker.config.json`), на запасной путь прогоны не пишут: без правки в пути с пробелом — «отчёт не найден, НЕ судит» (проба В1б 2026-11-26T13:29Z, копия в «Complex AI Audit»); отчёт на запасном пути давал ложное «OK» на прошлом прогоне, когда Stryker падал без отчёта (проба второй проверяющей 13:46Z) — решение ведущей 2026-11-26",
+    "changed": "строка пути отчёта в `ts_run` дополнена раскодированием `urllib.parse.unquote` (python3); больше тело не тронуто — дословно cqg@3.30"
+  },
+  "mutation_shard.sh": {
+    "kind": "upstream-candidate",
+    "reason": "та же починка в самопроверке TS-половины (`ts_recheck`): её отчёт читается только по адресу из вывода Stryker, запасного пути нет — без раскодирования в пути с пробелом «самопроверка не доказала ничего — код 0, названо 0 из 10», гейт не судит (проба В1б 2026-11-26T13:32Z)",
+    "changed": "в `ts_recheck` строка пути `again` дополнена раскодированием `urllib.parse.unquote` (python3); больше тело не тронуто — дословно cqg@3.30"
   },
   ".dependency-cruiser.cjs": {
     "reason": "правила шаблона — слои бэкенда (`models`, `services`, `api`): у фронта они не совпали бы ни с одним файлом, а канон велит привести пути к своим слоям; гейт зовёт depcruise из корня, пути — `^frontend/src/…` (В1б, A384)",

@@ -807,3 +807,87 @@ def test_deploy_copy_mypy_violation_is_red_and_named(tmp_path: Path) -> None:
     probe.write_text("def same(x):\n    return x\n", "utf-8")
     done = run_hook("mypy-deploy", probe)
     assert done.returncode != 0 and "no-untyped-def" in done.stdout, done.stdout + done.stderr
+
+
+#: Хуки TS по шаблону канона (CQG:15633–15665): id — команда, которая обязана быть в `entry`.
+TS_HOOKS = {
+    "eslint": "npx --no-install eslint",
+    "eslint-warning-ratchet": "scripts/lint/check_eslint_warnings.sh",
+    "prettier": "npx --no-install prettier --check",
+}
+#: Гейты, которые судят TS-половину каталогом: правка файла фронта обязана их запускать.
+TS_HALF_HOOKS = ("complexity-gate", "jscpd-dry-gate", "layers-gate")
+FRONT_FILE = "frontend/src/theme/theme.ts"
+NOT_APPLICABLE = ROOT / "scripts" / "lint" / "not-applicable.json"
+
+
+def ts_hooks_problems(cfg: dict[Any, Any]) -> list[str]:
+    """Хуки TS — на коммите, область `frontend/src`; гейты TS-половин видят правку фронта."""
+    problems = []
+    for hook_id, command in TS_HOOKS.items():
+        found = hook(cfg, hook_id)
+        checks = [
+            (bool(found), f"{hook_id}: хука нет"),
+            (found.get("files") == "^frontend/src/", f"{hook_id}: область не frontend/src"),
+            (command in str(found.get("entry", "")), f"{hook_id}: в entry нет «{command}»"),
+            (found.get("stages", ["pre-commit"]) == ["pre-commit"], f"{hook_id}: не на коммите"),
+        ]
+        problems += [message for ok, message in checks if not ok]
+    blind = [h for h in TS_HALF_HOOKS if not caught_by(hook(cfg, h), FRONT_FILE)]
+    return problems + [f"{h}: правка фронта мимо хука" for h in blind]
+
+
+def test_a390_ts_hooks_follow_the_canon_template() -> None:
+    """A390: eslint, ратчет предупреждений и `prettier --check` — на стадии коммита по
+    `frontend/src`; гейты сложности, дублей и слоёв видят правку фронта."""
+    assert ts_hooks_problems(load(HOOKS)) == []
+
+
+TS_HOOK_COPIES = [
+    ("prettier-removed", "prettier", "", "", "prettier: хука нет"),
+    ("eslint-on-backend", "eslint", "files", "^backend/", "eslint: область не frontend/src"),
+    ("ratchet-on-push", "eslint-warning-ratchet", "stages", "pre-push", "ratchet: не на коммите"),
+    (
+        "prettier-writes",
+        "prettier",
+        "entry",
+        "npx --no-install prettier --write",
+        "prettier: в entry",
+    ),
+    ("layers-without-front", "layers-gate", "files", "^backend/src/", "layers-gate: правка фронта"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "hook_id", "key", "value", "named"), TS_HOOK_COPIES, ids=[c[0] for c in TS_HOOK_COPIES]
+)
+def test_a390_ts_hook_copies_are_red_and_named(
+    case: str, hook_id: str, key: str, value: str, named: str
+) -> None:
+    """Копии: хука prettier нет; eslint по backend/; ратчет на push; prettier пишет вместо
+    `--check`; хук слоёв без frontend/src — красный, названо имя хука."""
+    cfg = load(HOOKS)
+    if not key:
+        for repo in cfg["repos"]:
+            repo["hooks"] = [h for h in repo["hooks"] if h["id"] != hook_id]
+    else:
+        hook(cfg, hook_id)[key] = [value] if key == "stages" else value
+    assert named in "\n".join(ts_hooks_problems(cfg)), case
+
+
+def b1b_declarations(declared: dict[str, str]) -> list[str]:
+    """Ключи объявлений n/a, которые ждут поставку В1б."""
+    return sorted(key for key, reason in declared.items() if "поставка В1б" in reason)
+
+
+def test_a393_no_declaration_waits_for_b1b() -> None:
+    """A393: записей «поставка В1б» в `not-applicable.json` нет — TS-половины, jscpd и ратчет
+    eslint подключены, мета-гейт их судит."""
+    assert b1b_declarations(json.loads(NOT_APPLICABLE.read_text(encoding="utf-8"))) == []
+
+
+def test_a393_copy_with_b1b_declaration_is_red_and_named() -> None:
+    """Копия: объявление TS-половины мёртвого кода «поставка В1б» вернулось — назван ключ."""
+    declared = json.loads(NOT_APPLICABLE.read_text(encoding="utf-8"))
+    declared["check_dead_code.py:ts"] = "поставка В1б: knip — после В1а"
+    assert b1b_declarations(declared) == ["check_dead_code.py:ts"]

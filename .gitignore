@@ -36,6 +36,7 @@ frontend/dist/
 # Фронт: следы инструментов (F4)
 *.tsbuildinfo
 frontend/coverage/
-# Песочница и отчёт порч TS — каталоги задаёт stryker.config.json (A386)
-frontend/.stryker-tmp/
-frontend/reports/
+# Песочница и отчёт порч TS — каталоги задаёт stryker.config.json: в корне, вне проверок фронта;
+# отчёт не на запасном пути гейта (reports/mutation/), прошлый прогон гейт не прочтёт (A386)
+/.stryker-tmp/
+/reports/stryker/

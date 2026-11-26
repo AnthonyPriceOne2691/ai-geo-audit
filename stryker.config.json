@@ -7,14 +7,8 @@
     "!frontend/src/test/**",
     "!frontend/src/main.tsx"
   ],
-  "ignorePatterns": [
-    "/*",
-    "!/frontend",
-    "/frontend/dist",
-    "/frontend/coverage",
-    "/frontend/reports"
-  ],
+  "ignorePatterns": ["/*", "!/frontend", "/frontend/dist", "/frontend/coverage"],
   "concurrency": 4,
-  "tempDirName": "frontend/.stryker-tmp",
-  "jsonReporter": { "fileName": "frontend/reports/mutation/mutation.json" }
+  "tempDirName": ".stryker-tmp",
+  "jsonReporter": { "fileName": "reports/stryker/mutation.json" }
 }

@@ -27,7 +27,7 @@ stale_after: 2026-12-20
 | Слой | Состояние | Примечание |
 |---|---|---|
 | ① delivery/ | deployed | дерево §2.3 для класса S; конституция под продукт; права агента = `.claude/settings.json`; hook A.5 в `AGENTS.md`; подпись необратимого парой скриптов |
-| ② гейты | deployed (половина Python) | 23 роли каталога: 14 как есть, 5 адаптированы, 4 n/a — карта ниже; хуков 33: на коммите 28, на push пять — размер файлов, мёртвый код, гейт поставки, ратчет снимков и новая зависимость (рецепт §8.5 ③), аудит зависимостей — ручной хук, его исполняет шаг CI; адаптации — `scripts/lint/adapted.json`, объявления — `scripts/lint/not-applicable.json`; TS-половины, jscpd и ратчет eslint — поставка В1б |
+| ② гейты | deployed (половина Python) | 23 роли каталога: 16 как есть, 5 адаптированы, 2 n/a — карта ниже; хуков 36: на коммите 31, на push пять — размер файлов, мёртвый код, гейт поставки, ратчет снимков и новая зависимость (рецепт §8.5 ③), аудит зависимостей — ручной хук, его исполняет шаг CI; адаптации — `scripts/lint/adapted.json`, объявления — `scripts/lint/not-applicable.json`; TS-половины, jscpd и ратчет eslint — с поставки В1б |
 | ③ knowledge/ | absent | волна В2: справочник проверок, лимиты и формулы закреплены кодом и тестами |
 | ④ CI + гейт мержа | tooling | GitHub Actions: `quality.yml` — джобы gates, delivery, tests; `main-guard.yml` — задача «RED on main»; первый зелёный прогон — 44706856356 (gates, delivery); merge_guard: да, статус CI — последним шагом; branch protection: нет — её включает проверяющий словом владельца, тогда deployed (A116, A118) |
 | ⑤ поведение модели | n/a | волна В3: с первым вызовом модели в коде |
@@ -54,16 +54,16 @@ stale_after: 2026-12-20
 | Event loop не голодает | `check_ast_gate.py --rule cpu-in-async` | хук `cpu-in-async-gate`, коммит; CI: `gates` | как есть |
 | Список-эндпоинт имеет границу | `check_ast_gate.py --rule unbounded-list` | хук `unbounded-list-gate`, коммит; CI: `gates` | как есть |
 | Длина файлов под контролем | `check_file_length.sh` | хук `file-length`, коммит; маски `*.py *.ts *.tsx *.mjs *.js`; CI: `gates` | как есть |
-| Копипаст не растёт | `check_jscpd_gate.sh` | хук `jscpd-dry-gate`, коммит — стоит и пропускает: jscpd нет | n/a — jscpd — пакет npm, без него не судит и половина Python; npm в CI — поставка В1б. Дублирование Python до В1б не судит никто |
-| Warnings линтера не растут | `check_eslint_warnings.sh` | хуки eslint, ратчета и prettier сняты до В1б (`.pre-commit-config.yaml`) | n/a — гейт фронта; npm в CI — поставка В1б |
-| Сложность функций под контролем | `check_complexity_gate.sh` | хук `complexity-gate`, коммит; область `backend/src`; CI: `gates` | как есть — половина Python (ruff); TS-половина (eslint) — n/a до В1б |
-| Нет мёртвого кода | `check_dead_code.py` | хук `dead-code`, push; CI: `gates`, шаг «Dead code (ratchet)» | как есть — половина Python (vulture); TS-половина (knip) — n/a до В1б |
+| Копипаст не растёт | `check_jscpd_gate.sh` | хук `jscpd-dry-gate`, коммит; области `backend/src` и `frontend/src`; CI: `gates` | как есть — обе половины, jscpd 5.4.3 (В1б) |
+| Warnings линтера не растут | `check_eslint_warnings.sh` | хуки `eslint`, `eslint-warning-ratchet` и `prettier`, коммит, по шаблону; снимок `eslint_warnings_baseline.txt` — 0; CI: `gates` | как есть (В1б) |
+| Сложность функций под контролем | `check_complexity_gate.sh` | хук `complexity-gate`, коммит; области `backend/src` и `frontend/src`; CI: `gates` | как есть — обе половины: Python (ruff), TS (eslint, В1б) |
+| Нет мёртвого кода | `check_dead_code.py` | хук `dead-code`, push; CI: `gates`, шаг «Dead code (ratchet)» | как есть — обе половины: Python (vulture), TS (knip, В1б) |
 | Сообщения ошибок с контекстом | `check_grep_gate.sh --rule blind-error` | хук `blind-error`, коммит; область `backend/`; CI: `gates` | как есть |
 | Логи ищутся по полю | `check_grep_gate.sh --rule unstructured-log` | хук `unstructured-log`, коммит; область `backend/`; CI: `gates` | как есть |
 | Зависимости без известных уязвимостей | `check_deps_audit.sh` | хук `deps-audit` ручной, сам не идёт; CI: `gates`, шаг «Vulnerable dependencies»: «python-зависимости не проверены» — красное (A102, A103) | адаптирован (`check_deps_audit.sh`) — итог «манифестов нет» смотрит найденный манифест, а не корень; JS-половина выключена до В1б адаптацией шага CI (`quality.yml`) |
 | Новая зависимость — только с решением | `check_new_dependency.py` | хук `new-dependency`, push; CI: `gates`, шаг «New dependency declared»; база — шаг «Diff base», отказ вслух (A104) | как есть |
-| Тесты действительно утверждают | `check_mutation_gate.sh` | CI: только на запросе — доли `mutation-shard` 1–4 (1200 с на долю, 4 воркера, копия базы на сессию порчи) и сумма `mutation` при любом исходе долей, порог 60 % (A109, A281, A289) | адаптирован (`check_mutation_gate.sh`, `mutation_py.sh`, `mutation_verdict.sh`, `backend/pyproject.toml`) — глоб мутантов на раскладке `src/`; узлы тестов с кириллицей без экранирования. TS-половина (Stryker) — n/a до В1б |
-| Направление зависимостей | `check_layers_gate.sh` | хук `layers-gate`, коммит; конфиг `backend/.importlinter`; своя канарейка — `canaries.json`; CI: `gates` | адаптирован (`backend/.importlinter`) — один контракт слоёв `api → storage → logs → config → refusal`; контракты интеграций и моделей не заведены: пакета интеграций нет, модели держит контракт слоёв. TS-половина — n/a до В1б |
+| Тесты действительно утверждают | `check_mutation_gate.sh` | CI: только на запросе — доли `mutation-shard` 1–4 (1200 с на долю, 4 воркера, копия базы на сессию порчи) и сумма `mutation` при любом исходе долей, порог 60 % (A109, A281, A289) | адаптирован (`check_mutation_gate.sh`, `mutation_py.sh`, `mutation_verdict.sh`, `mutation_ts.sh`, `mutation_shard.sh`, `backend/pyproject.toml`) — глоб мутантов на раскладке `src/`; узлы тестов с кириллицей без экранирования; адрес отчёта Stryker раскодируется — починка дефекта канона (В1б). TS-половина (Stryker, `stryker.config.json` в корне) — в CI со срезом 3 В1б |
+| Направление зависимостей | `check_layers_gate.sh` | хук `layers-gate`, коммит; конфиги `backend/.importlinter` и `.dependency-cruiser.cjs`; своя канарейка — `canaries.json`; CI: `gates` | адаптирован (`backend/.importlinter`, `.dependency-cruiser.cjs`) — один контракт слоёв `api → storage → logs → config → refusal`; контракты интеграций и моделей не заведены: пакета интеграций нет, модели держит контракт слоёв. TS-половина (В1б) — правила `theme-below-pages`, `no-test-helpers-in-app` и `no-circular` вместо слоёв бэкенда шаблона |
 | Покрытие изменённого кода | `check_diff_coverage.sh` | CI: `tests`, шаг «Diff coverage» — по отчёту этой джобы, цель 70 % (A108); на машине — ручной шаг | как есть |
 | Снимки только вниз | `check_baseline_ratchet.sh` | хук `baseline-ratchet`, push; CI: `gates`, шаг «Baseline ratchet»; `scripts/merge_guard.sh` | как есть |
 | Все гейты подключены | `check_gate_coverage.sh` | хук `gate-coverage`, коммит; CI: `gates`, шаг «Gate coverage» | адаптирован — только комментарий тела: имя человека заменено, код не тронут; то же в `gate_coverage_roles.sh` |
@@ -634,6 +634,54 @@ A114); замок payload `scripts/lint/payload.lock.json` — доктор: «�
   `BREAKER_EXCLUDE`: на ранних фазах не считать чужим снимок секретов, который меняет текст
   документов поставки, — или отличать правки, вынужденные документами (снимок секретов,
   исключения проверки адресов). Часть «правка теста была неизбежна» — вывод.
+
+### 2026-11-26 — В1б: гейт порч TS и отчёт Stryker — адрес URL-ом и прошлый отчёт
+
+- **Находки:** исполнитель и вторая проверяющая независимо, пробы TS-половины гейта порч,
+  2026-11-26. В копиях под «Complex AI Audit» (пробел в пути): «Stryker отработал, но отчёт не
+  найден — гейт НЕ судит» (13:29Z); с отчётом на пути гейта по умолчанию — «самопроверка не
+  доказала ничего — код 0, названо 0 из 10» (13:32Z). Вторая проверяющая, 13:46Z: отчёт на пути
+  по умолчанию, Stryker падает на начальном прогоне без отчёта, `MUTATION_WORKERS=1` — «убито 56 из
+  69 (81%) — OK», код 0 по прошлому отчёту.
+- **Причина:** JsonReporter Stryker печатает адрес отчёта URL-ом (`file://…`, пробел — `%20`).
+  `scripts/lint/mutation_ts.sh:204` и `scripts/lint/mutation_shard.sh:186` (`ts_recheck`) берут
+  путь без раскодирования. У основного прогона — запасной путь `reports/mutation/mutation.json`
+  от корня, у самопроверки его нет. Код выхода Stryker основной прогон судит только для 124:
+  Stryker упал без отчёта — гейт идёт на запасной путь, и если там лежит прошлый отчёт, судит его.
+- **Сделано:** отчёт проекта — в `reports/stryker/` от корня, песочница — `.stryker-tmp/`
+  (`stryker.config.json`): прогоны гейта на запасной путь не пишут, прошлый отчёт им не читается;
+  внутри `frontend/` следы Stryker ломали `npm run check` — песочница упавшего прогона под
+  `eslint .`, отчёт под `prettier --check .` (13:53Z). В обоих телах — одна строка: путь из URL
+  раскодируется `urllib.parse.unquote` (`adapted.json`, `kind: upstream-candidate`; решение ведущей
+  2026-11-26 — первое решение «путь по умолчанию, тела не трогать» сменено после пробы 13:46Z).
+  Остаток: чужой ручной прогон Stryker без нашего конфига, оставивший корневой `reports/mutation/`,
+  запасной путь прочтёт.
+- **Проверено:** копия с пробелом, BASE `b4fd595`, пять файлов «Схемы», окончательный конфиг:
+  годный прогон — убито 136 из 141 (96 %), самопроверка — 10 перепрогнаны, живых нет, код 0
+  (13:55:22Z); `theme.ts` бросает при загрузке — «отчёт не найден — гейт НЕ судит», код 1, и так же
+  с `MUTATION_WORKERS=1`, при прошлом отчёте в `reports/stryker/` (13:55:43Z); `npm run check`
+  при следах Stryker в корне — код 0. Тесты с подставным `stryker` (`test_mutation_shards.py`):
+  каталог с пробелом и без, строка канона — красная копия.
+- **Для канона:** CQG `cqg@3.30` (`scripts/lint/payload.lock.json`: `cqg`):
+  1. `scripts/lint/mutation_ts.sh:204` и `scripts/lint/mutation_shard.sh:186` — адрес отчёта из
+     вывода Stryker раскодировать (`file://` URL);
+  2. у `ts_recheck` — тот же запасной путь, что у основного прогона, или явный отказ;
+  3. `scripts/lint/mutation_ts.sh`, `ts_run`: код Stryker не 0 и не 124 при отсутствии строки
+     отчёта — «не судит», а не запасной путь: там может лежать прошлый отчёт — ложное «OK».
+
+### 2026-11-26 — В1б: доктор судит область двух половин по одному числу
+
+- **Находка:** исполнитель, доктор контура после снятия объявлений В1б: WEAK «область
+  check_layers_gate.sh — просмотрено 40 из 55» и «область check_eslint_warnings.sh — просмотрено
+  12 из 15».
+- **Причина:** гейт слоёв печатает «просмотрено N» по половине на строку — 40 файлов Python и 20
+  модулей TS, а доктор (`scripts/lint/doctor_areas.py`, `_scanned`) берёт первое число и
+  сравнивает его со всей областью хука. Ратчет eslint судит конфигом проекта — шаблоном канона, а
+  шаблон исключает `src/test/**` (CQG:15234): три помощника тестов доктор считает мимо гейта.
+- **Сделано:** тела не правили; обе строки — WEAK, доктор — DEAD 0.
+- **Для канона:** CQG `cqg@3.30`, доктор (`doctor_areas.py`, `_scanned`): у гейта двух половин
+  брать сумму по половинам или судить каждую своей областью; область ратчета eslint — за вычетом
+  `ignores` конфига.
 
 ### 2026-11-20 — таблица сквозных проверок пуста с bootstrap
 

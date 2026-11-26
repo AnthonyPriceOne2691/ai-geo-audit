@@ -8,9 +8,11 @@ mutmut здесь не запускается: доля с файлами про
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import shutil
 import subprocess
+import urllib.parse
 from pathlib import Path
 
 import envguard
@@ -275,3 +277,109 @@ def test_a285_a287_mark_written_during_recheck_stops_the_gate(tmp_path: Path, ma
             0,
             True,
         )
+
+
+#: Раскодирование адреса отчёта в самопроверке TS-половины — адаптация, починка дефекта канона.
+DECODE = (
+    " | python3 -c 'import sys, urllib.parse;"
+    " print(urllib.parse.unquote(sys.stdin.read().strip()))'"
+)
+#: Отчёт Stryker на одну убитую порчу: файл, место, мутатор, замена и статус — как в отчёте 10.1.
+STRYKER_REPORT = {
+    "files": {
+        "frontend/src/x.ts": {
+            "mutants": [
+                {
+                    "location": {
+                        "start": {"line": 1, "column": 7},
+                        "end": {"line": 1, "column": 9},
+                    },
+                    "mutatorName": "StringLiteral",
+                    "replacement": '""',
+                    "status": "Killed",
+                }
+            ]
+        }
+    }
+}
+
+
+@pytest.mark.parametrize("decoded", [True, False], ids=["unquote", "canon-line"])
+def test_ts_recheck_reads_its_report_from_a_path_with_a_space(
+    tmp_path: Path, decoded: bool
+) -> None:
+    """В1б, находка проверяющих 2026-11-26: Stryker печатает адрес отчёта URL-ом, пробел — `%20`.
+    С раскодированием самопроверка TS-половины находит отчёт в каталоге с пробелом и судит; копия
+    со строкой канона без раскодирования — «названо 0 из 1», гейт не просудил."""
+    spaced = tmp_path / "a b"
+    spaced.mkdir()
+    (spaced / "mutation.json").write_text(json.dumps(STRYKER_REPORT), encoding="utf-8")
+    main = tmp_path / "main.json"
+    main.write_text(json.dumps(STRYKER_REPORT), encoding="utf-8")
+    url = "file://" + urllib.parse.quote(str(spaced / "mutation.json"))
+    fake = tmp_path / "stryker"
+    fake.write_text(f'#!/usr/bin/env bash\necho "INFO JsonReporter at: {url}"\n', encoding="utf-8")
+    fake.chmod(0o755)
+    shard = LINT / "mutation_shard.sh"
+    if not decoded:
+        text = shard.read_text(encoding="utf-8")
+        assert text.count(DECODE) == 1
+        shard = tmp_path / "mutation_shard.sh"
+        shard.write_text(text.replace(DECODE, ""), encoding="utf-8")
+    head = f'. "{shard}"; yellow= reset= red=; RECHECK=10; RECHECK_SEC=120; TIMEOUT_BIN=\n'
+    head += f'STRYKER="{fake}"; cfg=; runner=; MUTATION_WORKERS=4; report="{main}"\n'
+    head += 'not_judged() { echo "не просудил"; exit 7; }\n'
+    done = bash(head + "ts_recheck 1 1\n")
+    out = done.stdout + done.stderr
+    if decoded:
+        assert (done.returncode, "1 убитых перепрогнаны последовательно, живых нет" in out) == (
+            0,
+            True,
+        ), out
+    else:
+        assert (done.returncode, "названо 0 из 1" in out) == (7, True), out
+
+
+TS_RUN_CASES = [
+    ("space-unquote", "a b", True, False),
+    ("space-canon-line", "a b", False, False),
+    ("space-stryker-fails", "a b", True, True),
+    ("plain-unquote", "ab", True, False),
+    ("plain-stryker-fails", "ab", True, True),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "folder", "decoded", "crash"), TS_RUN_CASES, ids=[c[0] for c in TS_RUN_CASES]
+)
+def test_ts_run_reads_only_the_fresh_report(
+    tmp_path: Path, case: str, folder: str, decoded: bool, crash: bool
+) -> None:
+    """В1б, находки проверяющих 2026-11-26: адрес основного отчёта Stryker — URL, пробел — `%20`.
+    С раскодированием гейт читает свежий отчёт и в каталоге с пробелом, и без; копия со строкой
+    канона в каталоге с пробелом — «отчёт не найден»; Stryker упал без отчёта — «НЕ судит», а
+    прошлый отчёт в каталоге проекта запасным путём не читается."""
+    reports = tmp_path / folder
+    reports.mkdir()
+    previous = reports / "mutation.json"
+    previous.write_text(json.dumps(STRYKER_REPORT), encoding="utf-8")
+    url = "file://" + urllib.parse.quote(str(previous))
+    said = "echo 'ERROR initial test run failed'; exit 1" if crash else f'echo "INFO at: {url}"'
+    fake = tmp_path / "stryker"
+    fake.write_text(f"#!/usr/bin/env bash\n{said}\n", encoding="utf-8")
+    fake.chmod(0o755)
+    part = LINT / "mutation_ts.sh"
+    if not decoded:
+        text = part.read_text(encoding="utf-8")
+        assert text.count(DECODE) == 1
+        part = tmp_path / "mutation_ts.sh"
+        part.write_text(text.replace(DECODE, ""), encoding="utf-8")
+    head = f'cd "{tmp_path}"; . "{part}"; yellow= reset= green=; TIMEOUT_BIN=; BUDGET_SEC=300\n'
+    head += f'STRYKER="{fake}"; cfg=; runner=; MUTATION_WORKERS=4; changed=frontend/src/x.ts\n'
+    head += 'not_judged() { echo "не просудил"; exit 7; }; ts_counts() { :; }\n'
+    done = bash(head + 'ts_run && echo "отчёт: $report"\n')
+    out = done.stdout + done.stderr
+    if decoded and not crash:
+        assert (done.returncode, f"отчёт: {previous}" in out) == (0, True), (case, out)
+    else:
+        assert (done.returncode, "отчёт не найден" in out) == (7, True), (case, out)

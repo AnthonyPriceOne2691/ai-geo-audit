@@ -117,8 +117,8 @@ describe('инструменты фронта', () => {
       'frontend/tsconfig.tsbuildinfo',
       'frontend/coverage/x',
       // Песочница и отчёт порч TS: каталоги задаёт `stryker.config.json` в корне (В1б).
-      'frontend/.stryker-tmp/x',
-      'frontend/reports/x',
+      '.stryker-tmp/x',
+      'reports/stryker/x',
     ];
     const ignored = execFileSync('git', ['check-ignore', '--no-index', ...paths], {
       cwd: ROOT,
