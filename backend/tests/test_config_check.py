@@ -24,8 +24,9 @@ from ai_geo_audit.config import startup_checks as sc
 from ai_geo_audit.refusal import invalid_settings
 
 MODULE = "ai_geo_audit.ops.config_check"
-#: Роли процессов литералами: адрес базы с чужой ролью в бою не даёт старта (A174).
-ROLE = {"api": "audit_app", "migrate": "audit_migrate"}
+#: Роли процессов литералами: адрес базы с чужой ролью в бою не даёт старта (A174); у `reference`
+#: (справочник Ч2.1) — роль api.
+ROLE = {"api": "audit_app", "migrate": "audit_migrate", "reference": "audit_app"}
 #: Пароль адресов — не короче 12 знаков; короткий — 8. Слово вида «секрет» тесту не нужно.
 WORD = "pw-check-1234567890"
 SHORT = "pw-short"
@@ -131,12 +132,13 @@ def clean(text: str, *values: str) -> None:
     assert [value for value in values if value in text] == [], text[-1500:]
 
 
-@pytest.mark.parametrize("process", ["api", "migrate"])
+@pytest.mark.parametrize("process", ["api", "migrate", "reference"])
 def test_a189_good_battle_settings_pass_with_the_count_of_names(
     master_key: str, process: str
 ) -> None:
-    """A189: `python -m ai_geo_audit.ops.config_check api` и `… migrate`, бой и годные настройки
-    — код 0 и «проверено имён: N» — все имена конфига; поток ошибок пуст."""
+    """A189: `python -m ai_geo_audit.ops.config_check api`, `… migrate` и `… reference`
+    (справочник Ч2.1), бой и годные настройки — код 0 и «проверено имён: N» — все имена конфига;
+    поток ошибок пуст."""
     done = run(["-m", MODULE, process], battle(master_key, process))
     names = len(config.env_names())
     assert (done.returncode, done.stderr) == (0, ""), done.stdout + done.stderr
@@ -198,11 +200,11 @@ def test_a189_check_neither_starts_the_service_nor_opens_connections(
 def test_a189_other_arguments_are_the_usage_line(
     command: ModuleType, capsys: pytest.CaptureFixture[str], argv: list[str]
 ) -> None:
-    """A189: процесс один из трёх проверки старта — иначе строка использования, код 2."""
+    """A189: процесс один из четырёх проверки старта — иначе строка использования, код 2."""
     assert command.main(argv) == 2
     assert capsys.readouterr() == ("", command.USAGE + "\n")
     assert command.USAGE == (
-        "использование: python -m ai_geo_audit.ops.config_check api|worker|migrate"
+        "использование: python -m ai_geo_audit.ops.config_check api|worker|migrate|reference"
     )
 
 
