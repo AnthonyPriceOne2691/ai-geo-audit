@@ -38,7 +38,6 @@
 - **hooks:** not-deployed
 - **blockers:** none
 - **waivers:** none
-- **new_dependency:** none reason=скрипт выката — только стандартная библиотека Python; hypothesis для реляционного оракула — уже в dev-группе main (В1а)
 - **runtime_paths:** deploy/**
   <!-- Скрипт выката виден только исполнением: живые прогоны против стека оракула в джобе
        `stack` с выдуманными значениями и временным корнем — `env-init`, `put-secret`, `last`,
