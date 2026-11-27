@@ -38,10 +38,10 @@ async def frozen_objects() -> list[str]:
 
 
 async def test_a300_tables_and_trigger_come_with_0003_and_go_with_its_downgrade() -> None:
-    """A300: `alembic upgrade head` с пустой схемы — голова цепочки (`dbtools.HEAD`: `0003` у Ч2.1,
-    с Ч2.2 — `0004`), три таблицы, функция и два триггера неизменности; `alembic check` — модели
-    против базы с флагами сверки — код 0; откат на ревизию до поставки (`0002`) убирает таблицы,
-    функцию и триггеры; снова `upgrade head` — код 0 и всё на месте."""
+    """A300, A320: `alembic upgrade head` с пустой схемы — голова цепочки (`dbtools.HEAD`: `0003`
+    у Ч2.1, с Ч2.2 — `0004`), три таблицы, функция и два триггера неизменности; `alembic check` —
+    модели против базы с флагами сверки — код 0; откат на ревизию до поставки (`0002`) убирает
+    таблицы, функцию и триггеры; снова `upgrade head` — код 0 и всё на месте."""
     await dbtools.empty_schema(dbtools.own_url())
     try:
         up = dbtools.alembic("upgrade", "head")

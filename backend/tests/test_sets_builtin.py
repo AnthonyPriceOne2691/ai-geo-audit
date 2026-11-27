@@ -25,6 +25,12 @@ WRITTEN = (
     "SELECT s.id, s.xmin::text, v.id, v.xmin::text FROM check_sets s"
     " JOIN check_set_versions v ON v.set_id = s.id ORDER BY s.id, v.id"
 )
+#: Сколько соединений своей базы держат advisory-замок: ключ — старшие и младшие 32 бита.
+HOLDERS = (
+    "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted"
+    " AND database = (SELECT oid FROM pg_database WHERE datname = current_database())"
+    " AND classid::bigint = $1 AND objid::bigint = $2 AND objsubid = 1"
+)
 FAILED = "сбой записи: RuntimeError — наборы не тронуты, повторите"
 AT_COMMIT = (
     "сбой на фиксации: RuntimeError — запись могла пройти; повтор безопасен — второго встроенного"
@@ -35,6 +41,25 @@ AT_COMMIT = (
 async def ensure(engine: AsyncEngine) -> bool:
     async with AsyncSession(engine, expire_on_commit=False) as session:
         return await service.ensure_all_checks(session)
+
+
+async def ensure_and_look(engine: AsyncEngine) -> tuple[bool, bool, int]:
+    """`ensure_all_checks` и сразу после него, пока сессия открыта: в транзакции ли она и сколько
+    соединений держат замок `CHECK_SETS` (порча C4 второй проверяющей)."""
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        written = await service.ensure_all_checks(session)
+        key = locks.CHECK_SETS
+        holders = await fetch_one(HOLDERS, key >> 32, key & 0xFFFFFFFF)
+        return written, session.in_transaction(), holders
+
+
+async def fetch_one(query: str, *args: object) -> int:
+    conn = await connect()
+    try:
+        found: int = await conn.fetchval(query, *args)
+        return found
+    finally:
+        await conn.close()
 
 
 @contextlib.asynccontextmanager
@@ -56,13 +81,19 @@ async def holding() -> AsyncIterator[None]:
 async def test_a334_ensure_writes_the_builtin_set_once(committed: AsyncEngine) -> None:
     """A334: после подъёма встроенный набор есть — `ensure_all_checks` ничего не пишет; после
     очистки первый вызов пишет набор — вид `all_checks`, имя «Все проверки», версия 1 `active`,
-    состав пуст, — второй подряд ничего не пишет: набор один, его строки те же."""
+    состав пуст, — второй подряд ничего не пишет: набор один, его строки те же. После каждого
+    вызова сессия не в транзакции и замок `CHECK_SETS` никто не держит."""
+    closed = (False, 0)
     after_upgrade = await fetch(WRITTEN)
-    assert (await ensure(committed), await fetch(WRITTEN)) == (False, after_upgrade)
+    assert (await ensure_and_look(committed), await fetch(WRITTEN)) == (
+        (False, *closed),
+        after_upgrade,
+    )
     await raw(CLEAR)
-    assert (await ensure(committed), await state()) == (True, ONE)
+    assert (await ensure_and_look(committed), await state()) == ((True, *closed), ONE)
     written = await fetch(WRITTEN)
-    assert (await ensure(committed), await state(), await fetch(WRITTEN)) == (False, ONE, written)
+    again = (await ensure_and_look(committed), await state(), await fetch(WRITTEN))
+    assert again == ((False, *closed), ONE, written)
 
 
 async def test_a334_two_ensures_at_once_give_one_builtin_set(committed: AsyncEngine) -> None:
