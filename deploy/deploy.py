@@ -28,8 +28,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NamedTuple, TextIO
-from urllib.parse import urlsplit
+from typing import Any, NamedTuple, TextIO
+from urllib.parse import unquote, urlsplit
 
 PROJECT = "ai-geo-audit"
 PROJECT_LABEL = "com.docker.compose.project"
@@ -84,11 +84,13 @@ def utc_stamp() -> str:
 
 @dataclass(frozen=True)
 class Paths:
-    """Свои корни на сервере; тесты подставляют временный каталог."""
+    """Свои корни на сервере; тесты подставляют временный каталог. `neighbors` — не свой корень:
+    там проекты соседа, его файлы compose `deploy.py check` читает на глубине 2."""
 
     service: Path = Path("/srv/ai-geo-audit")
     backups: Path = Path("/srv/ai-geo-audit-backups")
     etc: Path = Path("/etc/ai-geo-audit")
+    neighbors: Path = Path("/srv")
 
     @property
     def roots(self) -> tuple[Path, ...]:
@@ -341,9 +343,17 @@ def http_code(url: str, timeout: float = PROBE_TIMEOUT) -> int:
         conn.close()
 
 
+def free_space(path: Path) -> int:
+    """Место для записи (`f_bavail`), байт; пути ещё нет — корень копий до первой копии — у
+    ближайшего каталога выше."""
+    where = next(place for place in (path, *path.parents) if place.is_dir())
+    info = os.statvfs(where)
+    return info.f_bavail * info.f_frsize
+
+
 @dataclass
 class Context:
-    """С чем работает команда; тесты подставляют корни, исполнителя, пробу и вывод."""
+    """С чем работает команда; тесты подставляют корни, исполнителя, пробу, вывод и место."""
 
     paths: Paths = field(default_factory=Paths)
     runner: Runner = field(default_factory=Runner)
@@ -351,6 +361,7 @@ class Context:
     out: TextIO = field(default_factory=lambda: sys.stdout)
     owner: int = 0  # владелец файлов сервера — root; в тестах — пользователь прогона
     key_owner: int = API_UID  # владелец мастер-ключа; в тестах — пользователь прогона
+    space: Callable[[Path], int] = free_space
     files: Files = field(init=False)
 
     def __post_init__(self) -> None:
@@ -472,6 +483,7 @@ class Container(NamedTuple):
     health: str
     memory: int
     ports: dict[str, object]
+    running: bool
 
 
 def parse_container(line: str) -> Container:
@@ -487,6 +499,7 @@ def parse_container(line: str) -> Container:
         (state.get("Health") or {}).get("Status") or state["Status"],
         int(raw["memory"] or 0),
         raw["ports"] or {},
+        bool(state["Running"]),
     )
 
 
@@ -514,16 +527,22 @@ def containers(runner: Runner) -> list[Container]:
 
 
 def health_urls(raw: str) -> list[str]:
-    """Адреса проверки соседа: только http на петле, иначе отказ — до любого запроса."""
+    """Адреса проверки соседа: только http на петле и без учётных данных, иначе отказ — до любого
+    запроса; кривая запись адреса — тот же отказ, а не сбой разбора."""
     urls = [url.strip() for url in raw.split(",") if url.strip()]
     for number, url in enumerate(urls, 1):
-        parts = urlsplit(url)
         try:
-            loopback = ipaddress.ip_address(parts.hostname or "").is_loopback
-            port = parts.port
-        except ValueError:
-            loopback, port = False, None
-        if parts.scheme != "http" or not loopback or parts.username or port == 0:
+            parts = urlsplit(url)
+            good = (
+                parts.scheme == "http"
+                and ipaddress.ip_address(parts.hostname or "").is_loopback
+                # Любая часть учётных данных — `@` в адресе: и пустое имя (`:p@`, `@`, `:@`).
+                and parts.username is None
+                and parts.port != 0
+            )
+        except ValueError:  # запись адреса, порта или IP не разбирается
+            good = False
+        if not good:
             raise RefusedError(
                 f"NEIGHBOR_HEALTH_URLS: адрес № {number} не на петле — нужен "
                 "http://127.0.0.1:<порт>/<путь>"
@@ -697,7 +716,330 @@ def cmd_put_secret(ctx: Context, args: argparse.Namespace) -> int:
     return 0
 
 
+#: `deploy.py check` (A185): памяти после наших пределов — не меньше 10 ГБ (8 соседу и 2 запаса),
+#: места — 20 ГБ (срез 0); образы — по дайджесту (A181, третья строка).
+GB, MEMORY_FLOOR, DISK_FLOOR = 1 << 30, 10, 20
+IMAGES = ("BACKEND_IMAGE", "WEB_IMAGE")
+IMAGE_RE = re.compile(r"[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}")
+PORT_RE, LIMIT_RE = re.compile(r"[0-9]{1,5}"), re.compile(r"([0-9]+)([kmg]?)b?")
+#: Переменная compose: `${VAR}`, `${VAR:-умолчание}`, `${VAR-умолчание}`, `${VAR:?…}`, `$VAR`.
+VARIABLE_RE = re.compile(r"\$\{(\w+)(?:(:?-)([^}]*)|[^}]*)\}|\$(\w+)")
+KEY_RE = re.compile(r"([a-z_]+):\s*(.*)")
+ROUTE_TYPES = frozenset({"unreachable", "prohibit", "blackhole", "throw"})
+NETWORK_FORMAT = (
+    '{"id":{{json .Id}},"name":{{json .Name}},"labels":{{json .Labels}},'
+    '"ipam":{{json .IPAM.Config}}}'
+)
+VOLUME_FORMAT = '{"name":{{json .Name}},"project":{{json (.Label "com.docker.compose.project")}}}'
+#: Строки портов и подсетей файлов compose соседа — разбор блока 12 разведки, строже (decisions):
+#: значение `ports:` строкой; строки блока `ports:` и `ports: !override` — глубже его отступа и
+#: пункты `-` на нём; `subnet`, `ip_range`, `gateway`; комментарии мимо; вывод — «путь: строка».
+NEIGHBOR_AWK = (
+    "FNR == 1 { p = 0 } /^[[:space:]]*#/ { next } "
+    "/^[[:space:]]*ports:[[:space:]]*(!override[[:space:]]*)?(#.*)?$/ "
+    "{ p = 1; match($0, /^[[:space:]]*/); ind = RLENGTH; next } "
+    '/^[[:space:]]*ports:[[:space:]]*[^[:space:]#]/ { print FILENAME ": " $0; next } '
+    "p && /^[[:space:]]*$/ { next } p { match($0, /^[[:space:]]*/); "
+    "if (RLENGTH < ind || (RLENGTH == ind && $0 !~ /^[[:space:]]*-/)) p = 0; "
+    'else { print FILENAME ": " $0; next } } '
+    '/(subnet|ip_range|gateway):/ { print FILENAME ": " $0 }'
+)
+type IPNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+#: Строка `deploy.py check` — тема, текст, отказ ли; сеть докера — имя, проект compose, подсети;
+#: объявленное соседом — порты хоста, подсети и что «сверить»; пределы памяти — по сервису.
+type Line = tuple[str, str, bool]
+type Network = tuple[str, str, list[IPNetwork]]
+type Declared = tuple[set[int], list[IPNetwork], set[str]]
+type Limits = dict[str, int | None]
+type Env = Mapping[str, str]
+
+
+def verdict(topic: str, reasons: Sequence[str], fine: str = "ок") -> Line:
+    """«Ок» или названное исключение; есть причины — отказ с ними."""
+    return (topic, "отказ — " + "; ".join(reasons), True) if reasons else (topic, fine, False)
+
+
+def file_verdicts(ctx: Context, env: EnvFile) -> list[Line]:
+    """Файл сервера (A185), образы (A181, третья строка), пары «пароль — адрес» (A189, вторая:
+    после раскодирования `%XX`; адрес, что разборщики читают по-разному, судит старт, L32)."""
+    values, pairs = env.values, []
+    for url, password in PAIRS.items():
+        try:
+            given = unquote(urlsplit(values.get(url, "")).password or "")
+        except ValueError:
+            pairs.append(f"{url}: адрес не разобран")
+            continue
+        if given != values.get(password, ""):
+            pairs.append(f"пароль в {url} не равен {password}")
+    images = {name: values.get(name, "") for name in IMAGES}
+    bad = [f"{k}: не <путь>@sha256:<64 знака>" for k in IMAGES if not IMAGE_RE.fullmatch(images[k])]
+    first = ("образы", "образов ещё нет — первый выкат", False)
+    problems = env_problems(env, owner=ctx.owner, may_be_empty=frozenset(IMAGES))
+    lines = [verdict("файл окружения", problems)]
+    lines.append(verdict("образы", bad) if any(images.values()) else first)
+    return [*lines, verdict("пары «пароль — адрес»", pairs)]
+
+
+def limit_bytes(raw: object) -> int | None:
+    """Предел памяти compose, байт: число или с единицей `b`, `k`, `m`, `g` (`kb`, `mb`, `gb`)."""
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return raw
+    found = LIMIT_RE.fullmatch(raw.strip().lower()) if isinstance(raw, str) else None
+    return int(found[1]) << {"": 0, "k": 10, "m": 20, "g": 30}[found[2]] if found else None
+
+
+def parsed(text: str) -> Any:
+    with contextlib.suppress(ValueError):
+        return json.loads(text)
+    return None
+
+
+def docker_json(runner: Runner, argv: Sequence[str], what: str) -> list[dict[str, Any]]:
+    """JSON ответа: весь вывод — один объект или строка на объект; код не 0 или не объект —
+    отказ словами."""
+    done = runner.run(argv)
+    if done.code:
+        raise RefusedError(f"{what}: код {done.code} — запустить руками")
+    whole = parsed(done.out)
+    rows = [whole] if isinstance(whole, dict) else [parsed(r) for r in done.out.splitlines() if r]
+    if not all(isinstance(row, dict) for row in rows):
+        raise RefusedError(f"ответ {what} не разобран — сверить версию docker с записями тестов")
+    return rows
+
+
+def our_stack(ctx: Context) -> tuple[re.Pattern[str], set[str], Limits]:
+    """Наш стек по `docker compose config` своих файлов: имена контейнеров, сетей и томов и
+    пределы памяти сервисов (не читается — `None`)."""
+    files = [("--file", str(ctx.paths.service / f"docker-compose{k}.yml")) for k in ("", ".prod")]
+    argv = ("docker", "compose", "--project-name", PROJECT, *(a for f in files for a in f))
+    what = "docker compose config"
+    rows = docker_json(ctx.runner, (*argv, "config", "--no-interpolate", "--format", "json"), what)
+    try:
+        services: dict[str, Any] = dict(rows[0]["services"])
+        kinds = [(k, v or {}) for kind in ("networks", "volumes") for k, v in rows[0][kind].items()]
+        names = {item.get("name") or f"{PROJECT}_{key}" for key, item in kinds}
+        memory = {name: limit_bytes(item.get("mem_limit")) for name, item in services.items()}
+    except (IndexError, KeyError, TypeError, AttributeError):
+        raise RefusedError(f"ответ {what} не разобран — сверить с записями тестов") from None
+    return re.compile(f"{PROJECT}-({'|'.join(map(re.escape, services))})-[0-9]+"), names, memory
+
+
+def docker_networks(runner: Runner) -> list[Network]:
+    """Сети докера: `ls` по Id, затем `inspect` — имя, проект compose, подсети."""
+    listing = runner.run(("docker", "network", "ls", "--quiet", "--no-trunc"))
+    if listing.code:
+        raise RefusedError(f"docker network ls: код {listing.code} — запустить руками")
+    ids = listing.out.split()
+    if not all(ID_RE.fullmatch(i) for i in ids):
+        raise RefusedError("ответ docker network ls не разобран — сверить с записями тестов")
+    found = ("docker", "network", "inspect", "--format", NETWORK_FORMAT, *ids)
+    nets: list[Network] = []
+    try:
+        for row in docker_json(runner, found, "docker network inspect") if ids else []:
+            subnets = [ipaddress.ip_network(entry["Subnet"]) for entry in row["ipam"] or ()]
+            nets.append((row["name"], (row["labels"] or {}).get(PROJECT_LABEL, ""), subnets))
+    except (KeyError, TypeError, AttributeError, ValueError):
+        raise RefusedError("ответ docker network inspect не разобран — сверить версию") from None
+    return nets
+
+
+def host_ports(text: str) -> set[int] | None:
+    """Порты хоста: число или диапазон `a-b`; пусто — нет; иначе `None` — «сверить»."""
+    first, _, last = text.strip().strip("\"'").partition("-")
+    if PORT_RE.fullmatch(first) and PORT_RE.fullmatch(last or first):
+        return set(range(int(first), int(last or first) + 1))
+    return None if first or last else set()
+
+
+def line_facts(line: str) -> tuple[list[set[int] | None], list[str]]:
+    """Строка файла compose соседа: порты хоста (`None` — «сверить») и записи подсетей.
+    Переменная — умолчание, без умолчания — «?» (значение — в файле окружения соседа); короткая
+    запись `[адрес:]порт:порт[/протокол]` — справа; список не в строку и якорь — «сверить»."""
+    item = line.split(" #", 1)[0].strip().removeprefix("-").strip()
+    item = VARIABLE_RE.sub(lambda found: "?" if found[2] is None else found[3], item)
+    name, value = key.groups() if (key := KEY_RE.fullmatch(item)) else ("", item)
+    if name in {"subnet", "ip_range", "gateway"}:
+        return [], [value.strip("\"'")]
+    if name == "published" or (name == "ports" and not value.endswith("]")):
+        return [host_ports(value)], []
+    specs = value.strip("[] ").split(",") if name == "ports" else [] if name else [item]
+    parts = [spec.strip().strip("\"'").partition("/")[0].rsplit(":", 2) for spec in specs]
+    return [host_ports(part[-2] if len(part) > 1 else "") for part in parts if part != [""]], []
+
+
+def neighbor_files(ctx: Context) -> Declared:
+    """Порты хоста и подсети файлов compose соседа на глубине 2 — разбор разведки, блок 12; свои
+    корни мимо; что задано переменной без умолчания или не читается — «сверить»."""
+    names = ("(", "-name", "docker-compose*.y*ml", "-o", "-name", "compose*.y*ml", ")")
+    where = ("find", str(ctx.paths.neighbors), "-mindepth", "2", "-maxdepth", "2", *names)
+    done = ctx.runner.run((*where, "-exec", "awk", NEIGHBOR_AWK, "{}", "+"))
+    if done.code:
+        raise RefusedError(f"файлы compose соседа: код {done.code} — запустить руками")
+    ports, subnets, unknown = set[int](), list[IPNetwork](), set[str]()
+    for path, sep, line in (row.partition(": ") for row in done.out.splitlines()):
+        if not sep:
+            raise RefusedError("ответ разбора файлов compose соседа не разобран — запустить руками")
+        own = any(Path(path).is_relative_to(root) for root in ctx.paths.roots)
+        found, nets = ([], []) if own else line_facts(line)
+        unknown |= {"порт"} if None in found else set()
+        ports.update(port for each in found if each for port in each)
+        for net in nets:
+            try:
+                subnets.append(ipaddress.ip_network(net, strict=False))
+            except ValueError:
+                unknown.add("подсеть")
+    return ports, subnets, unknown
+
+
+def listening(runner: Runner) -> set[int]:
+    """Порты, что слушают на машине (`ss -ltnH`): адрес — четвёртое поле, ширина плавает."""
+    done = runner.run(("ss", "-ltnH"))
+    if done.code:
+        raise RefusedError(f"ss: код {done.code} — запустить руками")
+    rows = [row.split() for row in done.out.splitlines() if row.strip()]
+    ports = [row[3].rpartition(":")[2] if len(row) > 3 else "" for row in rows]
+    if not all(PORT_RE.fullmatch(port) for port in ports):
+        raise RefusedError("ответ ss не разобран — сверить с записями тестов")
+    return {int(port) for port in ports}
+
+
+def host_routes(runner: Runner) -> list[IPNetwork]:
+    """Маршруты хоста (`ip route show`): назначение — первое слово, после типа — второе."""
+    done = runner.run(("ip", "route", "show"))
+    if done.code:
+        raise RefusedError(f"ip route: код {done.code} — запустить руками")
+    rows = [row.split() for row in done.out.splitlines() if row.strip()]
+    targets = [row[1] if row[0] in ROUTE_TYPES and len(row) > 1 else row[0] for row in rows]
+    try:
+        return [ipaddress.ip_network(t, strict=False) for t in targets if t != "default"]
+    except ValueError:
+        raise RefusedError("ответ ip route не разобран — запустить руками") from None
+
+
+def bound_ports(container: Container) -> set[int]:
+    """Порты хоста, что контейнер публикует (`HostConfig.PortBindings`), — и остановленный."""
+    found = [b for v in container.ports.values() if isinstance(v, list) for b in v]
+    hosts = [str(b.get("HostPort") or "") for b in found if isinstance(b, dict)]
+    return {port for host in hosts for port in host_ports(host) or ()}
+
+
+def port_verdicts(ctx: Context, raw: str, found: list[Container], declared: Declared) -> list[Line]:
+    """`WEB_PORT` (A185, третья строка): живой — `ss` и привязки чужих контейнеров, свой web не
+    помеха; объявленный — файлы compose соседа; переменная без умолчания — «сверить»."""
+    if not PORT_RE.fullmatch(raw) or not 0 < int(raw) < 65536:
+        return [verdict("порт", ["WEB_PORT: не число от 1 до 65535"])]
+    port, live = int(raw), listening(ctx.runner)
+    ours = {p for c in found if c.project == PROJECT and c.running for p in bound_ports(c)}
+    foreign = {p for c in found if c.project != PROJECT for p in bound_ports(c)}
+    reasons = ["WEB_PORT занят"] if port in foreign or port in live - ours else []
+    reasons += ["WEB_PORT объявлен у соседа"] if port in declared[0] else []
+    lines = [verdict("порт", reasons)]
+    if "порт" in declared[2]:
+        lines.append(("порт", "у соседа порт задан переменной — сверить", False))
+    return lines
+
+
+def subnet_verdicts(ctx: Context, values: Env, nets: list[Network], seen: Declared) -> list[Line]:
+    """`FRONT_SUBNET` и `WEB_ADDRESS` (A185, четвёртая строка): подсеть — против чужих сетей
+    докера, файлов соседа и маршрутов хоста; своя сеть и её маршрут не помеха."""
+    try:
+        front = ipaddress.ip_network(values.get("FRONT_SUBNET", ""))
+    except ValueError:
+        front = None
+    if not isinstance(front, ipaddress.IPv4Network):
+        return [verdict("подсеть", ["FRONT_SUBNET: не подсеть IPv4 вида a.b.c.d/N"])]
+    try:
+        inside = ipaddress.ip_address(values.get("WEB_ADDRESS", "")) in front
+        reasons = [] if inside else ["WEB_ADDRESS вне FRONT_SUBNET"]
+    except ValueError:
+        reasons = ["WEB_ADDRESS: не адрес IPv4"]
+    ours = [sub for _, project, subs in nets if project == PROJECT for sub in subs]
+    sources = {
+        "сетью докера": [sub for _, project, subs in nets if project != PROJECT for sub in subs],
+        "подсетью из файла compose соседа": seen[1],
+        "маршрутом хоста": [route for route in host_routes(ctx.runner) if route not in ours],
+    }
+    for name, subs in sources.items():
+        if any(isinstance(sub, ipaddress.IPv4Network) and front.overlaps(sub) for sub in subs):
+            reasons.append(f"FRONT_SUBNET пересекается с {name}")
+    lines = [verdict("подсеть", reasons)]
+    if "подсеть" in seen[2]:
+        lines.append(("подсеть", "у соседа подсеть задана переменной — сверить", False))
+    return lines
+
+
+def resources_verdict(ctx: Context, limits: Limits, found: list[Container]) -> Line:
+    """Память и место (A185, пятая строка), числа — в ГБ: `MemAvailable` после наших пределов —
+    на первом выкате всех, дальше разницы с запущенным своим стеком — не меньше 10; места в
+    каталоге докера и в корне копий — не меньше 20."""
+    if unread := sorted(name for name, size in limits.items() if size is None):
+        why = f"предел памяти не разобран: {', '.join(unread)} — сверить наложение"
+        return verdict("ресурсы", [why])
+    meminfo = ctx.runner.run(("cat", "/proc/meminfo"))
+    free = re.search(r"^MemAvailable:\s+([0-9]+) kB$", meminfo.out, re.MULTILINE)
+    if meminfo.code or not free:
+        raise RefusedError("память: MemAvailable не прочитан из /proc/meminfo — запустить руками")
+    up = sum(c.memory for c in found if c.project == PROJECT and c.running)
+    left = ((int(free[1]) << 10) - max(sum(s or 0 for s in limits.values()) - up, 0)) // GB
+    root = ctx.runner.run(("docker", "info", "--format", "{{.DockerRootDir}}"))
+    if root.code or not root.out.strip().startswith("/"):
+        raise RefusedError("docker info: каталог докера не прочитан — запустить руками")
+    docker, backups = (ctx.space(p) // GB for p in (Path(root.out.strip()), ctx.paths.backups))
+    short = f"памяти после наших пределов {left} ГБ, нужно не меньше 10: 8 соседу и 2 запаса"
+    reasons = [short] if left < MEMORY_FLOOR else []
+    for name, size in (("в каталоге докера", docker), ("в корне копий", backups)):
+        if size < DISK_FLOOR:
+            reasons.append(f"места {name} {size} ГБ, нужно не меньше {DISK_FLOOR}")
+    fine = f"ок — памяти после наших пределов {left} ГБ, места: каталог докера {docker} ГБ, "
+    return verdict("ресурсы", reasons, fine + f"корень копий {backups} ГБ")
+
+
+def machine_verdicts(ctx: Context, values: Env) -> list[Line]:
+    """Имена (A185, вторая строка: наше имя под чужой меткой проекта или без неё — числом, без
+    имён; стек с нашей приставкой под другим проектом — имена не наши), порт, подсеть и ресурсы
+    — против живой машины и файлов compose соседа."""
+    pattern, names, limits = our_stack(ctx)
+    found, nets, declared = containers(ctx.runner), docker_networks(ctx.runner), neighbor_files(ctx)
+    volumes = ("docker", "volume", "ls", "--filter", f"name={PROJECT}", "--format", VOLUME_FORMAT)
+    rows = docker_json(ctx.runner, volumes, "docker volume ls")
+    foreign = [c.name for c in found if c.project != PROJECT]
+    foreign += [n for n, p, _ in nets if p != PROJECT]
+    foreign += [str(row.get("name")) for row in rows if row.get("project") != PROJECT]
+    taken = [name for name in foreign if name in names or pattern.fullmatch(name)]
+    return [
+        verdict("имена", [f"имя занято не нашим стеком: {len(taken)}"] if taken else []),
+        *port_verdicts(ctx, values.get("WEB_PORT", ""), found, declared),
+        *subnet_verdicts(ctx, values, nets, declared),
+        resources_verdict(ctx, limits, found),
+    ]
+
+
+def cmd_check(ctx: Context, _args: argparse.Namespace) -> int:
+    """Предполётная проверка (A185; A181, третья строка; A189, вторая строка): строка на тему —
+    «ок», отказ с причинами или названное исключение; машину и соседа только читает, пишет свои
+    журнал и замок. Код не 0 — отказ хоть в одной строке."""
+    with session(ctx, "check") as rep:
+        env = read_env(ctx.files, ctx.paths.env_file)
+        site_name(env.values.get("SITE_DOMAIN", ""))  # A184: до любой команды
+        lines = file_verdicts(ctx, env)
+        for topic, text, _bad in lines:
+            rep.line(f"{topic}: {text}")
+        urls = env.values.get("NEIGHBOR_HEALTH_URLS", "")
+        before, more = neighbor_snapshot(ctx, urls), machine_verdicts(ctx, env.values)
+        after = compare(before, neighbor_snapshot(ctx, urls))
+        more.append(("снимок соседа", after.line.removeprefix("снимок соседа: "), after.red))
+        for topic, text, _bad in more:
+            rep.line(f"{topic}: {text}")
+        lines += more
+        rep.line(f"проверено строк: {len(lines)}, отказов: {sum(bad for *_, bad in lines)}")
+        if refused := list(dict.fromkeys(topic for topic, _text, bad in lines if bad)):
+            fix = "поправить и снова deploy.py check"
+            raise RefusedError(f"отказ в строках: {', '.join(refused)} — {fix}")
+    return 0
+
+
 COMMANDS: dict[str, tuple[Callable[[Context, argparse.Namespace], int], str]] = {
+    "check": (cmd_check, "предполётная проверка: файл сервера, имена, порт, подсеть, ресурсы"),
     "last": (cmd_last, "последний журнал хода и идёт ли выкат"),
     "env-init": (cmd_env_init, "файл окружения сервера, мастер-ключ и каталог входящих"),
     "put-secret": (cmd_put_secret, "секреты владельца из входящего файла в файл сервера"),

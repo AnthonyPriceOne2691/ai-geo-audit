@@ -1,5 +1,5 @@
-"""Общее тестов скрипта выката (Ч1.6а): загрузка скрипта по пути, подставные исполнитель и
-проба, файл сервера, сценарий ядра «как зовут `check`, `up` и `proxy install`».
+"""Общее тестов скрипта выката (Ч1.6а): загрузка скрипта по пути, подставные исполнитель, проба
+и свободное место, файл сервера, сценарий ядра «как зовут `check`, `up` и `proxy install`».
 
 Скрипт грузится по пути файла — пакет сервиса он не импортирует. Внешние команды отвечает
 подставной исполнитель записями `deploy_records`; настоящий запуск процессов в тестах ядра
@@ -63,14 +63,45 @@ def forbidden(argv: tuple[str, ...], ours: set[str]) -> str | None:
     return None
 
 
+def answer_key(argv: tuple[str, ...]) -> str | None:
+    """Ключ ответа подставного исполнителя для команд машины `deploy.py check`; чужая форма
+    команды — без ключа, то есть «команда без записи»."""
+    if argv in (("ss", "-ltnH"), ("ip", "route", "show"), ("cat", "/proc/meminfo")):
+        return argv[0]
+    if argv == ("docker", "info", "--format", "{{.DockerRootDir}}"):
+        return "docker info"
+    if argv[:2] == ("find", "/srv") and "awk" in argv and argv[-2:] == ("{}", "+"):
+        return "find"
+    config = ("config", "--no-interpolate", "--format", "json")
+    if argv[:4] == ("docker", "compose", "--project-name", "ai-geo-audit") and argv[-4:] == config:
+        return "docker compose"
+    if argv[:1] == ("docker",) and argv[1:3] in (("network", "ls"), ("network", "inspect")):
+        return " ".join(argv[:3])
+    return "docker volume ls" if argv[:3] == ("docker", "volume", "ls") else None
+
+
 class FakeRunner:
     """Подставной исполнитель: отвечает записями, пишет каждую команду; команда без записи и
-    запрещённая (A186) — красное в момент вызова, то есть во всех сценариях тестов."""
+    запрещённая (A186) — красное в момент вызова, то есть во всех сценариях тестов. Машина для
+    `deploy.py check` — разведка: сети, тома и ответы команд по ключу (`answers` сильнее)."""
 
     def __init__(self, lines: list[str]) -> None:
         self.calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
         self.vanish: set[str] = set()
         self.ps_code, self.ps_out, self.ps_err, self.inspect_err = 0, None, "", ""
+        #: Состояние машины сразу после первого `docker container inspect` — между снимками
+        #: соседа одного запуска `deploy.py check`.
+        self.then: list[str] | None = None
+        self.networks = rec.networks()
+        self.volumes: list[str] = []
+        self.answers: dict[str, tuple[int, str]] = {
+            "ss": (0, rec.listening()),
+            "find": (0, rec.compose_lines()),
+            "ip": (0, rec.routes()),
+            "cat": (0, rec.meminfo()),
+            "docker info": (0, rec.DOCKER_ROOT),
+            "docker compose": (0, rec.compose_config()),
+        }
         self.become(lines)
 
     def become(self, lines: list[str]) -> None:
@@ -102,7 +133,28 @@ class FakeRunner:
             found = [key for key in argv[5:] if key in self.lines and key not in self.vanish]
             lost = [key for key in argv[5:] if key not in found]
             err = "".join(f"Error response from daemon: No such container: {k}\n" for k in lost)
-            return tool.Result(int(bool(lost)), "".join(self.lines[k] + "\n" for k in found), err)
+            out = "".join(self.lines[k] + "\n" for k in found)
+            if self.then is not None:
+                self.become(self.then)
+                self.then = None
+            return tool.Result(int(bool(lost)), out, err)
+        return self.machine(argv)
+
+    def machine(self, argv: tuple[str, ...]) -> Any:
+        """Команды машины `deploy.py check`: ответ по ключу, сети и тома — по своим спискам."""
+        key = answer_key(argv)
+        if key in self.answers:
+            code, out = self.answers[key]
+            return tool.Result(code, out, "")
+        if key == "docker network ls" and argv[3:] == ("--quiet", "--no-trunc"):
+            return tool.Result(0, "".join(json.loads(n)["id"] + "\n" for n in self.networks), "")
+        if key == "docker network inspect" and argv[3:4] == ("--format",):
+            by_id = {json.loads(n)["id"]: n for n in self.networks}
+            return tool.Result(0, "".join(by_id[i] + "\n" for i in argv[5:]), "")
+        if key == "docker volume ls" and argv[3:5] == ("--filter", "name=ai-geo-audit"):
+            # Как фильтр имени docker: часть имени.
+            found = [v for v in self.volumes if "ai-geo-audit" in json.loads(v)["name"]]
+            return tool.Result(0, "".join(f"{v}\n" for v in found), "")
         raise AssertionError("команда без записи: " + " ".join(argv[:3]))
 
 
@@ -164,9 +216,26 @@ def swap(lines: list[str], name: str, line: str) -> list[str]:
     return [item for item in lines if json.loads(item)["id"] != rec.cid(name)] + [line]
 
 
+#: Байт в ГиБ.
+GIB = 1 << 30
+
+
+class FakeSpace:
+    """Подставное свободное место по пути — байт, по умолчанию 200 ГиБ (выдумано: на сервере
+    кратно больше порога); пишет каждый путь."""
+
+    def __init__(self) -> None:
+        self.free: dict[Path, int] = {}
+        self.asked: list[Path] = []
+
+    def __call__(self, path: Path) -> int:
+        self.asked.append(path)
+        return self.free.get(path, 200 * GIB)
+
+
 def make_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Контекст скрипта: корни — во временном каталоге, исполнитель и проба — подставные;
-    настоящий запуск процессов запрещён (L38)."""
+    """Контекст скрипта: корни — во временном каталоге, исполнитель, проба и свободное место —
+    подставные; настоящий запуск процессов запрещён (L38)."""
 
     def no_process(*_args, **_kwargs):
         raise AssertionError("настоящий процесс в тесте ядра скрипта выката")
@@ -176,7 +245,9 @@ def make_ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     paths = tool.Paths(srv / "ai-geo-audit", srv / "ai-geo-audit-backups", etc / "ai-geo-audit")
     paths.service.mkdir(parents=True)
     runner = FakeRunner(rec.server_machine() + rec.ours())
-    return tool.Context(paths, runner, FakeProbe(), io.StringIO(), os.getuid())
+    ctx = tool.Context(paths, runner, FakeProbe(), io.StringIO(), os.getuid())
+    ctx.space = FakeSpace()
+    return ctx
 
 
 def check_like(ctx, after: list[str] | None = None) -> tool.Comparison:

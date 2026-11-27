@@ -17,6 +17,7 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
+from stack_oracle_check import step_live_check
 from stack_oracle_compose import StepError, compose_base, output, slot, stack_env
 
 if TYPE_CHECKING:
@@ -127,7 +128,9 @@ def mine(core: ModuleType, shot: Any, ours: set[str]) -> Any:
     return core.Snapshot({k: v for k, v in shot.seen.items() if k in ours}, shot.codes)
 
 
-#: Шаг скрипта выката — на живом стеке после шагов web (адрес web отвечает), до шагов защиты.
+#: Шаги скрипта выката — на живом стеке после шагов web (адрес web отвечает), до шагов защиты:
+#: снимок и разбор конфига, затем живой `deploy.py check` против стека прогона (6а-3).
 DEPLOY_STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     ("A186 A189", "скрипт выката: снимок соседа и разбор конфига", step_deploy_on_stack, False),
+    ("A185 A183", "живой deploy.py check: столкновение и чистые значения", step_live_check, False),
 ]

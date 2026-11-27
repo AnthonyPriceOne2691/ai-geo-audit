@@ -254,9 +254,11 @@ def test_a186_core_missing_in_the_copy_is_red(tmp_path: Path) -> None:
 
 def test_a186_a189_step_on_the_live_stack_after_web_and_before_hardening() -> None:
     """A186, A189: шаг — на живом стеке после шагов web (адрес web отвечает) и до шагов защиты
-    стека; в таблице один, с номерами A186 и A189; следующим шагам он не нужен."""
+    стека; в таблице один, с номерами A186 и A189; следующим шагам он не нужен. За ним — живой
+    `deploy.py check` (6а-3, A185), тоже на живом стеке, и только потом шаги защиты."""
     found = [s for s in oracle.STEPS if s[2].__name__ == "step_deploy_on_stack"]
     assert [(numbers, needed) for numbers, _, _, needed in found] == [("A186 A189", False)]
     at = oracle.STEPS.index(found[0])
     assert oracle.STEPS[at - 1] == web.WEB_STACK_STEPS[-1]
-    assert oracle.STEPS[at + 1] == hard.HARDENING_STEPS[0]
+    assert oracle.STEPS[at + 1][2].__name__ == "step_live_check"
+    assert oracle.STEPS[at + 2] == hard.HARDENING_STEPS[0]

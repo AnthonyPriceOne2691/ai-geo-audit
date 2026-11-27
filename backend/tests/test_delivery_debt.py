@@ -1,6 +1,7 @@
 """A290: долг на сдаче (`scripts/delivery_history.py`, адаптация «Скорости CI») — запись раздела
 `[exemption]` в снимке длины в долг не входит, запись раздела `[baseline]` — входит. Скрипты
-Delivery — не пакет: `debt_entries` настоящего скрипта зовётся отдельным процессом."""
+Delivery — не пакет: `debt_entries` настоящего скрипта зовётся отдельным процессом. Страж
+настоящего снимка: исключение скрипта выката стоит в `[exemption]` в пределах слова владельца."""
 
 from __future__ import annotations
 
@@ -11,6 +12,10 @@ import sys
 import envguard
 
 SCRIPTS = envguard.ROOT / "scripts"
+#: Настоящий снимок длины и слово владельца на исключение скрипта выката (показ 6а-3,
+#: 2026-11-27T09:10:29Z): снимок не выше 1100, предел 1150.
+SNAPSHOT = SCRIPTS / "lint" / "file_length_baseline.txt"
+DEPLOY, DEPLOY_CAP = "deploy/deploy.py", 1100
 #: Снимок длины с записью в каждом разделе — как `file_length_baseline.txt`.
 LENGTH = """# file_length_baseline.txt — снимок
 [baseline]
@@ -48,3 +53,18 @@ def test_a290_exemption_is_not_debt_and_baseline_is() -> None:
         {"backend/src/pkg/big.py": 640},
         {"backend/src/pkg/a.py::name": 1},
     )
+
+
+def test_a290_deploy_script_snapshot_is_an_exemption_within_the_owner_word() -> None:
+    """Снимок длины `deploy/deploy.py` — в `[exemption]`, а не в `[baseline]`, не выше 1100
+    (слово владельца) и равен настоящей длине файла (`wc -l`, как у гейта длины). `--generate`
+    кладёт строку в `[exemption]` только по `is_exempt_path`, а там пусто: пересъёмка молча
+    уводит её в `[baseline]` — предел снимок+30 вместо +50, запись — долг, который через пять
+    сдач «не растаял» (L102); так вышло на `eacb5b7`. Снимок, раздутый руками в пределах слова,
+    молча дал бы запас строк сверх длины (решение ведущей 2026-11-27)."""
+    blob = SNAPSHOT.read_text(encoding="utf-8")
+    rows = blob.partition("\n[exemption]\n")[2].splitlines()
+    exemption = {path: int(size) for size, _, path in (row.partition(":") for row in rows)}
+    assert 0 < exemption.get(DEPLOY, 0) <= DEPLOY_CAP, exemption
+    assert exemption[DEPLOY] == (envguard.ROOT / DEPLOY).read_text(encoding="utf-8").count("\n")
+    assert DEPLOY not in entries(blob)

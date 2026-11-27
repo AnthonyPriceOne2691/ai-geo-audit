@@ -687,6 +687,22 @@ A114); замок payload `scripts/lint/payload.lock.json` — доктор: «�
   брать сумму по половинам или судить каждую своей областью; область ратчета eslint — за вычетом
   `ignores` конфига.
 
+### 2026-11-27 — метрики сдачи: `rework_after_done` — заготовка, когда сдача — один коммит
+
+- **Находка:** вторая проверяющая, сверка сдачи Ч2.1б `ca17ca7`, 2026-11-27T12:01Z: в таблице §9
+  `rework_after_done` — «0 (handoff not declared yet)», хотя сдача объявлена. Та же заготовка —
+  в архиве Ч2.1 (`2026-11-26-ch2-01-thresholds`).
+- **Причина:** `_spec_timings` (`scripts/delivery_metrics.py:238–263`) ищет `phase: handoff` в
+  истории `delivery/active/STATUS.md`. У нас коммит сдачи тем же коммитом переносит
+  `delivery/active` в архив (CONSTITUTION, п. 11), и в истории активного STATUS фазы handoff не
+  бывает. Проба исполнителя: скрипт на `ca17ca7` печатает ту же заготовку.
+- **Сделано:** строка поправлена руками, коммит `05903fa`: «0 — после вердикта `f6e8c77` правок
+  кода нет».
+- **Для канона:** Delivery `delivery@2.30` (`scripts/lint/payload.lock.json`: `delivery`),
+  `scripts/delivery_metrics.py` `_spec_timings`: искать `phase: handoff` и в STATUS архива
+  поставки после переноса — или считать доработки от вердикта verify-report, а не от фазы
+  активного STATUS.
+
 ### 2026-11-20 — таблица сквозных проверок пуста с bootstrap
 
 - **Находка:** вторая проверяющая, приёмка В1а. `delivery/evals/smoke/README.md` с bootstrap

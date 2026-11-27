@@ -8,10 +8,12 @@ workflow судят разобранный YAML, место — путь в нё
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import shlex
 import subprocess
+import sys
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -892,3 +894,19 @@ def test_deploy_copy_mypy_violation_is_red_and_named(tmp_path: Path) -> None:
     probe.write_text("def same(x):\n    return x\n", "utf-8")
     done = run_hook("mypy-deploy", probe)
     assert done.returncode != 0 and "no-untyped-def" in done.stdout, done.stdout + done.stderr
+
+
+def test_a185_live_check_runs_as_an_oracle_step_of_the_stack_job() -> None:
+    """A185, план «Исполнение рисковых путей» (6а-3): живой `deploy.py check` — шаг оракула до его
+    уборки, а оракул — шаг джобы `stack`: в CI шаг идёт всегда, пропуск — только вне CI; красный
+    шаг следующих не останавливает."""
+    runs = [step.get("run", "") for step in load(QUALITY)["jobs"]["stack"]["steps"]]
+    assert "python3 scripts/stack_oracle.py" in runs
+    sys.path.insert(0, str(ROOT / "scripts"))
+    steps = importlib.import_module("stack_oracle").STEPS
+    found = [
+        (numbers, needed)
+        for numbers, _, step, needed in steps
+        if step.__name__ == "step_live_check"
+    ]
+    assert found == [("A185 A183", False)]
