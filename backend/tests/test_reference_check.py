@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from collections.abc import Callable, Iterator
@@ -12,11 +11,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import asyncpg
 import dbtools
 import pytest
 from pydantic import ValidationError
-from reference_sample import SAMPLE, SAMPLE2, document, dump, files, insert_revision, manifest_of
+from reference_sample import SAMPLE, SAMPLE2, document, dump, empty, files, manifest_of, revisions
 from test_alerts_commands import process_env, run
 from test_reference_file import MP, Cap, quiet
 
@@ -39,25 +37,16 @@ def sign(data: bytes, number: int) -> str:
     return f"{hashlib.sha256(data).hexdigest()}@{number}"
 
 
-async def _raw(*revisions: dict[str, Any]) -> list[tuple[int, str]]:
-    """Редакции по порядку — каждая на основе прежней; затем (номер, статус) всех редакций."""
-    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
-    try:
-        based_on = None
-        for revision in revisions:
-            based_on = await insert_revision(conn, **revision, based_on=based_on)
-        found = await conn.fetch("SELECT number, status FROM reference_revisions ORDER BY number")
-        return [(row["number"], row["status"]) for row in found]
-    finally:
-        await conn.close()
+#: Строка готовой команды `load` перед знаком (Ч2.1б, A311); путь файла — `<файл>`.
+COMMAND = (
+    "запись: python -m ai_geo_audit.reference load <файл> --expect {} --reason"
+    ' "<чьё слово и когда>"'
+)
 
 
-async def _empty() -> None:
-    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
-    try:
-        await conn.execute("TRUNCATE reference_params, reference_checks, reference_revisions")
-    finally:
-        await conn.close()
+def tail(data: bytes, number: int) -> list[str]:
+    """Последние строки вывода `check`: готовая команда `load`, знак записи и пустая строка."""
+    return [COMMAND.format(sign(data, number)), sign(data, number), ""]
 
 
 @pytest.fixture
@@ -65,19 +54,21 @@ def seed(monkeypatch: MP) -> Iterator[Seed]:
     """Адрес базы команды — тестовая база; `seed(...)` ставит редакции и отдаёт список всех; после
     теста таблицы справочника пусты."""
     monkeypatch.setattr(config, "storage", config.StorageSettings(database_url=dbtools.own_url()))
-    yield lambda *revisions: asyncio.run(_raw(*revisions))
-    asyncio.run(_empty())
+    yield revisions
+    empty()
 
 
 @pytest.fixture
 def check(tmp_path: Path, monkeypatch: MP, capsys: Cap) -> Run:
-    """`check` в процессе теста по байтам файла и его манифесту: код, вывод, поток ошибок."""
+    """`check` в процессе теста по байтам файла и его манифесту: код, вывод, поток ошибок; путь
+    файла в выводе — `<файл>`: его называет строка готовой команды `load`."""
     quiet(monkeypatch)
 
     def run_check(data: bytes) -> tuple[int, str, str]:
         path, spec = files(tmp_path, data, manifest_of(data, len(json.loads(data)["rows"])))
         code = command.main(["check", path, "--manifest", spec])
-        return code, *capsys.readouterr()
+        out, err = capsys.readouterr()
+        return code, out.replace(path, "<файл>"), err
 
     return run_check
 
@@ -96,9 +87,10 @@ EDITED = with92(SAMPLE, params=SLOW)
 def test_a304_without_revisions_all_rows_are_new_and_the_sign_is_zero(
     seed: Seed, check: Run
 ) -> None:
-    """A304: редакций нет, `check` Ф — код 0, «новых строк 6», последняя строка — Т(0)."""
+    """A304: редакций нет, `check` Ф — код 0, «новых строк 6», последняя строка — Т(0), а перед
+    ней — готовая запись (A311)."""
     assert seed() == []
-    assert check(F) == (0, NL.join([GOOD.format(6), "новых строк 6", sign(F, 0), ""]), "")
+    assert check(F) == (0, NL.join([GOOD.format(6), "новых строк 6", *tail(F, 0)]), "")
     assert seed() == []
 
 
@@ -109,18 +101,19 @@ def test_a304_changes_against_the_active_revision(seed: Seed, check: Run) -> Non
     norm = (
         f"93 · норма: текст изменён, было {len('норма 93')} знаков, стало {len('другая норма 93')}"
     )
-    lines = [GOOD.format(7), "92 · доля: 10 % → 15 %", norm, "новая строка 95", sign(F2, 1), ""]
+    lines = [GOOD.format(7), "92 · доля: 10 % → 15 %", norm, "новая строка 95", *tail(F2, 1)]
     assert check(F2) == (0, NL.join(lines), "")
     assert seed() == before == [(1, "active")]
 
 
 def test_a304_edits_the_file_would_cancel_are_named(seed: Seed, check: Run) -> None:
     """A304: активна 2 — правка поверх 1 из Ф (у `92` `max_seconds` 3.5): `check` Ф называет
-    правку, которую запись отменит; последняя строка — Т(2); база не тронута."""
+    правку, которую запись отменит; последняя строка — Т(2), перед ней — готовая запись (A311);
+    база не тронута."""
     first = {"rows": SAMPLE, "number": 1, "status": "archived"}
     before = seed(first, {"rows": EDITED, "number": 2, "source": "edit"})
     cancelled = "будут отменены правки редакции 2: 92 · max_seconds 3.5 → 3.25 с"
-    assert check(F) == (0, NL.join([GOOD.format(6), cancelled, sign(F, 2), ""]), "")
+    assert check(F) == (0, NL.join([GOOD.format(6), cancelled, *tail(F, 2)]), "")
     assert seed() == before
 
 
@@ -133,7 +126,7 @@ def test_a304_edits_count_from_the_last_file_revision(seed: Seed, check: Run) ->
     seed({"rows": SAMPLE, "number": 1} | old, {"rows": SAMPLE2, "number": 2} | old, edit)
     data = dump(document(with92(SAMPLE2, share_percent=Decimal("20"))))
     cancelled = "будут отменены правки редакции 3: 92 · max_seconds 3.5 → 3.25 с"
-    lines = [GOOD.format(7), "92 · доля: 15 % → 20 %", cancelled, sign(data, 3), ""]
+    lines = [GOOD.format(7), "92 · доля: 15 % → 20 %", cancelled, *tail(data, 3)]
     assert check(data) == (0, NL.join(lines), "")
 
 
@@ -159,10 +152,10 @@ def test_a304_order_and_threshold_changes_are_named(
     другие, «изменений нет» было бы неправдой. Строка `95` в середине сдвигает места ниже, но
     порядок общих строк прежний — только «новая строка». Смена единицы — со старой единицей:
     «3.25 → 3250 мс» читалось бы ростом в тысячу раз. Порог убран и порог новый — по имени; у
-    единицы `number` слова нет."""
+    единицы `number` слова нет. В конце — готовая запись и знак (A311)."""
     seed({"rows": SAMPLE, "number": 1})
     data = dump(document(rows))
-    assert check(data) == (0, NL.join([GOOD.format(len(rows)), line, sign(data, 1), ""]), "")
+    assert check(data) == (0, NL.join([GOOD.format(len(rows)), line, *tail(data, 1)]), "")
 
 
 def test_a304_enum_changes_are_words_and_a_missing_share_is_a_dash(seed: Seed, check: Run) -> None:
@@ -172,7 +165,7 @@ def test_a304_enum_changes_are_words_and_a_missing_share_is_a_dash(seed: Seed, c
     moved = {"importance": "important", "scope": "pages", "share_percent": Decimal("10")}
     data = dump(document([SAMPLE[0] | moved, *SAMPLE[1:]]))
     words = ["91 · важность: Критично → Важно", "91 · область: сайт → все страницы"]
-    lines = [GOOD.format(6), *words, "91 · доля: — → 10 %", sign(data, 1), ""]
+    lines = [GOOD.format(6), *words, "91 · доля: — → 10 %", *tail(data, 1)]
     assert check(data) == (0, NL.join(lines), "")
 
 
@@ -180,7 +173,7 @@ def test_a304_revision_rows_are_read_by_position_not_by_insertion(seed: Seed, ch
     """A304: строки редакции 1 вставлены не по порядку мест — `91` на месте 2, `92` на месте 1:
     `check` Ф называет порядок — строки редакции читаются по месту, а не по порядку вставки."""
     seed({"rows": SAMPLE, "number": 1, "positions": [2, 1, 3, 4, 5, 6]})
-    lines = [GOOD.format(6), "порядок: строк на других местах 2", sign(F, 1), ""]
+    lines = [GOOD.format(6), "порядок: строк на других местах 2", *tail(F, 1)]
     assert check(F) == (0, NL.join(lines), "")
 
 
@@ -196,7 +189,7 @@ def test_a304_a_file_equal_to_the_revision_has_no_changes(
     """A304: активна 1 из Ф; `check` Ф, Ф с записью порога `3.250` и Ф с долями `10.0` —
     «изменений нет: файл равен редакции 1»: числа сравниваются значением, а не записью."""
     seed({"rows": SAMPLE, "number": 1})
-    lines = [GOOD.format(6), "изменений нет: файл равен редакции 1", sign(data, 1), ""]
+    lines = [GOOD.format(6), "изменений нет: файл равен редакции 1", *tail(data, 1)]
     assert check(data) == (0, NL.join(lines), "")
 
 
