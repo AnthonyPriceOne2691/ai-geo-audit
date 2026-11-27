@@ -387,8 +387,30 @@ def test_a307_logs_and_hooks_come_before_the_file(tmp_path: Path, monkeypatch: M
 
 @pytest.mark.parametrize(
     "argv",
-    [[], ["load", "-"], ["check"], ["check", "a", "b"], ["check", "a", "--manifest"]],
-    ids=["none", "load", "no-file", "two-files", "no-manifest-path"],
+    [
+        [],
+        ["load"],
+        ["load", "-", "--expect"],
+        ["load", "-", "--other", "x"],
+        ["load", "-", "--reason", "a", "--reason", "b"],
+        ["load", "--replace-edits", "--expect", "0" * 64 + "@0", "--reason", "x"],
+        ["status", "x"],
+        ["check"],
+        ["check", "a", "b"],
+        ["check", "a", "--manifest"],
+    ],
+    ids=[
+        "none",
+        "load-no-file",
+        "load-flag-without-value",
+        "load-unknown-flag",
+        "load-repeated-flag",
+        "load-flag-instead-of-file",
+        "status-extra",
+        "no-file",
+        "two-files",
+        "no-manifest-path",
+    ],
 )
 def test_a307_other_arguments_are_the_usage_line(
     monkeypatch: MP, capsys: Cap, argv: list[str]

@@ -116,6 +116,9 @@ describe('инструменты фронта', () => {
       'frontend/dist/x',
       'frontend/tsconfig.tsbuildinfo',
       'frontend/coverage/x',
+      // Песочница и отчёт порч TS: каталоги задаёт `stryker.config.json` в корне (В1б).
+      '.stryker-tmp/x',
+      'reports/stryker/x',
     ];
     const ignored = execFileSync('git', ['check-ignore', '--no-index', ...paths], {
       cwd: ROOT,
@@ -126,6 +129,9 @@ describe('инструменты фронта', () => {
   });
 });
 
+// A394: пакеты В1б — точными версиями и по списку одобренных, без скриптов установки, с отсечкой
+// возраста в `.npmrc`; копия с нарушением — красный F17. Строки `new_dependency` в STATUS сверяет
+// гейт `check_new_dependency.py`.
 describe('пакеты фронта', () => {
   it('F17: каждый пакет lock — из реестра npm и с integrity', () => {
     const entries = lockEntries();

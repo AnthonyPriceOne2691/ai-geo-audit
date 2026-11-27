@@ -7,7 +7,7 @@
      stack-map@1.59. Развёрнута ось ① (волна В0); ② и CI придут волной В1, ③ — волной В2.
      absent = слой не развёрнут.
      cqg@3.14 — с поставки В1а: половина Python оси ② и замок payload
-     `scripts/lint/payload.lock.json`; TS-половины — поставка В1б.
+     `scripts/lint/payload.lock.json`; TS-половины — с поставки В1б (2026-11-26).
      cqg@3.30 · delivery@2.30 — обновление контура 2026-11-23 (CQG §5.5), состав тот же. -->
 **CI:** deployed (github-actions) merge-gate: server   <!-- §10.4: первый зелёный прогон quality
      44706856356 на `580a608` (2026-11-20T08:59Z); защита main — 2026-11-20T14:02:23Z по слову
@@ -180,7 +180,7 @@ ask: WebFetch
 
 ## Pointers to sibling layers (fill if deployed)
 
-- Code shape oracles: `CODE_QUALITY_GATES.md` — [ ] not deployed / [x] deployed — волна В1а: половина Python, с обновления 2026-11-23 — `cqg@3.30`; TS-половина — В1б
+- Code shape oracles: `CODE_QUALITY_GATES.md` — [ ] not deployed / [x] deployed — волна В1а: половина Python, с обновления 2026-11-23 — `cqg@3.30`; TS-половина — с В1б (2026-11-26)
 - Domain canon: `OKF_KNOWLEDGE_BUNDLE.md` / `knowledge/` — [x] not deployed / [ ] deployed — волна В2: справочник проверок, лимиты и формулы закреплены кодом и тестами
 - Agent hooks (§10): [x] not deployed / [ ] deployed
 - CI oracles (§10.4, workflow per CQG §8): [ ] not deployed / [x] deployed — волна В1а: `quality.yml` и `main-guard.yml`; защита main — A116 по слову владельца

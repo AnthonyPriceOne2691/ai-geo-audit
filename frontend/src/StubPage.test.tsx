@@ -63,7 +63,11 @@ describe('образцы вида', () => {
     expect(card.getByText(samples.text).style.color).toBe('');
     expect(card.getByText(samples.muted).style.color).toBe('var(--mantine-color-dimmed)');
     const link = card.getByRole('link', { name: samples.link });
-    expect(link.getAttribute('href')).toBe(`#${screen.getByRole('table').id}`);
+    // Ссылка ведёт на саму таблицу: пустой id дал бы «#» и у ссылки, и у таблицы, и сверка адреса
+    // с id прошла бы — порча выжила в гейте порч TS (В1б).
+    const target = (link.getAttribute('href') ?? '').replace(/^#/, '');
+    expect(target).not.toBe('');
+    expect(document.getElementById(target)).toBe(screen.getByRole('table'));
   });
 
   it('F20: карточка образца — снова Card, без своего фона: фон даёт тема', () => {
@@ -82,12 +86,15 @@ describe('образцы вида', () => {
       .slice(1)
       .map((row) => {
         const label = within(row).getByText(/^(ОК|Внимание|Ошибка)$/);
-        return [label.textContent, label.style.color, label.style.backgroundColor];
+        const { color, backgroundColor, borderRadius } = label.style;
+        return [label.textContent, color, backgroundColor, borderRadius];
       });
+    // Скругление метки — токен мелкого радиуса: без сверки порча имени токена выжила (В1б).
+    const radius = cssVar('radiusControl');
     expect(statuses).toEqual([
-      ['ОК', cssVar('ok'), cssVar('okTint')],
-      ['Внимание', cssVar('warn'), cssVar('warnTint')],
-      ['Ошибка', cssVar('crit'), cssVar('critTint')],
+      ['ОК', cssVar('ok'), cssVar('okTint'), radius],
+      ['Внимание', cssVar('warn'), cssVar('warnTint'), radius],
+      ['Ошибка', cssVar('crit'), cssVar('critTint'), radius],
     ]);
     const cells = [...table.getAllByRole('columnheader'), ...table.getAllByRole('cell')];
     expect(cells.map((cell) => cell.style.textAlign)).toEqual(Array(12).fill('center'));

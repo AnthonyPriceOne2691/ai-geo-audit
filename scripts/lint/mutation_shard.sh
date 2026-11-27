@@ -183,7 +183,7 @@ ts_recheck() {
   ${TIMEOUT_BIN:+"$TIMEOUT_BIN" "$RECHECK_SEC"} "$STRYKER" run ${cfg:+"$cfg"} \
     ${runner:+--testRunner "$runner"} --concurrency 1 --mutate "$ranges" --reporters json >"$out" 2>&1
   rc=$?
-  again=$(grep -oE 'file://[^ ]*\.json' "$out" | tail -1 | sed 's#^file://##')
+  again=$(grep -oE 'file://[^ ]*\.json' "$out" | tail -1 | sed 's#^file://##' | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))')
   seen=$(printf '%s\n' "$picked" | ts_rows "${again:-нет-отчёта}" status 2>/dev/null)
   (( rc == 0 || rc == 124 )) || tail -15 "$out" >&2
   mv "$out.main" "$report"; rm -f "$out"

@@ -201,7 +201,7 @@ ts_run() {
   # Путь к отчёту берём из СЛОВ САМОГО Stryker'а, а не из своего представления о
   # дефолте: замер дал `reports/mutation/mutation.json`, а конфиг проекта волен
   # положить его куда угодно. Зашитый путь молча читал бы вчерашний отчёт.
-  report=$(grep -oE 'file://[^ ]*\.json' "$out" | tail -1 | sed 's#^file://##')
+  report=$(grep -oE 'file://[^ ]*\.json' "$out" | tail -1 | sed 's#^file://##' | python3 -c 'import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read().strip()))')
   [[ -n "$report" && -f "$report" ]] || report="${MUTATION_TS_REPORT:-reports/mutation/mutation.json}"
   if [[ ! -f "$report" ]]; then
     printf '%s⚠ mutation: Stryker отработал, но отчёт не найден — гейт НЕ судит.%s\n' "$yellow" "$reset"
