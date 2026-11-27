@@ -45,6 +45,7 @@
        выпустят исправление. Подписанные спека и план не меняются; решение — в decisions. -->
 - **new_dependency:** @tanstack/react-query reason=кэш запросов к API — проверка связи и будущие списки на общих умолчаниях (F32–F35, F49); 5.107.1 от 2026-11-06, одна зависимость — @tanstack/query-core 5.107.1 от 2026-11-06; 5.107.2–5.108.4 моложе 14 суток by=human:owner at=2026-11-27T10:16Z
 - **new_dependency:** @testing-library/user-event reason=нажатия как у человека в тестах экрана — «Спросить ещё раз», два нажатия в одном такте (F33); 14.6.10 от 2026-11-12, зависимостей нет; 14.6.11–14.6.13 моложе 14 суток by=human:owner at=2026-11-27T10:16Z
+- **new_dependency:** minimatch reason=overrides под @stryker-mutator/core — 10.2.6 в находке JS-аудита (>=7.0.0 <11.0.1), Stryker 10.1.1 держит ~10.2.4; гейт порч TS на тех же файлах считает как без подстановки; снять с исправлением Stryker; 11.0.8 от 2026-11-11, 11.0.9 моложе 14 суток; дерево — brace-expansion 5.0.13 от 2026-11-11 и @isaacs/nonrecursive-glob-match 1.1.0 от 2026-11-05 by=human:owner at=2026-11-27T11:01Z
 - **new_dependency:** qs reason=overrides под typed-rest-client (вариант (а)) — 6.15.1 в четырёх находках JS-аудита, 6.16.2 вне их; снять с исправлением Stryker или typed-rest-client; 6.16.2 от 2026-10-27 by=human:owner at=2026-11-27T10:16Z
 - **shape-oracles:** cqg-deployed
   <!-- TS-половины гейтов — с В1б: она в main раньше этой поставки. -->
