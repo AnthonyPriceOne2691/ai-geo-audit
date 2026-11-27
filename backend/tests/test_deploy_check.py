@@ -160,8 +160,26 @@ def test_a185_check_refuses_the_server_file_by_name_and_reason(
             refused(f"WEB_IMAGE: {NOT_DIGEST}"),
         ),
         ({"BACKEND_IMAGE": GOOD_IMAGES["BACKEND_IMAGE"]}, refused(f"WEB_IMAGE: {NOT_DIGEST}")),
+        # Против порч «`match` вместо `fullmatch`» (находка 4 третьей): лишний знак и хвост.
+        (
+            GOOD_IMAGES | {"WEB_IMAGE": f"ai-geo-audit-web@{DIGEST}c"},
+            refused(f"WEB_IMAGE: {NOT_DIGEST}"),
+        ),
+        (
+            GOOD_IMAGES | {"BACKEND_IMAGE": f"ai-geo-audit-backend@{DIGEST}:latest"},
+            refused(f"BACKEND_IMAGE: {NOT_DIGEST}"),
+        ),
     ],
-    ids=["до-первого-выката", "дайджесты", "тег", "короткий-дайджест", "заглавные", "один-пуст"],
+    ids=[
+        "до-первого-выката",
+        "дайджесты",
+        "тег",
+        "короткий-дайджест",
+        "заглавные",
+        "один-пуст",
+        "65-знаков",
+        "хвост",
+    ],
 )
 def test_a181_check_images_in_the_server_file(
     ctx, images: dict[str, str], expected: list[str]
@@ -184,6 +202,15 @@ def test_a189_check_refuses_an_address_whose_password_differs(ctx, url: str, pas
     code, lines = check(ctx)
     assert (code, lines[PAIRS]) == (1, refused(f"пароль в {url} не равен {password}"))
     assert "e5e5" not in said(ctx) and values[password] not in said(ctx)
+
+
+def test_a189_check_refuses_an_address_without_a_password(ctx) -> None:
+    """A189, вторая строка, против порчи «`given and …`» (находка 3 третьей): в адресе пароля
+    нет, а пароль роли задан — отказ «пароль в … не равен …»."""
+    write_env(ctx, server_values() | {"API_DATABASE_URL": "postgresql+asyncpg://app@db:5432/a"})
+    code, lines = check(ctx)
+    reason = "пароль в API_DATABASE_URL не равен POSTGRES_APP_PASSWORD"
+    assert (code, lines[PAIRS]) == (1, refused(reason))
 
 
 def test_a189_check_compares_the_password_after_percent_decoding(ctx) -> None:
@@ -334,8 +361,19 @@ def test_a185_check_port_declared_in_a_neighbor_compose_file(ctx, line: str) -> 
         "- $NB_PORT:80",
         "  published: ${NB_PORT}",
         "- published: abc",
+        # Разбор не берёт — не молчать (решение ведущей 2026-11-27): многострочный список, якорь.
+        "ports: [",
+        "ports: *web_ports",
     ],
-    ids=["без-умолчания", "обязательная", "без-скобок", "длинная-запись", "не-число"],
+    ids=[
+        "без-умолчания",
+        "обязательная",
+        "без-скобок",
+        "длинная-запись",
+        "не-число",
+        "многострочный-список",
+        "якорь",
+    ],
 )
 def test_a185_check_neighbor_port_by_a_variable_without_default_is_to_check(ctx, spec: str) -> None:
     """A185, третья строка: порт соседа задан переменной без умолчания (или не читается) —
@@ -629,3 +667,99 @@ def test_a186_check_reads_the_machine_and_writes_only_its_journal_and_lock(ctx) 
     assert len(compose) == 1 and compose[0][2:4] == ("--project-name", "ai-geo-audit")
     assert all(env == {} for _argv, env in ctx.runner.calls)
     assert not any(".env" in arg for argv, _env in ctx.runner.calls for arg in argv)
+
+
+# Находки третьей проверяющей по срезу 6 (2026-11-27 10:56Z): 1 и 2 — дефекты кода, 3–7 —
+# случаи против выживших порч.
+
+
+def test_a185_check_own_stopped_web_does_not_cover_a_foreign_listener(ctx) -> None:
+    """A185, третья строка (находка 1): наш web остановлен, привязка на `WEB_PORT` за ним
+    осталась, а порт слушает чужой процесс — «WEB_PORT занят»: остановленный свой порт не
+    держит."""
+    web = rec.inspect_line(
+        "ai-geo-audit-web-1", "ai-geo-audit", status="exited", ports=rec.loopback("18100")
+    )
+    ctx.runner.become([*rec.server_machine(), web])
+    ctx.runner.answers["ss"] = ss_with("127.0.0.1:18100")
+    code, lines = check(ctx)
+    assert (code, lines["порт"]) == (1, refused("WEB_PORT занят"))
+
+
+#: Файлы под каталогом проектов для настоящих `find` и `awk` (находка 2): путь от него — текст.
+NEIGHBOR_TREE = {
+    "nb-a/docker-compose.yml": (
+        'services:\n  web:\n    ports:\n      - "18101:80"\n      - target: 81\n'
+        "        published: 18102\n        host_ip: 127.0.0.1\n    environment:\n"
+        '      NOTE: "18990:1"\n  api:\n    ports:\n    - "18103:8000"  # было: 18991:80\n'
+        '    - target: 82\n      published: "18104"\n'
+        "networks:\n  default:\n    ipam:\n      config:\n"
+        "        - subnet: 10.250.0.0/24  # подсеть соседа\n"
+    ),
+    "nb-a/docker-compose.dev.yml": 'services:\n  db:\n    ports: ["18105:5432", "18106:6379"]\n',
+    "nb-b/compose.yaml": 'services:\n  web:\n    ports: [\n      "18992:80"\n    ]\n',
+    "nb-b/deep/docker-compose.yml": 'services:\n  web:\n    ports:\n      - "18993:80"\n',
+    "nb-c/notes.yml": 'services:\n  web:\n    ports:\n      - "18994:80"\n',
+    "ai-geo-audit/docker-compose.yml": 'services:\n  web:\n    ports:\n      - "18995:80"\n',
+    "docker-compose.yml": 'services:\n  web:\n    ports:\n      - "18996:80"\n',
+}
+#: Якорь YAML на месте списка портов — своим деревом: «сверить» в основном дереве даёт и
+#: многострочный список, якорь там не судился бы.
+ALIAS_TREE = {
+    "nb-c/docker-compose.yml": (
+        'x-ports: &web_ports\n  - "18997:80"\nservices:\n  web:\n    ports: *web_ports\n'
+    ),
+}
+
+
+def neighbor_scan(root: Path, files: dict[str, str]) -> Any:
+    """Разбор файлов соседа скрипта настоящими `find` и `awk` по дереву `files` под `root/srv`."""
+    for rel, text in files.items():
+        path = root / "srv" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    srv = root / "srv"
+    paths = tool.Paths(srv / "ai-geo-audit", srv / "ai-geo-audit-backups", root / "etc", srv)
+    return tool.neighbor_files(tool.Context(paths=paths, runner=tool.Runner()))
+
+
+def test_a185_neighbor_files_read_by_real_find_and_awk(tmp_path: Path) -> None:
+    """A185, третья и четвёртая строки (находка 2): разбор файлов соседа — настоящими `find` и
+    `awk` из PATH скрипта, по временным файлам: вложенный и компактный список (пункт на отступе
+    `ports:`), список строкой, длинная запись `- target:` / `published:`, комментарий в конце
+    строки — и с двоеточием, `subnet:`; чужие ключи (`environment`) мимо; ровно глубина 2 —
+    ни каталог проектов, ни глубже, — свой корень мимо, только имена файлов compose.
+    Многострочный список строкой и якорь YAML разбор не берёт — «сверить», не молчание."""
+    ports, subnets, unknown = neighbor_scan(tmp_path / "a", NEIGHBOR_TREE)
+    assert sorted(ports) == [18101, 18102, 18103, 18104, 18105, 18106]
+    assert [str(net) for net in subnets] == ["10.250.0.0/24"]
+    assert unknown == {"порт"}
+    assert neighbor_scan(tmp_path / "b", ALIAS_TREE) == (set(), [], {"порт"})
+
+
+def test_a185_check_comment_with_a_colon_in_a_neighbor_port_line_is_not_a_port(ctx) -> None:
+    """A185, третья строка, против порчи «без отреза комментария» (находка 5): в комментарии
+    строки порта соседа — двоеточия и наш порт; порт строки — другой: «ок»."""
+    ctx.runner.answers["find"] = neighbor_file('      - "5544:5432"  # было: 18100:80')
+    code, lines = check(ctx)
+    assert (code, lines["порт"]) == (0, ["ок"])
+
+
+def test_a185_check_disk_of_exactly_twenty_passes(ctx) -> None:
+    """A185, пятая строка, против порчи «`<=` вместо `<`» (находка 6): места ровно 20 ГБ —
+    порог «не меньше 20» выполнен, «ок»."""
+    ctx.space.free[Path("/var/lib/docker")] = 20 * GIB
+    code, lines = check(ctx)
+    assert code == 0 and lines["ресурсы"][0].startswith("ок — ")
+    assert "каталог докера 20 ГБ" in lines["ресурсы"][0]
+
+
+@pytest.mark.parametrize(
+    "name", ["ai-geo-audit-web-1-old", "old-ai-geo-audit-web-1", "ai-geo-audit-web-1x"]
+)
+def test_a185_check_foreign_name_containing_ours_is_no_hindrance(ctx, name: str) -> None:
+    """A185, вторая строка, против порчи «`search` вместо `fullmatch`» (находка 7): чужой
+    контейнер, в имени которого есть наше имя целиком, — не наше имя: «ок»."""
+    ctx.runner.become([*rec.server_machine(), rec.inspect_line(name, "nb-gamma")])
+    code, lines = check(ctx)
+    assert (code, lines["имена"]) == (0, ["ок"])
