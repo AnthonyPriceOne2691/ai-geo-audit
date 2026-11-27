@@ -14,7 +14,6 @@ import pytest
 from deploy_fakes import (
     ROOT,
     changed,
-    check_like,
     make_ctx,
     server_values,
     tool,
@@ -31,14 +30,18 @@ def ctx(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
 #: A183: метки — значения, которых в выводе, журнале и аргументах быть не должно.
 MARKS = [f"mkq{n:02d}" for n in range(1, 16)] + ["4791234567", "198.51.100.208", "nb-alpha"]
 
-MARKS += ["198.51.100.210", "nb-beta", *(str(port) for port in range(47911, 47917))]
+MARKS += ["198.51.100.210", "nb-beta", *(str(port) for port in range(47911, 47918))]
+
+#: Подсети соседа: сети докера, маршруты и строка `subnet` его файла compose (6а-3).
+MARKS += ["10.47.0.0", "10.48.0.0", "10.49.0.0"]
 
 
-def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys, monkeypatch) -> None:
+def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys) -> None:
     """A183: метки в секретах файла окружения, мастер-ключе, входящем файле, пароле сайта, в
-    домене, порте, подсети, адресах, в именах и портах соседа; ядро через `main` по удачным
-    сценариям, с отказами и с чужой ошибкой — меток нет ни в выводе, ни в журнале `.deploy/`, ни
-    в аргументах команд; у чужой ошибки — только её вид."""
+    домене, порте, подсети, адресах, в именах, портах и подсетях соседа — живых и в его файлах
+    compose; `deploy.py check` через `main` по удачным сценариям, с отказами и с чужой ошибкой —
+    меток нет ни в выводе, ни в журнале `.deploy/`, ни в аргументах команд; у чужой ошибки —
+    только её вид."""
     values = server_values(
         migrate="a1a1mkq01",
         app="b2b2mkq02",
@@ -59,19 +62,25 @@ def test_a183_no_mark_in_output_journal_or_arguments(ctx, capsys, monkeypatch) -
         ("incoming/x", "mkq13"),
     ):
         ctx.paths.etc.joinpath(name).write_text(mark, encoding="utf-8")
-    machine = rec.server_machine("nb-alpha-mkq09", "nb-beta-mkq10", ("47914", "47915"))
+    alpha, beta, nets = "nb-alpha-mkq09", "nb-beta-mkq10", ("10.47.0.0/16", "10.48.0.0/16")
+    machine = rec.server_machine(alpha, beta, ("47914", "47915"))
     ctx.runner.become(machine + rec.ours())
+    ctx.runner.networks = rec.networks(alpha, beta, nets)
+    ctx.runner.volumes = [rec.volume_line(f"{alpha}_ai-geo-audit-cache", alpha)]
+    subnet = f"/srv/{beta}/docker-compose.yml:         - subnet: 10.49.0.0/16\n"
+    ctx.runner.answers |= {
+        "ss": (0, rec.listening(("47914", "47915"))),
+        "find": (0, rec.compose_lines(alpha, beta, ("47916", "47917")) + subnet),
+        "ip": (0, rec.routes(nets)),
+    }
     write_env(ctx, values)
-    after: list[list[str]] = []
-
-    def check(c: Any, _args: Any) -> int:
-        check_like(c, after.pop() if after else None)
-        return 0
-
-    monkeypatch.setitem(tool.COMMANDS, "check", (check, "ядро, как check"))
     assert tool.main(["check"], ctx) == 0
-    after.append(changed(machine, "nb-alpha-mkq09-web-1", restarts=3))
-    assert tool.main(["check"], ctx) == 0
+    # Сосед перезапустился между снимками одного запуска — снимок красный: отказ, без имён.
+    ctx.runner.then = changed(machine, f"{alpha}-web-1", restarts=3) + rec.ours()
+    assert tool.main(["check"], ctx) == 1
+    # Порт и подсеть соседа — отказы со своими причинами, без значений.
+    write_env(ctx, values | {"WEB_PORT": "47914", "FRONT_SUBNET": "10.48.0.0/28"})
+    assert tool.main(["check"], ctx) == 1
     for broken in (
         values | {"NEIGHBOR_HEALTH_URLS": "http://192.0.2.7:47916/mkq14"},
         values | {"SITE_DOMAIN": "*.mkq15.example.test"},

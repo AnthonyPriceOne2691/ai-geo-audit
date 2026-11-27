@@ -56,12 +56,15 @@ def test_a290_exemption_is_not_debt_and_baseline_is() -> None:
 
 
 def test_a290_deploy_script_snapshot_is_an_exemption_within_the_owner_word() -> None:
-    """Снимок длины `deploy/deploy.py` — в `[exemption]`, а не в `[baseline]`, и не выше 1100
-    (слово владельца). `--generate` кладёт строку в `[exemption]` только по `is_exempt_path`, а
-    там пусто: пересъёмка молча уводит её в `[baseline]` — предел снимок+30 вместо +50, запись —
-    долг, который через пять сдач «не растаял» (L102); так вышло на `eacb5b7`."""
+    """Снимок длины `deploy/deploy.py` — в `[exemption]`, а не в `[baseline]`, не выше 1100
+    (слово владельца) и равен настоящей длине файла (`wc -l`, как у гейта длины). `--generate`
+    кладёт строку в `[exemption]` только по `is_exempt_path`, а там пусто: пересъёмка молча
+    уводит её в `[baseline]` — предел снимок+30 вместо +50, запись — долг, который через пять
+    сдач «не растаял» (L102); так вышло на `eacb5b7`. Снимок, раздутый руками в пределах слова,
+    молча дал бы запас строк сверх длины (решение ведущей 2026-11-27)."""
     blob = SNAPSHOT.read_text(encoding="utf-8")
     rows = blob.partition("\n[exemption]\n")[2].splitlines()
     exemption = {path: int(size) for size, _, path in (row.partition(":") for row in rows)}
     assert 0 < exemption.get(DEPLOY, 0) <= DEPLOY_CAP, exemption
+    assert exemption[DEPLOY] == (envguard.ROOT / DEPLOY).read_text(encoding="utf-8").count("\n")
     assert DEPLOY not in entries(blob)
