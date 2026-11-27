@@ -11,5 +11,12 @@ MIGRATIONS: Final = 1001
 #: Замок справочника: запись редакции — загрузка и правка — держит его до конца своей транзакции
 #: (A314, A319).
 REFERENCE: Final = 1002
+#: Замок наборов: запись наборов — встроенный набор (Ч2.2), затем жизнь набора (Ч2.2б) — держит
+#: его до конца своей транзакции (A334).
+CHECK_SETS: Final = 1003
 
-REGISTRY: Final[dict[str, int]] = {"migrations": MIGRATIONS, "reference": REFERENCE}
+REGISTRY: Final[dict[str, int]] = {
+    "migrations": MIGRATIONS,
+    "reference": REFERENCE,
+    "check_sets": CHECK_SETS,
+}

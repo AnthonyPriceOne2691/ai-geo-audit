@@ -27,12 +27,14 @@ root_packages =
 # сами зовут только конфиг, логи и Redis. Команды `ops` — вне слоёв.
 # Справочник `reference` (Ч2.1) — независимый сосед `settings` в одном слое: оба стоят на
 # `storage` и ниже, друг друга не импортируют (проба 4 шага 0: `|` import-linter 2.15 судит).
+# Наборы `sets` (Ч2.2) — над ними: читают редакцию справочника, справочник наборов не знает.
 # --------------------------------------------------------------------
 [importlinter:contract:ai-geo-audit-layered]
 name = ai_geo_audit: api -> settings -> storage -> alerts -> logs -> config -> refusal
 type = layers
 layers =
     api
+    sets
     settings | reference
     storage
     alerts

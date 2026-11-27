@@ -1,12 +1,12 @@
-"""Ревизия-проба: создаёт таблицу probe_rev, первая из двух, проходит."""
+"""Ревизия-проба: создаёт таблицу probe_rev, откат сносит её."""
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0004"
-down_revision: str | None = "0003"
+revision: str = "0005"
+down_revision: str | None = "0004"
 branch_labels: str | None = None
 depends_on: str | None = None
 

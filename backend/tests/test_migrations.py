@@ -327,8 +327,8 @@ async def test_a18_revision_failing_midway_leaves_the_previous_revision(tmp_path
     finally:
         await back_to_start(ini)
     assert run.returncode != 0
-    # A300: ревизия 0003 — справочник Ч2.1, поэтому пробная ревизия со сбоем — 0004.
-    assert "0003 -> 0004" in run.stderr and "сбой посередине ревизии" in run.stderr
+    # A320: ревизия 0004 — наборы Ч2.2, поэтому пробная ревизия со сбоем — 0005.
+    assert "0004 -> 0005" in run.stderr and "сбой посередине ревизии" in run.stderr
     assert ("probe_half" in tables, current) == (False, dbtools.HEAD)
 
 
