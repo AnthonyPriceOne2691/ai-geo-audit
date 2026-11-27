@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Final
@@ -50,6 +50,8 @@ GONE: Final = (
 )
 MAYBE_WRITTEN: Final = "запись могла пройти, проверьте status"
 _LOCK_NOT_AVAILABLE: Final = "55P03"
+#: Пределы порогов редакции по (код, имя порога).
+Bounds = Mapping[tuple[str, str], tuple[Decimal, Decimal]]
 _FIELDS: Final = tuple(name for name in RowIn.model_fields if name != "params")
 _TEXTS: Final = {
     "block": "блок",
@@ -203,6 +205,8 @@ class NewRevision:
     source: RevisionSource
     reason: str
     file: ReferenceFile | None = None
+    #: Пределы порогов: у правки — её основы; без них — таблица единиц (Ч2.1).
+    bounds: Bounds | None = None
 
 
 @dataclass(frozen=True)
@@ -220,28 +224,31 @@ class Written:
 Decide = Callable[[AsyncSession, ReferenceRevision | None], Awaitable[NewRevision | int]]
 
 
-async def write_revision(engine: AsyncEngine, decide: Decide) -> Written:
-    """Запись редакции одной транзакцией: замок, активная после него, решение `decide`, запись и
-    явная фиксация. Отказ уходит как есть, база не тронута; сбой до фиксации —
-    `WriteFailedError`, на ней — `CommitFailedError`: тексты исключений в них не идут (L57)."""
-    async with AsyncSession(engine, expire_on_commit=False) as session:
-        try:
-            await _lock(session)
-            active = await _active(session)
-            decided = await decide(session, active)
-            if isinstance(decided, int):
-                return Written(decided, already=True)
-            written = await _insert(session, active, decided)
-        except FileRefusedError:
-            raise
-        except Exception as failure:
-            kind = type(failure).__name__
-            raise WriteFailedError(f"сбой записи: {kind} — справочник не тронут") from failure
-        try:
-            await session.commit()
-        except Exception as failure:
-            kind = type(failure).__name__
-            raise CommitFailedError(f"сбой на фиксации: {kind} — {MAYBE_WRITTEN}") from failure
+async def write_revision(session: AsyncSession, decide: Decide) -> Written:
+    """Запись редакции одной транзакцией в сессии вызывающего — до вызова в ней не пишут: замок,
+    активная после него, решение `decide`, запись и явная фиксация. Отказ уходит как есть, сбой до
+    фиксации — `WriteFailedError`: то и другое откатывает сессию — база не тронута, замок снят и
+    при открытой сессии; сбой на фиксации — `CommitFailedError`. Тексты исключений в них не идут
+    (L57). «Уже загружено» не пишет: транзакцию закрывает вызывающий — `load`."""
+    try:
+        await _lock(session)
+        active = await active_or_none(session)
+        decided = await decide(session, active)
+        if isinstance(decided, int):
+            return Written(decided, already=True)
+        written = await _insert(session, active, decided)
+    except FileRefusedError:
+        await session.rollback()
+        raise
+    except Exception as failure:
+        await session.rollback()
+        kind = type(failure).__name__
+        raise WriteFailedError(f"сбой записи: {kind} — справочник не тронут") from failure
+    try:
+        await session.commit()
+    except Exception as failure:
+        kind = type(failure).__name__
+        raise CommitFailedError(f"сбой на фиксации: {kind} — {MAYBE_WRITTEN}") from failure
     return written
 
 
@@ -259,7 +266,8 @@ async def _lock(session: AsyncSession) -> None:
         raise FileRefusedError([BUSY.format(limit)]) from None
 
 
-async def _active(session: AsyncSession) -> ReferenceRevision | None:
+async def active_or_none(session: AsyncSession) -> ReferenceRevision | None:
+    """Активная редакция или None — у записи и предпросмотра правки."""
     try:
         return await active_revision(session)
     except NotLoadedError:
@@ -292,17 +300,24 @@ async def _insert(
     revision_id: int = (await session.execute(header.returning(ReferenceRevision.id))).scalar_one()
     params = 0
     for position, row in enumerate(new.rows, 1):
-        params += await insert_row(session, revision_id, position, row)
+        params += await insert_row(session, revision_id, position, row, new.bounds)
     return Written(number, len(new.rows), params)
 
 
-async def insert_row(session: AsyncSession, revision_id: int, position: int, row: RowIn) -> int:
-    """Строка редакции на своём месте и её пороги с пределами единицы (Ч2.1); число порогов."""
+async def insert_row(
+    session: AsyncSession,
+    revision_id: int,
+    position: int,
+    row: RowIn,
+    bounds: Bounds | None = None,
+) -> int:
+    """Строка редакции на своём месте и её пороги; пределы порога — из `bounds`, без них — из
+    таблицы единиц (Ч2.1). Число порогов."""
     fields = {field: getattr(row, field) for field in _FIELDS}
     values = insert(ReferenceCheck).values(revision_id=revision_id, position=position, **fields)
     check_id = await session.scalar(values.returning(ReferenceCheck.id))
     for param in row.params:
-        low, high = UNITS[param.unit]
+        low, high = UNITS[param.unit] if bounds is None else bounds[(row.code, param.name)]
         await session.execute(
             insert(ReferenceParam).values(
                 check_id=check_id,
@@ -344,4 +359,5 @@ async def load(
             raise FileRefusedError(why)
         return NewRevision(found.rows, RevisionSource.FILE, reason, found)
 
-    return await write_revision(engine, decide)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        return await write_revision(session, decide)

@@ -37,13 +37,17 @@ SNAPSHOT = (
 
 
 async def edit(engine: AsyncEngine, *changes: Any, expected: int = 1, apply: bool = True) -> Any:
-    """`change_thresholds` в своей сессии; модуль — здесь: без кода среза тест красный сам."""
+    """`change_thresholds` в своей сессии; модуль — здесь: без кода среза тест красный сам. Запись
+    завершает свою транзакцию — фиксацией, отказом или сбоем: замок снят и при открытой сессии."""
     from ai_geo_audit.reference import edit as module
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        return await module.change_thresholds(
-            session, expected=expected, changes=list(changes), apply=apply
-        )
+        try:
+            return await module.change_thresholds(
+                session, expected=expected, changes=list(changes), apply=apply
+            )
+        finally:
+            assert not (apply and session.in_transaction())
 
 
 async def refused(engine: AsyncEngine, *changes: Any, **kw: Any) -> list[str]:
@@ -201,6 +205,25 @@ async def test_a318_the_limits_and_the_neighbours_are_those_of_the_revision(
     assert await fetch(f"{query} WHERE r.number = 2") == [(D("1"), D("5"))]
 
 
+async def test_a313_an_edit_failure_before_commit_rolls_its_session_back(
+    committed: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A313 у правки: вставка строки падает (подмена) — «сбой записи: <тип> — справочник не
+    тронут», текста исключения нет; сессия правки откатана, редакция по-прежнему одна."""
+    await insert_all(ONE)
+
+    async def fails(*args: Any) -> int:
+        raise RuntimeError("подмена: строка 92")
+
+    monkeypatch.setattr(store, "insert_row", fails)
+    with pytest.raises(store.WriteFailedError) as failed:
+        await edit(committed, *CHANGES)
+    assert (str(failed.value), await numbers()) == (
+        "сбой записи: RuntimeError — справочник не тронут",
+        [(1, "active")],
+    )
+
+
 async def test_a319_an_unseen_revision_or_an_empty_reference_is_refused(
     committed: AsyncEngine,
 ) -> None:
@@ -227,7 +250,7 @@ async def test_a319_two_edits_wait_for_the_lock_and_one_writes(committed: AsyncE
     outcome = sorted(
         d.reasons if isinstance(d, file.FileRefusedError) else ["записала"] for d in done
     )
-    assert outcome == [[STALE.format(1, 2)], ["записала"]]
+    assert outcome == [["записала"], [STALE.format(1, 2)]]
     assert await numbers() == [(1, "archived"), (2, "active")]
 
 
