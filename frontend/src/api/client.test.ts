@@ -1,6 +1,6 @@
 // @vitest-environment node
-// F21–F23, F25–F29: клиент API на подменном `fetch` тестового сервера — путь, заголовки и режимы
-// запроса; отказы по коду и по признаку; обрыв, молчание и отмена; ответ не сервиса.
+// F21–F23, F25–F29, F48: клиент API на подменном `fetch` тестового сервера — путь, заголовки и режимы
+// запроса; отказы по коду и по признаку; обрыв, молчание и отмена; ответ не сервиса; ряд 3xx.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { answer, json, requests } from '../test/server';
@@ -37,6 +37,7 @@ describe('F21: путь и запрос', () => {
     expect(seen.map((r) => [r.method, r.path])).toEqual([['GET', '/api/health']]);
     expect(seen[0]?.headers.has('authorization')).toBe(false);
     expect(seen[0]?.headers.has('x-access-token')).toBe(false);
+    expect(seen[0]?.headers.get('accept')).toBe('application/json');
     expect([seen[0]?.init.cache, seen[0]?.init.credentials, seen[0]?.init.redirect]).toEqual([
       'no-store',
       'same-origin',
@@ -55,9 +56,18 @@ describe('F21: путь и запрос', () => {
   ])('F21: путь %s — отказ до запроса', async (path) => {
     answer('GET', path, json(200, { status: 'ok' }));
     const error = await failure(getJson(path, anyBody));
-    expect([error.kind, error.message]).toEqual(['path', words.api.path]);
+    expect([error.name, error.kind, error.message]).toEqual(['ApiError', 'path', words.api.path]);
     expect(requests()).toHaveLength(0);
   });
+
+  it.each(['/api/..c', '/api/d..', '/api/x?next=../y'])(
+    'F21: путь %s — шагов «.» и «..» в нём нет, запрос уходит',
+    async (path) => {
+      answer('GET', path, json(200, { status: 'ok' }));
+      await getJson(path, anyBody);
+      expect(requests().map((r) => r.path)).toEqual([path]);
+    },
+  );
 });
 
 describe('F22, F23: пароль прокси, «входа нет» и отказ', () => {
@@ -128,6 +138,24 @@ describe('F25: отказ без формы — слова по коду', () =>
     const error = await failure(getHealth());
     expect([error.kind, error.status, error.message]).toEqual(['server', code, text]);
     expect(error.message).not.toMatch(/nginx|host-7|Bad Gateway/);
+  });
+
+  const ALMOST: [string, unknown][] = [
+    ['null', null],
+    ['без detail', { kind: 'internal', retry: false }],
+    ['без kind', { detail: 'Сбой', retry: false }],
+    ['без retry', { detail: 'Сбой', kind: 'internal' }],
+    ['retry строкой', { detail: 'Сбой', kind: 'internal', retry: 'false' }],
+  ];
+
+  it.each(ALMOST)('F25: 500, тело почти по форме — %s — слова по коду', async (_, body) => {
+    answer('GET', '/api/health', json(500, body));
+    const error = await failure(getHealth());
+    expect([error.kind, error.status, error.message]).toEqual([
+      'server',
+      500,
+      words.api.failed(500),
+    ]);
   });
 });
 
@@ -217,6 +245,39 @@ describe('F26–F28: обрыв, молчание, отмена', () => {
   });
 });
 
+describe('F27, F28: отмена до вызова и уборка после ответа', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('F28: отменён до вызова — запроса нет, отмена как есть', async () => {
+    answer('GET', '/api/health', json(200, { status: 'ok' }));
+    const own = new AbortController();
+    own.abort();
+    const error: unknown = await getHealth({ signal: own.signal }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBe(own.signal.reason);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it('F27: ответ пришёл — предел снят, таймеров не осталось', async () => {
+    vi.useFakeTimers();
+    answer('GET', '/api/health', json(200, { status: 'ok' }));
+    await getHealth();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('F28: ответ пришёл — поздняя отмена вызывающего запрос не трогает', async () => {
+    answer('GET', '/api/health', json(200, { status: 'ok' }));
+    const own = new AbortController();
+    await getHealth({ signal: own.signal });
+    own.abort();
+    expect(requests()[0]?.init.signal?.aborted).toBe(false);
+  });
+});
+
 describe('F29: ответил не сервис', () => {
   it.each([
     [
@@ -235,18 +296,49 @@ describe('F29: ответил не сервис', () => {
       () => new Response('{"status":', { headers: { 'content-type': 'application/json' } }),
     ],
     ['application/json другого вида', json(200, { ok: true })],
+    ['application/json null', json(200, null)],
   ])('F29: %s — «ответил не сервис»', async (_, reply: () => Response) => {
     answer('GET', '/api/health', reply);
     const error = await failure(getHealth());
-    expect([error.kind, error.message]).toEqual(['not-service', words.api.notService]);
+    expect([error.kind, error.message, error.status]).toEqual([
+      'not-service',
+      words.api.notService,
+      200,
+    ]);
   });
 
-  it('F29: тип, разбор и вид сошлись — здоровье отвечает', async () => {
-    answer(
-      'GET',
-      '/api/health',
-      json(200, { status: 'ok' }, { 'content-type': 'application/json; charset=utf-8' }),
-    );
-    await expect(getHealth()).resolves.toEqual({ status: 'ok' });
+  it.each([
+    [
+      'HTML с кодом 200',
+      () => new Response('<!doctype html>', { headers: { 'content-type': 'text/html' } }),
+    ],
+    [
+      'application/json, который не разбирается',
+      () => new Response('{"status":', { headers: { 'content-type': 'application/json' } }),
+    ],
+  ])('F29: %s, вид берёт всё — «ответил не сервис»', async (_, reply: () => Response) => {
+    answer('GET', '/api/x', reply);
+    const error = await failure(getJson('/api/x', (_body: unknown): _body is unknown => true));
+    expect(error.kind).toBe('not-service');
+  });
+
+  it.each(['application/json; charset=utf-8', 'Application/JSON ; charset=UTF-8'])(
+    'F29: тип %s, разбор и вид сошлись — здоровье отвечает',
+    async (type) => {
+      answer('GET', '/api/health', json(200, { status: 'ok' }, { 'content-type': type }));
+      await expect(getHealth()).resolves.toEqual({ status: 'ok' });
+    },
+  );
+});
+
+describe('F48: перенаправление — весь ряд 3xx и только он', () => {
+  it.each([
+    [300, 'redirect', words.api.redirect],
+    [399, 'redirect', words.api.redirect],
+    [400, 'server', words.api.unexpected(400)],
+  ])('F48: ответ %i — вид %s', async (code, kind, text) => {
+    answer('GET', '/api/health', () => new Response(null, { status: code }));
+    const error = await failure(getHealth());
+    expect([error.kind, error.status, error.message]).toEqual([kind, code, text]);
   });
 });

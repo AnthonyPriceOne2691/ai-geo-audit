@@ -31,7 +31,6 @@ function pathOf(input: RequestInfo | URL): string {
 /** Ответ под сигналом запроса: отмена рвёт ожидание той же причиной, что у настоящего `fetch`. */
 function underSignal(work: Promise<Response>, signal?: AbortSignal | null): Promise<Response> {
   if (!signal) return work;
-  if (signal.aborted) return Promise.reject(signal.reason as Error);
   return new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => reject(signal.reason as Error), { once: true });
     work.then(resolve, reject);
@@ -39,6 +38,8 @@ function underSignal(work: Promise<Response>, signal?: AbortSignal | null): Prom
 }
 
 const fakeFetch: typeof fetch = async (input, init = {}) => {
+  // Отменённый до вызова запрос не уходит — как у настоящего `fetch`: отказ причиной, записи нет.
+  if (init.signal?.aborted) throw init.signal.reason as Error;
   const method = (init.method ?? 'GET').toUpperCase();
   const path = pathOf(input);
   seen.push({ method, path, headers: new Headers(init.headers), init });

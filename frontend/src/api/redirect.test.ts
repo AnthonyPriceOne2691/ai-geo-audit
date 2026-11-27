@@ -31,6 +31,7 @@ function listen(handler: RequestListener): Promise<string> {
   });
 }
 
+/** F48: ответ на перенаправление — ошибка клиента; иное — красное здесь. */
 async function redirectError(): Promise<ApiError> {
   const error: unknown = await getJson('/api/health', anyBody).then(
     () => undefined,

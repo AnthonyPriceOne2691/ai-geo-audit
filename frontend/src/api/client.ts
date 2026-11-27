@@ -75,20 +75,28 @@ function checkPath(path: string): void {
 
 const seconds = (ms: number): number => Math.round(ms / 1000);
 
+/** Отмена по сигналу: сразу, если он уже отменён, иначе — по событию; возврат снимает слушателя. */
+function whenAborted(signal: AbortSignal, run: () => void): () => void {
+  if (signal.aborted) {
+    run();
+    return () => undefined;
+  }
+  signal.addEventListener('abort', run);
+  return () => signal.removeEventListener('abort', run);
+}
+
 /**
  * Свой сигнал запроса: отмена вызывающего и свой таймер предела собраны вручную — `AbortSignal.any`
  * нет в jsdom и у браузеров нижней границы, а таймер двигают управляемые часы теста (F27, F28).
+ * Причину своя отмена не несёт: что случилось, `failure()` читает по самим сигналам.
  */
 function linkSignals(caller: AbortSignal | undefined, timeoutMs: number) {
   const controller = new AbortController();
-  const onAbort = (): void => controller.abort(caller?.reason);
-  if (caller?.aborted) onAbort();
-  else caller?.addEventListener('abort', onAbort, { once: true });
-  const reason = new DOMException(words.api.timeout(seconds(timeoutMs)), 'TimeoutError');
-  const timer = setTimeout(() => controller.abort(reason), timeoutMs);
+  const off = caller ? whenAborted(caller, () => controller.abort()) : () => undefined;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const done = (): void => {
     clearTimeout(timer);
-    caller?.removeEventListener('abort', onAbort);
+    off();
   };
   return { signal: controller.signal, done };
 }
@@ -96,16 +104,8 @@ function linkSignals(caller: AbortSignal | undefined, timeoutMs: number) {
 /** Тело ответа под тем же сигналом: обрыв и предел посреди тела — как до ответа (F26, F27). */
 function readText(response: Response, signal: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    const onAbort = (): void => reject(signal.reason);
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-    signal.addEventListener('abort', onAbort, { once: true });
-    response
-      .text()
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener('abort', onAbort));
+    const off = whenAborted(signal, () => reject(signal.reason));
+    response.text().then(resolve, reject).finally(off);
   });
 }
 
@@ -147,9 +147,8 @@ function refusalError(response: Response, body: unknown): ApiError {
   return new ApiError(kind, body.detail, { ...details, refusal });
 }
 
-/** Сбой без ответа: отмена вызывающего — как есть, предел, обрыв связи (F26–F28). */
+/** Сбой: отмена вызывающего — как есть, предел, обрыв связи; прочее — как есть (F26–F28). */
 function failure(error: unknown, caller: AbortSignal | undefined, own: AbortSignal, ms: number) {
-  if (error instanceof ApiError) return error;
   if (caller?.aborted) return caller.reason as unknown;
   if (own.aborted) return new ApiError('timeout', words.api.timeout(seconds(ms)));
   if (error instanceof TypeError) return new ApiError('no-response', words.api.noResponse);
