@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import inspect
 import re
+from pathlib import Path
 
 from deploy_fakes import ROOT, tool
 
@@ -21,7 +23,8 @@ def test_a185_memo_commands_are_the_script_commands() -> None:
 
 def test_a185_memo_owner_names_roots_and_floors_are_the_script_ones() -> None:
     """A185, A182: имена владельца — ровно «задаёт владелец» блока «сервер» образца, по порядку;
-    пути таблицы — корни и файлы ядра; пороги памяти и места — те, что судит `deploy.py check`."""
+    пути таблицы — корни и файлы ядра, владелец и права — умолчания функции файлов и контекста;
+    пороги памяти и места — те, что судит `deploy.py check`."""
     text = MEMO.read_text(encoding="utf-8")
     sample = (ROOT / ".env.example").read_text(encoding="utf-8")
     block = sample.split("## задаёт владелец\n", 1)[1].split("## ", 1)[0]
@@ -30,8 +33,14 @@ def test_a185_memo_owner_names_roots_and_floors_are_the_script_ones() -> None:
     paths = tool.Paths()
     roots = [paths.service, paths.env_file, paths.deploy_dir, paths.backups, paths.etc]
     roots += [paths.master_key, paths.incoming]
-    rows = re.findall(r"^\| `([^`]+)` \|", text, re.MULTILINE)
-    assert [row.rstrip("/") for row in rows] == [str(path) for path in roots]
+    rows = re.findall(r"^\| `([^`]+)` \| ([^|]+) \| ([^|]+) \|", text, re.MULTILINE)
+    assert [row[0].rstrip("/") for row in rows] == [str(path) for path in roots]
+    files = (tool.Files.write, tool.Files.mkdir)
+    write, mkdir = (inspect.signature(f).parameters["mode"].default for f in files)
+    root = {0: "root"}[tool.Context.__dataclass_fields__["owner"].default]
+    want = {paths.env_file: (root, f"{write:o}")}
+    want |= dict.fromkeys((paths.deploy_dir, paths.etc, paths.incoming), (root, f"{mkdir:o}"))
+    assert {Path(row[0]): row[1:] for row in rows if Path(row[0]) in want} == want
     assert f"| `{paths.master_key}` | uid {tool.API_UID} | 400 |" in text
     floors = (tool.MEMORY_FLOOR, tool.DISK_FLOOR)
     assert all(f"не меньше {floor} ГБ" in text for floor in floors)
