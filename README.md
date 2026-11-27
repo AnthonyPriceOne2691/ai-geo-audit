@@ -24,10 +24,14 @@ React с Vite и Mantine, pytest, docker compose.
 
 ## Гейты качества кода
 
-- Гейты формы — канон CQG `cqg@3.30`, половина Python; фронтовые половины — следующей поставкой.
-  Хуки — `.pre-commit-config.yaml`, скрипты гейтов — `scripts/lint/`, настройки ruff, mypy,
-  pytest и покрытия — `backend/pyproject.toml`, слои — `backend/.importlinter`.
+- Гейты формы — канон CQG `cqg@3.30`, обе половины: Python и TS (с поставки В1б). Хуки —
+  `.pre-commit-config.yaml`, скрипты гейтов — `scripts/lint/`, настройки ruff, mypy, pytest и
+  покрытия — `backend/pyproject.toml`, слои — `backend/.importlinter` и `.dependency-cruiser.cjs`,
+  порчи TS — `stryker.config.json`, eslint — `frontend/eslint.config.js`.
 - Инструменты — dev-группа uv: `cd backend && uv sync --frozen`. Версия uv — 0.11.26, другая отказывает.
+- Инструменты фронта — `cd frontend && npm ci` (Node 24): хуки TS (`eslint`, ратчет
+  предупреждений, `prettier`) и TS-половины гейтов берут их из `frontend/node_modules`; без них
+  хуки красные.
 - Каталог хуков git у клона один на все рабочие копии: в нём заглушки `scripts/hooks/stub.sh`,
   ставит их `bash scripts/hooks/install-stubs.sh` — по слову проверяющего. Заглушка зовёт
   `scripts/hooks/run-hooks.sh` той копии, где идёт коммит или push, а он — pre-commit из её
@@ -35,17 +39,24 @@ React с Vite и Mantine, pytest, docker compose.
 - Хуки руками, из своей копии: `uv run --project backend pre-commit run --all-files`, стадия
   pre-push — с `--hook-stage pre-push`. Все ли гейты подключены —
   `bash scripts/lint/check_gate_coverage.sh`; судят ли они — `python3 scripts/lint/contour_doctor.py`.
-- Аудит зависимостей Python ходит в сеть: у его хука `stages: [manual]`, место — CI; руками —
-  `LINT_FE_DIR=.frontend-not-here bash scripts/lint/check_deps_audit.sh`.
+- Аудит зависимостей ходит в сеть: у его хука `stages: [manual]`, место — CI; руками —
+  `bash scripts/lint/check_deps_audit.sh` (Python — по `uv.lock`, JS — по замку фронта; снимок JS
+  — 11 умеренных dev-зависимостей, A389).
+- Порчи TS — CI на запросе (джоба `frontend`); руками, из корня копии:
+  `LINT_PY_SRC=нет-такого-каталога bash scripts/lint/check_mutation_gate.sh`. Песочница и отчёт —
+  `.stryker-tmp/` и `reports/stryker/` в корне.
 - Гейты видят только файлы в индексе: новый файл — `git add <файл>`, потом прогон.
 
 ## CI на GitHub
 
 - `.github/workflows/quality.yml` — джобы `gates` (pre-commit и гейты), `delivery` (фазовый гейт,
   подпись необратимого) и `tests` (служба Postgres по дайджесту, сверка замка, набор с покрытием,
-  покрытие изменённого, мутации — только на запросе); `main-guard.yml` — задача «RED on main» на
-  красный прогон quality после push в main. Правила держат `backend/tests/test_ci_contract.py` и
-  `backend/tests/test_tests_job.py`.
+  покрытие изменённого, мутации — только на запросе) и `frontend` (Node из `frontend/.nvmrc`,
+  `npm ci`, `npm run check`, порчи TS — только на запросе); `main-guard.yml` — задача «RED on
+  main» на красный прогон quality после push в main. Правила держат
+  `backend/tests/test_ci_contract.py`, `backend/tests/test_ci_contract_front.py` и
+  `backend/tests/test_tests_job.py`. Обязательную проверку `frontend` в защите main включает
+  ведущая после слияния В1б.
 - Будущая джоба образа или выката идёт после проверок: `needs: [gates, delivery, tests]`.
 - Гейт мержа — `scripts/merge_guard.sh`: слитое с main дерево (pre-commit, ратчет снимков, гейт
   поставки) и последним — статус CI ветки. Из рабочей копии поставки — только проверка:

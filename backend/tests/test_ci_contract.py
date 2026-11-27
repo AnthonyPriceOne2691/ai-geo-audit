@@ -30,8 +30,8 @@ UV_LOCK = ROOT / "backend" / "uv.lock"
 STATUS = ROOT / "delivery" / "active" / "STATUS.md"
 #: Пакеты моложе отсечки, которые уже стояли в замке до правила (решение проверяющего 19.11).
 LOCK_EXCEPTIONS = {"sqlalchemy", "pydantic-settings", "pytest-asyncio"}
-#: Шаг аудита смотрит JS-половину в несуществующий каталог: npm в CI — поставка В1б.
-AUDIT_FE_DIR = ".frontend-not-here"
+#: Шаг аудита судит обе половины: JS — по замку фронта (В1б, A389), каталог — фронт.
+AUDIT_FE_DIR = "frontend"
 #: A100: значение `uses` — `владелец/репо[/путь]@<полный хеш коммита>`; судится разобранное.
 PINNED = re.compile(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}")
 #: A100: версия — комментарием на строке значения `uses`. Единственная регулярка по тексту файла:
@@ -148,16 +148,16 @@ def strict_problems(workflow: dict[Any, Any]) -> list[str]:
 
 
 def install_problems(workflow: dict[Any, Any], uv_version: str) -> list[str]:
-    """A99, A123: в `run:` нет установок, кроме закреплённых, что стоят в файлах сейчас, — uv
-    точной версии пакетом и dev-группа из замка. Закреплённое вырезается целой командой, остаток
-    судится."""
+    """A99, A123, A382: в `run:` нет установок, кроме закреплённых, что стоят в файлах сейчас, — uv
+    точной версии пакетом, dev-группа из замка и фронт из замка `npm ci`. Закреплённое вырезается
+    целой командой, остаток судится."""
     pinned = re.compile(
-        rf"(?:python -m pip install uv=={re.escape(uv_version)}|uv sync --frozen)"
+        rf"(?:python -m pip install uv=={re.escape(uv_version)}|uv sync --frozen|npm ci)"
         r"(?=[ \t]*(?:$|&&|;)|[ \t]+#)"
     )
     return [
-        f"установка: {place} — `{line.strip()}`; закреплены только uv=={uv_version}"
-        " и `uv sync --frozen`"
+        f"установка: {place} — `{line.strip()}`; закреплены только uv=={uv_version},"
+        " `uv sync --frozen` и `npm ci`"
         for place, run in runs(workflow)
         for line in run.replace("\\\n", " ").splitlines()
         if INSTALL.search(pinned.sub("", line))
@@ -327,9 +327,91 @@ def declared_problems(workflow: dict[Any, Any]) -> list[str]:
     return [] if always else ["объявления n/a: у шага причин нет `if: always()`"]
 
 
+#: A381, A382: команды фронта во `frontend/` — установка по замку и цепочка целиком.
+FRONT_COMMANDS = {"gates": ("npm ci",), "frontend": ("npm ci", "npm run check")}
+
+
+def front_steps_problems(name: str, found: list[dict[Any, Any]]) -> list[str]:
+    """A381, A382, L23: Node — из `frontend/.nvmrc`; команды — целиком во `frontend/`; шаг с npm не
+    глотает красное ни `|| true`, ни `continue-on-error`."""
+    nodes = [s.get("with", {}) for s in found if "actions/setup-node" in str(s.get("uses", ""))]
+    problems = (
+        []
+        if nodes == [{"node-version-file": "frontend/.nvmrc"}]
+        else [f"{name}: Node не из .nvmrc"]
+    )
+    commands = [(s.get("working-directory"), str(s.get("run", "")).strip()) for s in found]
+    problems += [
+        f"{name}: нет шага `{command}` во frontend/"
+        for command in FRONT_COMMANDS[name]
+        if ("frontend", command) not in commands
+    ]
+    return problems + [
+        f"{name}: шаг «{s.get('name', '')}» глотает красное"
+        for s in found
+        if "npm" in str(s.get("run", ""))
+        and (s.get("continue-on-error") or re.search(r"\|\|\s*(?:true|:)", str(s["run"])))
+    ]
+
+
+def frontend_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A381, A382, A386: фронт ставится в `gates` до pre-commit (хуки TS) и своей джобой
+    `frontend`; порчи TS — только на запросе, отдельно от Python, бюджет 300 с, порог 60 %."""
+    problems = []
+    for name in FRONT_COMMANDS:
+        found = workflow["jobs"].get(name, {}).get("steps", [])
+        problems += front_steps_problems(name, found) if found else [f"{name}: джобы нет"]
+    order = [str(s.get("name", s.get("run", ""))) for s in workflow["jobs"]["gates"]["steps"]]
+    front = next((n for n, step in enumerate(order) if step == "Фронт из замка"), None)
+    hooks = next((n for n, step in enumerate(order) if step.startswith("pre-commit")), None)
+    if front is None or hooks is None or front > hooks:
+        problems.append("gates: фронт не стоит до pre-commit — хуки TS без node_modules")
+    mutation = [
+        s
+        for s in workflow["jobs"].get("frontend", {}).get("steps", [])
+        if "check_mutation_gate.sh" in str(s.get("run", ""))
+    ]
+    if len(mutation) != 1:
+        return [*problems, "frontend: шага порч TS нет"]
+    env = mutation[0].get("env", {})
+    checks = [
+        (
+            mutation[0].get("if") == "github.event_name == 'pull_request'",
+            "порчи TS не только на запросе",
+        ),
+        (not (ROOT / str(env.get("LINT_PY_SRC", "backend/src"))).exists(), "порчи TS судят Python"),
+        (env.get("BUDGET_SEC") == "300", "бюджет порч TS не 300 с"),
+        (env.get("MIN_KILLED") == "60", "порог порч TS не 60 %"),
+    ]
+    return problems + [f"frontend: {message}" for ok, message in checks if not ok]
+
+
+def audit_step_problems(workflow: dict[Any, Any]) -> list[str]:
+    """A102, A103, A389, находка 3 второй проверяющей: шаг аудита в `gates` — предохранители обеих
+    половин и итог кодом гейта: непроверенная половина у гейта — «проверено НЕ ВСЁ» с кодом 0."""
+    found = [
+        str(step.get("run", ""))
+        for step in workflow["jobs"].get("gates", {}).get("steps", [])
+        if "check_deps_audit.sh" in str(step.get("run", ""))
+    ]
+    if len(found) != 1:
+        return [f"аудит: шагов гейта аудита в gates {len(found)}, ждём 1"]
+    guard = r'grep -q "{}-зависимости не проверены"; then\n[^\n]*::error::[^\n]*\n\s*exit 1\n\s*fi'
+    problems = [
+        f"аудит: нет предохранителя «{half}-зависимости не проверены»"
+        for half in ("python", "js")
+        if not re.search(guard.format(half), found[0])
+    ]
+    if not re.search(r'^exit "\$rc"$', found[0], re.M):
+        problems.append('аудит: итог шага — не `exit "$rc"`')
+    return problems
+
+
 def quality_check(text: str) -> list[str]:
     workflow = yaml.safe_load(text)
     return [
+        *audit_step_problems(workflow),
+        *frontend_problems(workflow),
         *declared_problems(workflow),
         *uses_problems(text, workflow),
         *token_problems(workflow, {}),
@@ -389,14 +471,17 @@ def test_a99_coverage_measures_src_and_migrations_in_subprocesses() -> None:
 
 
 def test_a99_toolchain_step_expects_every_gate_tool() -> None:
-    """A99: шаг инструментов ждёт и `pip-audit`, `mutmut`, `vulture`, `lint-imports`."""
+    """A99, A382: шаг инструментов ждёт и `pip-audit`, `mutmut`, `vulture`, `lint-imports`; с В1б —
+    и инструменты TS-половин из `frontend/node_modules` после `npm ci`."""
     run = next(
         str(step["run"])
         for _, _, step in steps(load(QUALITY))
         if str(step.get("name", "")).startswith("Инструменты гейтов")
     )
     tools = ("detect-secrets", "ruff", "mypy", "pip-audit", "mutmut", "vulture", "lint-imports")
-    assert [tool for tool in tools if f"expect {tool}" not in run] == []
+    front = ("eslint", "prettier", "depcruise", "knip", "jscpd", "stryker")
+    missing = [tool for tool in tools if f"expect {tool}" not in run]
+    assert missing + [tool for tool in front if f"expect_fe {tool}" not in run] == []
 
 
 def test_a99_a100_a101_a103_a123_quality_workflow_keeps_the_contract() -> None:
@@ -497,13 +582,13 @@ QUALITY_COPIES = [
         "A100-secret-after-hash-in-run-block",
         r"run: bash scripts/lint/check_gate_coverage.sh",
         "run: |\n          bash scripts/lint/check_gate_coverage.sh # ${{ secrets.X }}",
-        "секреты: jobs/gates/steps/7/run",
+        "секреты: jobs/gates/steps/9/run",
     ),
     (
         "A100-secrets-whole-context",
         r"run: bash scripts/lint/check_gate_coverage.sh",
         "run: echo '${{ toJSON(secrets) }}'",
-        "секреты: jobs/gates/steps/7/run",
+        "секреты: jobs/gates/steps/9/run",
     ),
     (
         "A100-head-ref-upper-case",
@@ -527,7 +612,7 @@ QUALITY_COPIES = [
         "A103-strict-off-after-quoted-hash",
         r"run: bash scripts/lint/check_gate_coverage.sh",
         "run: |\n          echo ' #'; STRICT=0 bash scripts/lint/check_gate_coverage.sh",
-        "STRICT: jobs/gates/steps/7/run",
+        "STRICT: jobs/gates/steps/9/run",
     ),
     (
         "A103-job-without-timeout",
@@ -643,7 +728,7 @@ def test_a99_copy_install_in_run_is_red_and_named(command: str) -> None:
     text = QUALITY.read_text(encoding="utf-8")
     spoiled = text.replace(f"run: {COVERAGE}", f"run: {command} && {COVERAGE}", 1)
     assert spoiled != text, f"в quality.yml нет места порчи `run: {COVERAGE}`"
-    named = f"установка: jobs/gates/steps/7/run — `{command} && {COVERAGE}`"
+    named = f"установка: jobs/gates/steps/9/run — `{command} && {COVERAGE}`"
     assert named in "\n".join(quality_check(spoiled))
 
 

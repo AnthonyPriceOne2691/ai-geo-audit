@@ -1,7 +1,8 @@
 name: quality
 
 # Шаблон канона cqg@3.30 с адаптациями — scripts/lint/adapted.json, запись `.github/workflows/quality.yml`.
-# Правила этого файла держит тест контракта backend/tests/test_ci_contract.py (A99–A101, A103, A123).
+# Правила этого файла держит тест контракта backend/tests/test_ci_contract.py (A99–A101, A103, A123;
+# фронт — A381, A382, A386, A389).
 on:
   pull_request:
   push:
@@ -72,19 +73,33 @@ jobs:
           python -m pip install uv==0.11.26
           cd backend && uv sync --frozen
 
+      # Фронт для хуков TS и TS-половин гейтов (В1б): Node — из frontend/.nvmrc, у фронта
+      # engine-strict (A382); установка — `npm ci` по замку, скрипты установки выключает
+      # frontend/.npmrc (F17).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+      - name: Фронт из замка
+        working-directory: frontend
+        run: npm ci
+
       # Пропуск гейта из-за неставшего инструмента в CI — красное, а не «честный пропуск» (§8.3).
       - name: Инструменты гейтов на месте (иначе пропуск читается как успех)
         run: |
           missing=""
           expect() { [ -x "backend/.venv/bin/$1" ] || missing="$missing $1"; }
+          expect_fe() { [ -x "frontend/node_modules/.bin/$1" ] || missing="$missing $1"; }
           expect detect-secrets; expect ruff; expect mypy; expect pip-audit
           expect mutmut; expect vulture; expect lint-imports
+          expect_fe eslint; expect_fe prettier; expect_fe depcruise; expect_fe knip
+          expect_fe jscpd; expect_fe stryker
           if [ -n "$missing" ]; then
             echo "::error::инструменты гейтов не поставились:$missing"
             echo "Гейты ниже уйдут в честный пропуск, и джоба будет ВЫГЛЯДЕТЬ проверенной."
             exit 1
           fi
           echo "toolchain: на месте — detect-secrets ruff mypy pip-audit mutmut vulture lint-imports"
+          echo "toolchain фронта: на месте — eslint prettier depcruise knip jscpd stryker"
 
       # `--verbose`: без него pre-commit глотает «просмотрено N» прошедших хуков (A98).
       - name: pre-commit (all files, STRICT=1)
@@ -120,12 +135,10 @@ jobs:
         if: always()
         run: python scripts/lint/check_dead_code.py
 
-      # JS-половина — поставка В1б: шаг смотрит фронт в несуществующий каталог (A99, A102).
-      # Python-половина, не проверенная по любой причине, — красное (A103).
-      - name: Vulnerable dependencies (python; JS — поставка В1б)
+      # Обе половины: Python (A102, A103) и JS по замку фронта (В1б, A389). Половина, не
+      # проверенная по любой причине, — красное.
+      - name: Vulnerable dependencies (python + js)
         if: always()
-        env:
-          LINT_FE_DIR: .frontend-not-here
         run: |
           set +e
           out=$(bash scripts/lint/check_deps_audit.sh 2>&1)
@@ -134,6 +147,10 @@ jobs:
           printf '%s\n' "$out"
           if printf '%s' "$out" | grep -q "python-зависимости не проверены"; then
             echo "::error::python-половина аудита зависимостей не проверена — шаг красный (A103)"
+            exit 1
+          fi
+          if printf '%s' "$out" | grep -q "js-зависимости не проверены"; then
+            echo "::error::JS-половина аудита зависимостей не проверена — шаг красный (A389)"
             exit 1
           fi
           exit "$rc"
@@ -494,3 +511,62 @@ jobs:
         run: python3 scripts/image_scan.py run --work "$RUNNER_TEMP/scan" --trivy "$RUNNER_TEMP/trivy/trivy"
       - name: Опись CycloneDX (A127)
         run: python3 scripts/image_scan.py sbom --work "$RUNNER_TEMP/scan" --trivy "$RUNNER_TEMP/trivy/trivy"
+
+  # Цепочка фронта — своей джобой вместо шагов §8.3 в gates (адаптация, scripts/lint/adapted.json):
+  # идёт параллельно, обязательная проверка `frontend` отвечает на каждом запросе (В1б, A381).
+  frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0              # база диффа порч TS
+          persist-credentials: false  # токен не остаётся в .git/config (A100)
+      - name: Diff base (одна на джобу, отказ — вслух)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          else
+            before="${{ github.event.before }}"
+            zero="0000000000000000000000000000000000000000"
+            if [ -n "$before" ] && [ "$before" != "$zero" ] \
+               && git cat-file -e "${before}^{commit}" 2>/dev/null; then
+              base="$before"
+            else
+              default="${{ github.event.repository.default_branch }}"
+              base="$(git merge-base "origin/$default" HEAD 2>/dev/null || true)"
+              if [ -z "$base" ] || [ "$base" = "$(git rev-parse HEAD)" ]; then
+                echo "::error::база диффа не определима (before=$before, default=$default):"\
+                     "первый push репозитория или переписанная история." \
+                     "Открой PR или сделай второй коммит — гейт не имеет права судить пустоту."
+                exit 1
+              fi
+            fi
+          fi
+          echo "BASE=$base" >> "$GITHUB_ENV"
+          echo "база диффа: $base"
+
+      # Node — из frontend/.nvmrc: у фронта engine-strict, на другой версии `npm ci` отказывает (A382).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+      # Установка — `npm ci` по замку; скрипты установки выключает frontend/.npmrc (A382, F17).
+      - name: Фронт из замка
+        working-directory: frontend
+        run: npm ci
+      # Шесть шагов цепочки целиком: красное любого — красная джоба (A381, L23).
+      - name: Цепочка фронта (npm run check)
+        working-directory: frontend
+        run: npm run check
+      # Порчи TS — только на запросе, отдельным прогоном TS-половины: при существующем LINT_PY_SRC
+      # гейт судит только Python (mutation_py.sh:13–22). Без правки frontend/src гейт говорит «судить
+      # нечего» словами (A386).
+      - name: Mutation testing (TS)
+        if: github.event_name == 'pull_request'
+        env:
+          LINT_PY_SRC: нет-такого-каталога
+          MUTATION_WORKERS: "4"
+          BUDGET_SEC: "300"
+          MIN_KILLED: "60"
+        run: bash scripts/lint/check_mutation_gate.sh
