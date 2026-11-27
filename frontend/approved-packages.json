@@ -14,7 +14,7 @@
     "@stryker-mutator/vitest-runner": "раннер Stryker на тестах Vitest — единственный, гейт берёт его из конфига",
     "@testing-library/jest-dom": "проверки DOM в тестах",
     "@testing-library/react": "рендер компонентов в тестах",
-    "@testing-library/user-event": "нажатия как у человека в тестах экрана: «Спросить ещё раз» (F32, F36)",
+    "@testing-library/user-event": "нажатия как у человека в тестах экрана: «Спросить ещё раз» (F32, F35, F36)",
     "@types/node": "типы Node для конфигов и теста инструментов",
     "@types/react": "типы React",
     "@types/react-dom": "типы react-dom",

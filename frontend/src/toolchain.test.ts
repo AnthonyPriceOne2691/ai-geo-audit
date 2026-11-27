@@ -179,7 +179,7 @@ describe('пакеты фронта', () => {
     ).toEqual([]);
   });
 
-  it('F17: поля package.json ровно по списку — зависимостей в других полях нет', () => {
+  it('F17, F51: поля package.json ровно по списку — overrides только под тестом подстановок', () => {
     expect(Object.keys(readJson<Record<string, unknown>>('package.json')).sort()).toEqual(
       PACKAGE_FIELDS,
     );
@@ -202,7 +202,7 @@ describe('пакеты фронта', () => {
     );
   });
 
-  it('F17: overrides — подстановки по одобренному списку, точной версией, без псевдонима', () => {
+  it('F17, F51: overrides — подстановки по одобренному списку, точной версией, без псевдонима', () => {
     const found = substitutions(readJson<PackageJson>('package.json').overrides ?? {});
     const loose = found.filter(([, v]) => typeof v !== 'string' || !/^\d+\.\d+\.\d+$/.test(v));
     expect(
