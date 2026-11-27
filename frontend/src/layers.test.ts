@@ -69,8 +69,14 @@ const COPIES: [string, (src: string) => void, string[]][] = [
     ['no-test-helpers-in-app'],
   ],
   [
-    'клиент API берёт страницу заглушки — F52',
+    // Заглушка берёт блок связи, тот — клиент: копия спеки — ещё и цикл, как у темы выше.
+    'клиент API берёт страницу заглушки — копия спеки F52, она же цикл',
     (src) => append(src, 'api/client.ts', "import '../StubPage';"),
+    ['api-below-pages', 'no-circular'],
+  ],
+  [
+    'новый модуль слоя API берёт страницу заглушки, цикла нет — F52',
+    (src) => writeFileSync(join(src, 'api', 'probe.ts'), "import '../StubPage';\n"),
     ['api-below-pages'],
   ],
   [

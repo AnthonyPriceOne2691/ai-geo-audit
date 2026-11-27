@@ -1,6 +1,7 @@
 // Обвязка тестов: матчеры DOM, ожидание экрана, заглушки matchMedia и ResizeObserver, уборка после
 // теста.
 import '@testing-library/jest-dom/vitest';
+import { focusManager, onlineManager } from '@tanstack/react-query';
 import { cleanup, configure } from '@testing-library/react';
 import { afterEach, beforeEach } from 'vitest';
 
@@ -52,6 +53,10 @@ afterEach(() => {
   // Менеджер схемы стоит в общих провайдерах: выбор одного теста иначе достался бы следующему.
   // Тесты в среде node окна не имеют.
   if (typeof window !== 'undefined') window.localStorage.removeItem(SCHEME_KEY);
+  // Сеть и фокус у библиотеки кэша — одни на модуль: `offline` одного теста иначе достался бы
+  // следующему (F35).
+  onlineManager.setOnline(true);
+  focusManager.setFocused(undefined);
   // Промахи — последними: их красное не срывает уборку выше (F30).
   checkMisses();
 });

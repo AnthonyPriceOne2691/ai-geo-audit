@@ -62,8 +62,11 @@ const isRefusal = (body: unknown): body is Refusal =>
   typeof (body as Refusal).kind === 'string' &&
   typeof (body as Refusal).retry === 'boolean';
 
-/** Адрес для разбора пути: путь судится так, как его разберёт браузер перед запросом (F21). */
-const PARSE_BASE = 'http://api.invalid';
+/**
+ * Адрес для разбора пути — не адрес в сети: путь судится так, как его разберёт браузер перед
+ * запросом (F21). Узел без точки: в сборке он не выглядит узлом сети (оракул `check-dist.mjs`).
+ */
+const PARSE_BASE = 'http://x';
 
 /** Управляющий знак: табуляцию и переводы строк разбор URL выкидывает молча, NUL по краям срезает. */
 const CONTROL = /\p{Cc}/u;
