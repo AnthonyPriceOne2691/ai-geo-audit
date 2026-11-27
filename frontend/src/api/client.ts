@@ -62,13 +62,22 @@ const isRefusal = (body: unknown): body is Refusal =>
   typeof (body as Refusal).kind === 'string' &&
   typeof (body as Refusal).retry === 'boolean';
 
-/** Шаг пути `.` или `..`, и в коде процента: URL их схлопнет и уведёт путь (F21). */
-const DOT_STEP = /^(?:\.|%2e){1,2}$/i;
+/** Адрес для разбора пути: путь судится так, как его разберёт браузер перед запросом (F21). */
+const PARSE_BASE = 'http://api.invalid';
 
-/** Только наш путь: от `/api/`, без узла, обратной черты и шагов назад — иначе отказ до запроса. */
+/** Управляющий знак: табуляцию и переводы строк разбор URL выкидывает молча, NUL по краям срезает. */
+const CONTROL = /\p{Cc}/u;
+
+/**
+ * Только наш путь — тот, что уйдёт в сеть: от `/api/`, без управляющих знаков, и разбор URL его не
+ * меняет. Шаги `.` и `..` (и в коде процента), обратная черта, пробел по краям — всё, что разбор
+ * схлопывает, срезает или кодирует, расходится с исходным, и запроса нет. Путь от `/api/` — от
+ * корня страницы, без узла: источник — её собственный (F21).
+ */
 function checkPath(path: string): void {
-  const steps = (path.split(/[?#]/)[0] ?? '').split('/');
-  if (!path.startsWith('/api/') || path.includes('\\') || steps.some((s) => DOT_STEP.test(s))) {
+  const raw = path.split(/[?#]/)[0] ?? '';
+  const ours = raw.startsWith('/api/') && !CONTROL.test(path);
+  if (!ours || new URL(path, PARSE_BASE).pathname !== raw) {
     throw new ApiError('path', words.api.path);
   }
 }
@@ -155,13 +164,14 @@ function failure(error: unknown, caller: AbortSignal | undefined, own: AbortSign
   return error;
 }
 
-/** `GET` к нашему API: данные нужного вида — или ошибка клиента словами. */
-export async function getJson<T>(
-  path: string,
-  isShape: (body: unknown) => body is T,
-  options: GetOptions = {},
-): Promise<T> {
-  checkPath(path);
+/** Ответ сервиса после обмена: код и тело — JSON или знак «не JSON». */
+interface Answer {
+  status: number;
+  body: unknown;
+}
+
+/** Обмен с сетью: код и тело ответа сервиса; отказ, перенаправление и сбой — ошибкой клиента. */
+async function exchange(path: string, options: GetOptions): Promise<Answer> {
   const timeoutMs = options.timeoutMs ?? TIMEOUT_MS;
   const link = linkSignals(options.signal, timeoutMs);
   try {
@@ -178,13 +188,35 @@ export async function getJson<T>(
     }
     const body = await jsonBody(response, link.signal);
     if (!response.ok) throw refusalError(response, body);
-    if (body === NOT_JSON || !isShape(body)) {
-      throw new ApiError('not-service', words.api.notService, { status: response.status });
-    }
-    return body;
+    return { status: response.status, body };
   } catch (error) {
     throw failure(error, options.signal, link.signal, timeoutMs);
   } finally {
     link.done();
   }
+}
+
+/** Вид тела по проверке вызывающего: она вне обмена с сетью, и её сбой — не обрыв связи (F29). */
+function fits<T>(isShape: (body: unknown) => body is T, body: unknown): body is T {
+  let ok = false;
+  try {
+    ok = isShape(body);
+  } catch {
+    // бросила на чужом теле — вид не тот; `TypeError` здесь — не `TypeError` обрыва у `fetch`
+  }
+  return ok;
+}
+
+/** `GET` к нашему API: данные нужного вида — или ошибка клиента словами. */
+export async function getJson<T>(
+  path: string,
+  isShape: (body: unknown) => body is T,
+  options: GetOptions = {},
+): Promise<T> {
+  checkPath(path);
+  const { status, body } = await exchange(path, options);
+  if (body === NOT_JSON || !fits(isShape, body)) {
+    throw new ApiError('not-service', words.api.notService, { status });
+  }
+  return body;
 }
