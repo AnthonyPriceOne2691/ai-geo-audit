@@ -1,6 +1,7 @@
 // ESLint flat config (ESLint 9+).
 // Шаблон канона CQG `<frontend>/eslint.config.js` с объявленной адаптацией (решение
-// проверяющего 2026-11-18, В2; объявление в `scripts/lint/adapted.json` — с волной В1):
+// проверяющего 2026-11-18, В2; объявление в `scripts/lint/adapted.json` — с В1б):
+// - блок З14 для `src/**/*.{ts,tsx}`: HTML строкой в разметку — ошибка (В1б, A391);
 // - блок `scripts/**/*.mjs` с глобальными именами Node: оракул сборки — скрипт Node без
 //   зависимостей, каталога скриптов в шаблоне нет;
 // - блок `public/**/*.js` с глобальными именами браузера: скрипт схемы — классический скрипт до
@@ -78,6 +79,41 @@ export default ts.config(
           'newlines-between': 'always',
           groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
         },
+      ],
+    },
+  },
+
+  // Адаптация: правило З14 описи защит — HTML строкой в разметку нельзя, текст выводится только
+  // как текст (UI_RULES.md, «Текст»; В1б, A391). Отдельным блоком: тело шаблона выше не тронуто.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...[
+          "JSXAttribute[name.name='dangerouslySetInnerHTML']",
+          'AssignmentExpression > MemberExpression.left[property.name=/^(inner|outer)HTML$/]',
+          'AssignmentExpression > MemberExpression.left[property.value=/^(inner|outer)HTML$/]',
+          "CallExpression[callee.property.name='insertAdjacentHTML']",
+          "CallExpression[callee.property.value='insertAdjacentHTML']",
+          "CallExpression[callee.object.name='document'][callee.property.name=/^write(ln)?$/]",
+          "CallExpression[callee.object.property.name='document'][callee.property.name=/^write(ln)?$/]",
+          // Сверх образцов спеки — решение ведущей 2026-11-26: разбор строки в узлы, превью
+          // страницы в рамке и присваивание свойств пачкой.
+          'CallExpression[callee.property.name=/^(setHTMLUnsafe|createContextualFragment)$/]',
+          'CallExpression[callee.property.value=/^(setHTMLUnsafe|createContextualFragment)$/]',
+          "AssignmentExpression > MemberExpression.left[property.name='srcdoc']",
+          "AssignmentExpression > MemberExpression.left[property.value='srcdoc']",
+          "JSXAttribute[name.name='srcDoc']",
+          // `srcdoc` атрибутом: имя атрибута HTML приводит к нижнему регистру — сверка без регистра.
+          "CallExpression[callee.property.name='setAttribute'][arguments.0.value=/^srcdoc$/i]",
+          "CallExpression[callee.property.value='setAttribute'][arguments.0.value=/^srcdoc$/i]",
+          "CallExpression[callee.object.name='Object'][callee.property.name='assign'] > ObjectExpression > Property[key.name=/^(inner|outer)HTML$/]",
+          "CallExpression[callee.object.name='Object'][callee.property.name='assign'] > ObjectExpression > Property[key.value=/^(inner|outer)HTML$/]",
+        ].map((selector) => ({
+          selector,
+          message: 'З14: HTML строкой в разметку нельзя — только текст (UI_RULES.md, «Текст»)',
+        })),
       ],
     },
   },

@@ -93,7 +93,16 @@ def job_contract_problems(workflow: dict[Any, Any]) -> list[str]:
 
 #: Обязательные проверки main после хода 3 — слово владельца 2026-11-23T11:29Z (A116, A289) —
 #: и доли, сведённые суммой; других джоб нет.
-JOBS = {"gates", "delivery", "tests", "mutation-shard", "mutation", "stack", "image-scan"}
+JOBS = {
+    "gates",
+    "delivery",
+    "tests",
+    "mutation-shard",
+    "mutation",
+    "stack",
+    "image-scan",
+    "frontend",
+}
 
 
 def mutation_jobs_problems(workflow: dict[Any, Any]) -> list[str]:
