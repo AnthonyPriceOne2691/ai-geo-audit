@@ -1,12 +1,13 @@
 """Выдуманный справочник тестов — Ф и Ф2 спеки Ч2.1: файл, манифест к нему и помощник сырых
 вставок редакции.
 
-Коды — 90–99: в настоящем справочнике таких нет (A303). Тексты — слова-заглушки. Записи командой
-до Ч2.1б нет: редакции тестов ставит помощник сырыми вставками, мимо кода сервиса.
+Коды — 90–99: в настоящем справочнике таких нет (A303). Тексты — слова-заглушки. Редакции до
+записи под тестом ставит помощник сырыми вставками, мимо кода сервиса.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import asyncpg
+import dbtools
 
 from ai_geo_audit.reference.file import UNITS
 from ai_geo_audit.reference.models import Unit
@@ -123,6 +125,37 @@ async def insert_revision(
             values = (param["name"], param["value"], low, high, param["unit"])
             await conn.execute(_PARAM, check, *values)
     return revision
+
+
+async def _insert_all(items: Sequence[Mapping[str, Any]]) -> list[tuple[int, str]]:
+    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
+    try:
+        based_on = None
+        for item in items:
+            based_on = await insert_revision(conn, **item, based_on=based_on)
+        found = await conn.fetch("SELECT number, status FROM reference_revisions ORDER BY number")
+        return [(row["number"], row["status"]) for row in found]
+    finally:
+        await conn.close()
+
+
+def revisions(*items: Mapping[str, Any]) -> list[tuple[int, str]]:
+    """Редакции `items` по порядку — каждая на основе прежней — сырыми вставками в тестовую базу;
+    затем (номер, статус) всех редакций."""
+    return asyncio.run(_insert_all(items))
+
+
+async def _empty() -> None:
+    conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
+    try:
+        await conn.execute("TRUNCATE reference_params, reference_checks, reference_revisions")
+    finally:
+        await conn.close()
+
+
+def empty() -> None:
+    """Таблицы справочника тестовой базы пусты."""
+    asyncio.run(_empty())
 
 
 def document(rows: Sequence[Mapping[str, Any]] = SAMPLE, **top: Any) -> dict[str, Any]:
