@@ -731,16 +731,16 @@ NETWORK_FORMAT = (
     '"ipam":{{json .IPAM.Config}}}'
 )
 VOLUME_FORMAT = '{"name":{{json .Name}},"project":{{json (.Label "com.docker.compose.project")}}}'
-#: Строки портов и подсетей файлов compose соседа — разбор разведки, блок 12: комментарии мимо;
-#: `ports: [..]` строкой, строки блока `ports:` глубже его отступа, строки `subnet`, `ip_range`,
-#: `gateway`; вывод — «путь: строка».
+#: Строки портов и подсетей файлов compose соседа — разбор блока 12 разведки, строже (decisions):
+#: значение `ports:` строкой; строки блока `ports:` — глубже его отступа и пункты `-` на нём;
+#: `subnet`, `ip_range`, `gateway`; комментарии мимо; вывод — «путь: строка».
 NEIGHBOR_AWK = (
     "FNR == 1 { p = 0 } /^[[:space:]]*#/ { next } "
-    '/^[[:space:]]*ports:[[:space:]]*\\[/ { print FILENAME ": " $0; next } '
+    '/^[[:space:]]*ports:[[:space:]]*[^[:space:]#]/ { print FILENAME ": " $0; next } '
     "/^[[:space:]]*ports:[[:space:]]*(#.*)?$/ "
     "{ p = 1; match($0, /^[[:space:]]*/); ind = RLENGTH; next } "
-    "p && /^[[:space:]]*$/ { next } "
-    "p { match($0, /^[[:space:]]*/); if (RLENGTH <= ind) p = 0; "
+    "p && /^[[:space:]]*$/ { next } p { match($0, /^[[:space:]]*/); "
+    "if (RLENGTH < ind || (RLENGTH == ind && $0 !~ /^[[:space:]]*-/)) p = 0; "
     'else { print FILENAME ": " $0; next } } '
     '/(subnet|ip_range|gateway):/ { print FILENAME ": " $0 }'
 )
@@ -853,14 +853,14 @@ def host_ports(text: str) -> set[int] | None:
 
 def line_facts(line: str) -> tuple[list[set[int] | None], list[str]]:
     """Строка файла compose соседа: порты хоста (`None` — «сверить») и записи подсетей.
-    Переменная — её умолчание, без умолчания — «?»: значение в файле окружения соседа, его
-    скрипт не читает. Короткая запись `[адрес:]порт_хоста:порт_контейнера[/протокол]` — справа."""
+    Переменная — умолчание, без умолчания — «?» (значение — в файле окружения соседа); короткая
+    запись `[адрес:]порт:порт[/протокол]` — справа; список не в строку и якорь — «сверить»."""
     item = line.split(" #", 1)[0].strip().removeprefix("-").strip()
     item = VARIABLE_RE.sub(lambda found: "?" if found[2] is None else found[3], item)
     name, value = key.groups() if (key := KEY_RE.fullmatch(item)) else ("", item)
     if name in {"subnet", "ip_range", "gateway"}:
         return [], [value.strip("\"'")]
-    if name == "published":
+    if name == "published" or (name == "ports" and not value.endswith("]")):
         return [host_ports(value)], []
     specs = value.strip("[] ").split(",") if name == "ports" else [] if name else [item]
     parts = [spec.strip().strip("\"'").partition("/")[0].rsplit(":", 2) for spec in specs]
@@ -929,7 +929,7 @@ def port_verdicts(ctx: Context, raw: str, found: list[Container], declared: Decl
     if not PORT_RE.fullmatch(raw) or not 0 < int(raw) < 65536:
         return [verdict("порт", ["WEB_PORT: не число от 1 до 65535"])]
     port, live = int(raw), listening(ctx.runner)
-    ours = {p for c in found if c.project == PROJECT for p in bound_ports(c)}
+    ours = {p for c in found if c.project == PROJECT and c.running for p in bound_ports(c)}
     foreign = {p for c in found if c.project != PROJECT for p in bound_ports(c)}
     reasons = ["WEB_PORT занят"] if port in foreign or port in live - ours else []
     reasons += ["WEB_PORT объявлен у соседа"] if port in declared[0] else []
