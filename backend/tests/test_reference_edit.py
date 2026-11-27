@@ -243,32 +243,45 @@ async def test_a318_the_limits_and_the_neighbours_are_those_of_the_revision(
     assert await fetch(f"{query} WHERE r.number = 2") == [(D("1"), D("5"))]
 
 
+#: Значение `92` в редакции 2 текстом базы: порог и доля.
+WRITTEN = {
+    "param:max_seconds": "SELECT p.value::text FROM reference_params p JOIN reference_checks c"
+    " ON c.id = p.check_id JOIN reference_revisions r ON r.id = c.revision_id WHERE r.number = 2",
+    "share_percent": "SELECT c.share_percent::text FROM reference_checks c JOIN reference_revisions"
+    " r ON r.id = c.revision_id WHERE r.number = 2 AND c.code = '92'",
+}
+
+
 @pytest.mark.parametrize(
-    ("value", "written"),
+    ("field", "value", "line", "written"),
     [
-        (D("3.5" + "0" * 16400), "3.5"),
-        (D("0E-16400"), "0"),
-        (D("-0E-16400"), "0"),
-        (D("-0"), "0"),
+        ("param:max_seconds", D("3.5" + "0" * 16400), "max_seconds 3.25 → 3.5 с", "3.5"),
+        ("param:max_seconds", D("0E-16400"), "max_seconds 3.25 → 0 с", "0"),
+        ("param:max_seconds", D("-0E-16400"), "max_seconds 3.25 → 0 с", "0"),
+        ("param:max_seconds", D("-0"), "max_seconds 3.25 → 0 с", "0"),
+        ("share_percent", D("20." + "0" * 16400), "доля: 10 % → 20 %", "20"),
     ],
-    ids=["trailing-zeros", "zero-16400", "minus-zero-16400", "minus-zero"],
+    ids=["trailing-zeros", "zero-16400", "minus-zero-16400", "minus-zero", "share-trailing-zeros"],
 )
 async def test_a318_the_checked_value_is_written_without_trailing_zeros(
-    committed: AsyncEngine, monkeypatch: pytest.MonkeyPatch, value: Decimal, written: str
+    committed: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: Decimal,
+    line: str,
+    written: str,
 ) -> None:
     """A318, сверка среза 2 (находка проверяющей 10:43Z, E10–E12): пределы `92` — 0–60 с (вставка
-    с подменой таблицы единиц); годное значение с хвостовыми нулями, ноль и «-0» пишутся тем
-    числом, что сверено, — без хвостовых нулей, степени и знака у нуля: предпросмотр и запись —
-    один отчёт с «→ 3.5 с» или «→ 0 с», запись не падает, в редакции 2 — это число."""
+    с подменой таблицы единиц); годное значение порога и доли с хвостовыми нулями, ноль и «-0»
+    пишутся тем числом, что сверено, — без хвостовых нулей, степени и знака у нуля: предпросмотр и
+    запись — один отчёт, запись не падает, в редакции 2 — это число."""
     with monkeypatch.context() as patch:
         patch.setitem(file.UNITS, Unit.SECONDS, (D("0"), D("60")))
         await insert_all(ONE)
-    change = ("92", "param:max_seconds", value)
-    report = [f"92 · max_seconds 3.25 → {written} с", "редакция 1 → 2"]
+    change = ("92", field, value)
+    report = [f"92 · {line}", "редакция 1 → 2"]
     assert [await edit(committed, change, apply=a) for a in (False, True)] == [report, report]
-    values = "SELECT p.value::text FROM reference_params p JOIN reference_checks c"
-    query = f"{values} ON c.id = p.check_id JOIN reference_revisions r ON r.id = c.revision_id"
-    assert await fetch(f"{query} WHERE r.number = 2") == [(written,)]
+    assert await fetch(WRITTEN[field]) == [(written,)]
 
 
 async def test_a313_an_edit_failure_before_commit_rolls_its_session_back(

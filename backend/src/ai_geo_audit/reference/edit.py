@@ -6,16 +6,17 @@
 только `Decimal` и не NaN, до сравнения с пределом: NaN в сравнении бросает `InvalidOperation`
 (L131; decisions, проба 2026-11-27T08:48:51Z); бесконечность — вне пределов. Не больше 6 знаков
 после точки и 15 значащих — тоже до предела: иначе отчёт округлит значение, а `numeric` его не
-запишет (decisions, сверка среза 2). Предел порога — из редакции, в новую он переходит тем же. Все
-причины — за один вызов, в порядке правок. Отчёт — строки `diff` Ч2.1 в порядке правок и «редакция
-N → N+1» — один у предпросмотра и у записи (Р94). Запись — `store.write_revision`: замок, активная
-после него, сверка `expected` под ним (A319)."""
+запишет (decisions, сверка среза 2); пишется сверенное число — без хвостовых нулей, степени и
+знака у нуля. Предел порога — из редакции, в новую он переходит тем же. Все причины — за один
+вызов, в порядке правок. Отчёт — строки `diff` Ч2.1 в порядке правок и «редакция N → N+1» — один
+у предпросмотра и у записи (Р94). Запись — `store.write_revision`: замок, активная после него,
+сверка `expected` под ним (A319)."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from decimal import Decimal
-from typing import Final, TypeGuard
+from typing import Final, TypeGuard, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -198,11 +199,19 @@ def _number(value: Decimal) -> str:
 
 
 def _changed(row: RowIn, field: str, value: object) -> RowIn:
-    """Строка с годной правкой: важность, доля или значение порога."""
+    """Строка с годной правкой: важность, доля или значение порога — тем числом, что сверено."""
     if field == "importance":
         return row.model_copy(update={"importance": Importance(str(value))})
+    number = _stored(cast(Decimal, value))  # доля и порог прошли `_exact` и `_too_fine`
     if field == "share_percent":
-        return row.model_copy(update={"share_percent": value})
+        return row.model_copy(update={"share_percent": number})
     name = field.removeprefix("param:")
-    params = [p.model_copy(update={"value": value}) if p.name == name else p for p in row.params]
+    params = [p.model_copy(update={"value": number}) if p.name == name else p for p in row.params]
     return row.model_copy(update={"params": params})
+
+
+def _stored(value: Decimal) -> Decimal:
+    """Число для записи — без хвостовых нулей, степени и знака у нуля: «3.5000» → 3.5, «1E+2» →
+    100, «0E-20» и «-0» → 0 (`normalize` оставил бы «-0»). После предела точности в числе не больше
+    15 значащих — `normalize` при контексте 28 ничего не округляет (decisions, сверка среза 2)."""
+    return Decimal(0) if value == 0 else Decimal(format(value.normalize(), "f"))
