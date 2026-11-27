@@ -29,6 +29,14 @@ const stream = (start: (c: ReadableStreamDefaultController<Uint8Array>) => void)
 
 const silence = (): Promise<Response> => new Promise<Response>(() => undefined);
 
+// Знаки, которые разбор URL меняет молча: табуляцию и переводы строк выкидывает, NUL и пробел по
+// краям срезает, DEL кодирует. В исходнике — кодами: сырой знак в строке теста не виден глазу.
+const TAB = String.fromCharCode(9);
+const LF = String.fromCharCode(10);
+const CR = String.fromCharCode(13);
+const NUL = String.fromCharCode(0);
+const DEL = String.fromCharCode(127);
+
 describe('F21: путь и запрос', () => {
   it('F21: GET без Authorization и пропуска, no-store, same-origin, manual, путь от корня', async () => {
     answer('GET', '/api/health', json(200, { status: 'ok' }));
@@ -51,8 +59,12 @@ describe('F21: путь и запрос', () => {
     'api/health',
     '/health',
     '/api/../x',
+    '/api/./x',
     '/api/%2e%2e/x',
+    '/api/.%2e/x',
+    '/api/%2E%2e/health',
     '/api/a\\b',
+    '/api/..\\x',
   ])('F21: путь %s — отказ до запроса', async (path) => {
     answer('GET', path, json(200, { status: 'ok' }));
     const error = await failure(getJson(path, anyBody));
@@ -60,7 +72,24 @@ describe('F21: путь и запрос', () => {
     expect(requests()).toHaveLength(0);
   });
 
-  it.each(['/api/..c', '/api/d..', '/api/x?next=../y'])(
+  it.each([
+    ['табуляция между точками', `/api/.${TAB}./x`],
+    ['перевод строки между точками', `/api/.${LF}./health`],
+    ['возврат каретки вокруг точек', `/api/${CR}..${CR}/x`],
+    ['табуляция между %2e', `/api/%2e${TAB}%2e/x`],
+    ['пробел за «..» в конце', '/api/.. '],
+    ['NUL за «..» в конце', `/api/..${NUL}`],
+    ['DEL в пути', `/api/x${DEL}`],
+    ['табуляция в строке запроса', `/api/x?q=a${TAB}b`],
+    ['пробел внутри пути — разбор его кодирует', '/api/a b'],
+  ])('F21: %s — разбор меняет путь, отказ до запроса', async (_, path) => {
+    answer('GET', path, json(200, { status: 'ok' }));
+    const error = await failure(getJson(path, anyBody));
+    expect([error.kind, error.message]).toEqual(['path', words.api.path]);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it.each(['/api/..c', '/api/d..', '/api/x?next=../y', '/api/x#../y', '/api/a%20b'])(
     'F21: путь %s — шагов «.» и «..» в нём нет, запрос уходит',
     async (path) => {
       answer('GET', path, json(200, { status: 'ok' }));
@@ -320,6 +349,18 @@ describe('F29: ответил не сервис', () => {
     answer('GET', '/api/x', reply);
     const error = await failure(getJson('/api/x', (_body: unknown): _body is unknown => true));
     expect(error.kind).toBe('not-service');
+  });
+
+  it('F29: проверка вида бросила на чужом теле — «ответил не сервис», не обрыв связи', async () => {
+    answer('GET', '/api/x', json(200, { status: 'ok' }));
+    const hasItems = (body: unknown): body is { items: unknown[] } =>
+      (body as { items: unknown[] }).items.length > 0;
+    const error = await failure(getJson('/api/x', hasItems));
+    expect([error.kind, error.message, error.status]).toEqual([
+      'not-service',
+      words.api.notService,
+      200,
+    ]);
   });
 
   it.each(['application/json; charset=utf-8', 'Application/JSON ; charset=UTF-8'])(
