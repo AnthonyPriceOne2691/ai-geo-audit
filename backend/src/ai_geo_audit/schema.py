@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import ai_geo_audit.reference.models  # таблицы справочника в общих метаданных
+import ai_geo_audit.sets.models  # таблицы наборов в общих метаданных
 import ai_geo_audit.settings.models  # noqa: F401 -- таблицы ключей и настроек в общих метаданных
 from ai_geo_audit.storage import models
 

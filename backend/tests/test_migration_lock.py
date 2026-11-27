@@ -63,8 +63,8 @@ async def test_a19_upgrade_waits_for_the_lock_holder(tmp_path: Path) -> None:
         await conn.close()
         await back_to_start(ini)
     assert code == 0, err[-1500:]
-    # A300: ревизия 0003 — справочник Ч2.1, поэтому пробная ревизия над головой — 0004.
-    assert rows == ["0004"]
+    # A320: ревизия 0004 — наборы Ч2.2, поэтому пробная ревизия над головой — 0005.
+    assert rows == ["0005"]
 
 
 async def test_a19_waiter_takes_over_when_the_holder_dies(tmp_path: Path) -> None:
@@ -87,8 +87,8 @@ async def test_a19_waiter_takes_over_when_the_holder_dies(tmp_path: Path) -> Non
         conn.terminate()
         await back_to_start(ini)
     assert code == 0, err[-1500:]
-    # A300: ревизия 0003 — справочник Ч2.1, поэтому пробная ревизия над головой — 0004.
-    assert rows == ["0004"]
+    # A320: ревизия 0004 — наборы Ч2.2, поэтому пробная ревизия над головой — 0005.
+    assert rows == ["0005"]
 
 
 async def test_a19_four_upgrades_at_once_all_succeed() -> None:

@@ -27,12 +27,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ai_geo_audit import schema
+from ai_geo_audit.sets.service import ALL_CHECKS, ensure_all_checks
 from ai_geo_audit.storage import build_engine, models
 
 PREFIX = "audit_test_"
 #: Голова настоящей цепочки ревизий: на неё пробы A18–A20 возвращают базу, поверх неё — их номера.
 #: Новая ревизия сервиса — правка здесь и в номерах `probe_revisions/`.
-HEAD = "0003"
+HEAD = "0004"
+#: База после ревизии (A320, решение ведущей 2026-11-27): встроенный набор — вид, имя, версия 1
+#: `active` — не остаток прошлого теста; прочие строки таблиц — остаток, строки состава — все.
+_BUILTIN = f"kind = 'all_checks' AND name = '{ALL_CHECKS}'"
+BASELINE = {
+    "public.check_sets": _BUILTIN,
+    "public.check_set_versions": (
+        "number = 1 AND status = 'active'"
+        f" AND set_id IN (SELECT id FROM check_sets WHERE {_BUILTIN})"
+    ),
+}
 # pragma: allowlist nextline secret
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
 START = "docker compose -f docker-compose.dev.yml up -d db"
@@ -375,21 +386,26 @@ def service_tables() -> list[str]:
 
 
 async def truncate(engine: AsyncEngine) -> None:
-    """После теста с фиксациями: проба и таблицы сервиса пусты, счётчики — с начала."""
+    """После теста с фиксациями: проба и таблицы сервиса пусты, счётчики — с начала; встроенный
+    набор — снова один (`ensure_all_checks`): база после ревизии."""
     tables = ", ".join(["probe.probe", "probe.owner", *service_tables()])
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY"))
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await ensure_all_checks(session)
 
 
 async def require_empty(engine: AsyncEngine) -> None:
-    """Перед тестом с фиксациями проба и таблицы сервиса пусты: иначе прошлый тест не убрал за
-    собой."""
+    """Перед тестом с фиксациями проба и таблицы сервиса — база после ревизии (`BASELINE`):
+    иначе прошлый тест не убрал за собой."""
     left = await rows(engine)
     if left:
         raise AssertionError(f"в пробе {left} строк(и): прошлый тест не убрал за собой")
     async with engine.connect() as conn:
         for table in service_tables():
-            count = (await conn.execute(text(f"SELECT count(*) FROM {table}"))).scalar_one()
+            kept = f" WHERE NOT ({BASELINE[table]})" if table in BASELINE else ""
+            query = text(f"SELECT count(*) FROM {table}{kept}")
+            count = (await conn.execute(query)).scalar_one()
             if count:
                 raise AssertionError(f"в {table} {count} строк(и): прошлый тест не убрал за собой")
 
