@@ -29,13 +29,15 @@ const SCRIPTS = {
     'npm run lint && npm run format:check && npm run typecheck && npm test && npm run build' +
     ' && npm run check:dist',
 };
-// Поля `package.json`: новое поле — правка этого списка. Так не проходит мимо F17 `overrides`,
-// которым вложенный пакет подменяется псевдонимом, и зависимости в других полях.
+// Поля `package.json`: новое поле — правка этого списка. Так не проходят мимо F17 зависимости в
+// других полях; `overrides` в списке — только под тестом подстановок ниже: вложенный пакет
+// подменяется по одобренному списку, точной версией, без псевдонима.
 const PACKAGE_FIELDS = [
   'dependencies',
   'devDependencies',
   'engines',
   'name',
+  'overrides',
   'private',
   'scripts',
   'type',
@@ -47,6 +49,7 @@ interface PackageJson {
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  overrides?: Record<string, unknown>;
 }
 
 interface LockEntry {
@@ -60,7 +63,20 @@ interface LockEntry {
 interface Approved {
   dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
+  overrides: Record<string, string>;
   installScripts: Record<string, string>;
+}
+
+/** Подстановки `overrides` парами «родитель>пакет» — значение; вложенность глубже — не версия. */
+function substitutions(overrides: Record<string, unknown>): [string, unknown][] {
+  return Object.entries(overrides).flatMap(([parent, inner]): [string, unknown][] =>
+    inner !== null && typeof inner === 'object'
+      ? Object.entries(inner).map(([name, version]): [string, unknown] => [
+          `${parent}>${name}`,
+          version,
+        ])
+      : [[parent, inner]],
+  );
 }
 
 const readText = (name: string): string => readFileSync(join(FRONT, name), 'utf8');
@@ -163,7 +179,7 @@ describe('пакеты фронта', () => {
     ).toEqual([]);
   });
 
-  it('F17: поля package.json ровно по списку — без overrides и зависимостей в других полях', () => {
+  it('F17: поля package.json ровно по списку — зависимостей в других полях нет', () => {
     expect(Object.keys(readJson<Record<string, unknown>>('package.json')).sort()).toEqual(
       PACKAGE_FIELDS,
     );
@@ -183,6 +199,19 @@ describe('пакеты фронта', () => {
     );
     expect(Object.keys(pkg.devDependencies ?? {}).sort()).toEqual(
       Object.keys(approved.devDependencies).sort(),
+    );
+  });
+
+  it('F17: overrides — подстановки по одобренному списку, точной версией, без псевдонима', () => {
+    const found = substitutions(readJson<PackageJson>('package.json').overrides ?? {});
+    const loose = found.filter(([, v]) => typeof v !== 'string' || !/^\d+\.\d+\.\d+$/.test(v));
+    expect(
+      loose.map(([key]) => key),
+      'подстановка не точной версией',
+    ).toEqual([]);
+    const approved = readJson<Approved>('approved-packages.json');
+    expect(found.map(([key, v]) => `${key}@${String(v)}`).sort()).toEqual(
+      Object.keys(approved.overrides).sort(),
     );
   });
 
