@@ -266,3 +266,12 @@ def test_a186_bad_ipv6_spelling_is_a_refusal_not_a_failure(raw: str) -> None:
     with pytest.raises(Refused) as refused:
         tool.health_urls(f"http://127.0.0.1:18181/, {raw}")
     assert str(refused.value) == numbered(2)
+
+
+def test_a186_health_url_without_host_is_refused() -> None:
+    """A186: адрес без узла (`http://:1/`) — негодная запись, отказ «адрес № 2», как у кривого
+    IPv6: порча «узел по умолчанию — петля» (`hostname or "127.0.0.1"`) без этого случая живёт
+    (приёмка третьей проверяющей, решение ведущей 2026-11-27)."""
+    with pytest.raises(Refused) as refused:
+        tool.health_urls("http://127.0.0.1:18181/, http://:1/")
+    assert str(refused.value) == numbered(2)
