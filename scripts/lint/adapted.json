@@ -52,6 +52,6 @@
   },
   ".dependency-cruiser.cjs": {
     "reason": "правила шаблона — слои бэкенда (`models`, `services`, `api`): у фронта они не совпали бы ни с одним файлом, а канон велит привести пути к своим слоям; гейт зовёт depcruise из корня, пути — `^frontend/src/…` (В1б, A384)",
-    "changed": "вместо `models-is-leaf` и `services-no-web` — `theme-below-pages` (тема берёт только тему, `words.ts` и `brand.ts`) и `no-test-helpers-in-app` (код приложения не берёт помощников тестов из `src/test/`), перед ними — комментарий об адаптации; `no-circular`, `options` (кандидаты tsConfig, `tsPreCompilationDeps`, `exclude`) и шапка — дословно cqg@3.30"
+    "changed": "вместо `models-is-leaf` и `services-no-web` — `theme-below-pages` (тема берёт только тему, `words.ts` и `brand.ts`), `api-below-pages` (слой `src/api/` берёт только себя и `words.ts` — «Клиент API», F52) и `no-test-helpers-in-app` (код приложения не берёт помощников тестов из `src/test/`), перед ними — комментарий об адаптации; `no-circular`, `options` (кандидаты tsConfig, `tsPreCompilationDeps`, `exclude`) и шапка — дословно cqg@3.30"
   }
 }

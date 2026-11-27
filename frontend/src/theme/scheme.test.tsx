@@ -7,14 +7,21 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { act, cleanup, fireEvent, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StubPage } from '../StubPage';
+import { reply, sample } from '../test/contract';
 import { renderWithProviders } from '../test/render';
+import { answer } from '../test/server';
 import { words } from '../words';
 
 import { SCHEME_KEY } from './scheme';
 import { parseBlocks } from './tokens';
+
+// На заглушке — проверка связи: тест, который её рисует, называет ответ сервера (F30).
+beforeEach(() => {
+  answer('GET', '/api/health', reply(sample('health-ok')));
+});
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, '..', '..', 'public', 'color-scheme.js');

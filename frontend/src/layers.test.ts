@@ -14,7 +14,10 @@ import { describe, expect, it } from 'vitest';
 const FRONT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Прогон из корня копии: `frontend/src`, конфиг корня, вывод `err` — как в check_layers_gate.sh. */
-function cruise(change: (src: string) => void): { code: number | null; out: string } {
+function cruise(
+  change: (src: string) => void,
+  output = 'err',
+): { code: number | null; out: string } {
   const tree = mkdtempSync(join(tmpdir(), 'layers-'));
   try {
     cpSync(join(FRONT, 'src'), join(tree, 'frontend', 'src'), { recursive: true });
@@ -23,7 +26,7 @@ function cruise(change: (src: string) => void): { code: number | null; out: stri
     change(join(tree, 'frontend', 'src'));
     const run = spawnSync(
       join(FRONT, 'node_modules', '.bin', 'depcruise'),
-      ['frontend/src', '--config', '.dependency-cruiser.cjs', '--output-type', 'err'],
+      ['frontend/src', '--config', '.dependency-cruiser.cjs', '--output-type', output],
       { cwd: tree, encoding: 'utf8' },
     );
     return { code: run.status, out: `${run.stdout}${run.stderr}` };
@@ -65,6 +68,22 @@ const COPIES: [string, (src: string) => void, string[]][] = [
     (src) => append(src, 'StubPage.tsx', "import './test/contrast';"),
     ['no-test-helpers-in-app'],
   ],
+  [
+    // Заглушка берёт блок связи, тот — клиент: копия спеки — ещё и цикл, как у темы выше.
+    'клиент API берёт страницу заглушки — копия спеки F52, она же цикл',
+    (src) => append(src, 'api/client.ts', "import '../StubPage';"),
+    ['api-below-pages', 'no-circular'],
+  ],
+  [
+    'новый модуль слоя API берёт страницу заглушки, цикла нет — F52',
+    (src) => writeFileSync(join(src, 'api', 'probe.ts'), "import '../StubPage';\n"),
+    ['api-below-pages'],
+  ],
+  [
+    'слой API берёт тему — F52',
+    (src) => append(src, 'api/health.ts', "import '../theme/tokens';"),
+    ['api-below-pages'],
+  ],
 ];
 
 describe('слои фронта — dependency-cruiser', () => {
@@ -72,6 +91,15 @@ describe('слои фронта — dependency-cruiser', () => {
     const { code, out } = cruise(() => undefined);
     expect(code, out).toBe(0);
     expect(Number(/(\d+) modules/.exec(out)?.[1] ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('F52: модули слоя src/api/ на ветке — больше нуля, правило их видит', () => {
+    const { code, out } = cruise(() => undefined, 'json');
+    expect(code, out).toBe(0);
+    const modules = (JSON.parse(out) as { modules: { source: string }[] }).modules;
+    expect(modules.filter((m) => m.source.startsWith('frontend/src/api/')).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it.each(COPIES)('A384: %s — красное с именем правила', (_, change, rules) => {

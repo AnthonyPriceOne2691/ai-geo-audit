@@ -1,6 +1,7 @@
 import { Anchor, Card, Container, Group, Paper, Table, Text, Title } from '@mantine/core';
 
 import { SERVICE_NAME } from './brand';
+import { ConnectionBlock } from './ConnectionBlock';
 import { SchemeSwitch } from './theme/scheme';
 import { cssVar } from './theme/tokens';
 import { words } from './words';
@@ -74,7 +75,7 @@ function Samples() {
 }
 
 /** Заглушка: называет сервис и говорит, что на ней есть, — факт, а не обещание (F16); рядом с
- *  именем — переключатель схемы (F20). */
+ *  именем — переключатель схемы (F20); под фактом — проверка связи (F31). */
 export function StubPage() {
   return (
     <Container component="main" py="xl">
@@ -83,6 +84,7 @@ export function StubPage() {
         <SchemeSwitch />
       </Group>
       <Text mt="sm">{words.stub.fact}</Text>
+      <ConnectionBlock />
       <Samples />
     </Container>
   );
