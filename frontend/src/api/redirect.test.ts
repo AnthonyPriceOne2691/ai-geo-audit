@@ -1,35 +1,17 @@
 // @vitest-environment node
 // F48: клиент не идёт по перенаправлению — два настоящих сервера на петле, порты свободные от
 // системы; и ответ в виде браузера (`opaqueredirect`, код 0) — подставным объектом.
-import { createServer, type RequestListener, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { realFetch, useFetch } from '../test/server';
+import { closeServers, listen } from '../test/sockets';
 import { words } from '../words';
 
 import { ApiError, getJson } from './client';
 
-const servers: Server[] = [];
 const anyBody = (body: unknown): body is unknown => body !== undefined;
 
-afterEach(async () => {
-  await Promise.all(
-    servers.splice(0).map((s) => new Promise<void>((resolve) => s.close(() => resolve()))),
-  );
-});
-
-/** Сервер на петле, порт — свободный от системы; адрес — `http://127.0.0.1:N`. */
-function listen(handler: RequestListener): Promise<string> {
-  const server = createServer(handler);
-  servers.push(server);
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      resolve(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-    });
-  });
-}
+afterEach(closeServers);
 
 /** F48: ответ на перенаправление — ошибка клиента; иное — красное здесь. */
 async function redirectError(): Promise<ApiError> {
@@ -49,12 +31,12 @@ describe('перенаправление', () => {
       res.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"ok"}');
     });
     const first = await listen((_, res) => {
-      res.writeHead(302, { location: `${second}/api/health` }).end();
+      res.writeHead(302, { location: `${second.url}/api/health` }).end();
     });
     let mode: RequestRedirect | undefined;
     useFetch((input, init) => {
       mode = init?.redirect;
-      return realFetch(new URL(String(input), first), init);
+      return realFetch(new URL(String(input), first.url), init);
     });
     const error = await redirectError();
     expect([error.kind, error.message, error.status]).toEqual([
