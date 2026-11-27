@@ -5,7 +5,8 @@
 файл базы не касаются (decisions); затем база. Журналы и крючки — до работы (L54, L55); негодную
 настройку вход ловит вокруг импорта (L30); класс отказа — в `reference.file`: под `python -m`
 модуль исполняется как `__main__` (L123). Непредвиденный сбой — строкой со своим типом, без текста
-исключения: в нём бывает текст файла (L57, L118)."""
+исключения: в нём бывает текст файла (L57, L118); шага сбоя общий отказ не знает — у `load`
+«проверьте status», а не «не тронут» (decisions, сверка среза 1)."""
 
 from __future__ import annotations
 
@@ -46,7 +47,12 @@ LOAD_LINE = 'запись: {} load {} --expect {} --reason "<чьё слово �
 REASON_MAX = 500
 _SIGN = re.compile(r"([0-9a-f]{64})@(0|[1-9][0-9]*)")
 _VALUED = ("--expect", "--reason", "--manifest")
-_FAILURE = {"check": "сбой проверки", "load": "сбой записи", "status": "сбой чтения"}
+#: Общий отказ входа: `check` и `status` не пишут; у `load` сбой мог быть и после записи.
+_FAILURE = {
+    "check": "сбой проверки: {} — справочник не тронут",
+    "load": "сбой записи: {} — проверьте status",
+    "status": "сбой чтения: {} — справочник не тронут",
+}
 
 
 @dataclass(frozen=True)
@@ -112,8 +118,7 @@ def main(argv: Sequence[str]) -> int:
         sys.stderr.write(f"{failure}\n")
         return 1
     except Exception as failure:  # silent-ok: сбой — строкой со своим типом, без текста (L57)
-        kind = type(failure).__name__
-        sys.stderr.write(f"{_FAILURE[call.verb]}: {kind} — справочник не тронут\n")
+        sys.stderr.write(_FAILURE[call.verb].format(type(failure).__name__) + "\n")
         return 1
     sys.stdout.write("\n".join(lines) + "\n")
     return 0
