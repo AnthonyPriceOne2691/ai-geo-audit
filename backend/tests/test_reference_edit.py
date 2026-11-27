@@ -243,6 +243,34 @@ async def test_a318_the_limits_and_the_neighbours_are_those_of_the_revision(
     assert await fetch(f"{query} WHERE r.number = 2") == [(D("1"), D("5"))]
 
 
+@pytest.mark.parametrize(
+    ("value", "written"),
+    [
+        (D("3.5" + "0" * 16400), "3.5"),
+        (D("0E-16400"), "0"),
+        (D("-0E-16400"), "0"),
+        (D("-0"), "0"),
+    ],
+    ids=["trailing-zeros", "zero-16400", "minus-zero-16400", "minus-zero"],
+)
+async def test_a318_the_checked_value_is_written_without_trailing_zeros(
+    committed: AsyncEngine, monkeypatch: pytest.MonkeyPatch, value: Decimal, written: str
+) -> None:
+    """A318, сверка среза 2 (находка проверяющей 10:43Z, E10–E12): пределы `92` — 0–60 с (вставка
+    с подменой таблицы единиц); годное значение с хвостовыми нулями, ноль и «-0» пишутся тем
+    числом, что сверено, — без хвостовых нулей, степени и знака у нуля: предпросмотр и запись —
+    один отчёт с «→ 3.5 с» или «→ 0 с», запись не падает, в редакции 2 — это число."""
+    with monkeypatch.context() as patch:
+        patch.setitem(file.UNITS, Unit.SECONDS, (D("0"), D("60")))
+        await insert_all(ONE)
+    change = ("92", "param:max_seconds", value)
+    report = [f"92 · max_seconds 3.25 → {written} с", "редакция 1 → 2"]
+    assert [await edit(committed, change, apply=a) for a in (False, True)] == [report, report]
+    values = "SELECT p.value::text FROM reference_params p JOIN reference_checks c"
+    query = f"{values} ON c.id = p.check_id JOIN reference_revisions r ON r.id = c.revision_id"
+    assert await fetch(f"{query} WHERE r.number = 2") == [(written,)]
+
+
 async def test_a313_an_edit_failure_before_commit_rolls_its_session_back(
     committed: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
