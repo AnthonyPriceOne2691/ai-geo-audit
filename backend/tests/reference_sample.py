@@ -127,7 +127,9 @@ async def insert_revision(
     return revision
 
 
-async def _insert_all(items: Sequence[Mapping[str, Any]]) -> list[tuple[int, str]]:
+async def insert_all(items: Sequence[Mapping[str, Any]]) -> list[tuple[int, str]]:
+    """Редакции `items` по порядку — каждая на основе прежней — сырыми вставками в тестовую базу;
+    затем (номер, статус) всех редакций."""
     conn = await asyncpg.connect(dbtools._raw(dbtools.own_url()))
     try:
         based_on = None
@@ -140,9 +142,8 @@ async def _insert_all(items: Sequence[Mapping[str, Any]]) -> list[tuple[int, str
 
 
 def revisions(*items: Mapping[str, Any]) -> list[tuple[int, str]]:
-    """Редакции `items` по порядку — каждая на основе прежней — сырыми вставками в тестовую базу;
-    затем (номер, статус) всех редакций."""
-    return asyncio.run(_insert_all(items))
+    """`insert_all` вне цикла событий — для тестов без `async`."""
+    return asyncio.run(insert_all(items))
 
 
 async def _empty() -> None:
