@@ -9,6 +9,7 @@ import importlib
 import importlib.util
 import io
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -153,16 +154,40 @@ def test_a185_live_helper_clean_without_its_mark_touches_nothing(
     assert tree(tmp_path) == before
 
 
-def test_a185_live_helper_roots_failure_takes_back_what_it_made(
+def test_a185_live_helper_clean_failure_keeps_the_mark_for_a_retry(
     helper: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A185: сбой посреди заведения корней — заведённое снято, код 2; чужое не тронуто."""
+    """A185: корень не снялся — отказ, сосед с меткой цел (он снимается последним), повтор `clean`
+    убирает остальное."""
+    assert helper.main(["roots"]) == 0
+    (helper.ETC / "incoming").mkdir(parents=True)
+    real = shutil.rmtree
+
+    def busy(path: Path) -> None:
+        if path == helper.ETC:
+            raise OSError("занято")
+        real(path)
+
+    monkeypatch.setattr(shutil, "rmtree", busy)
+    assert helper.main(["clean"]) == 2 and (helper.NEIGHBOR / helper.MARK).is_file()
+    monkeypatch.setattr(shutil, "rmtree", real)
+    assert helper.main(["clean"]) == 0 and tree(tmp_path / "srv") == tree(tmp_path / "etc") == []
+
+
+@pytest.mark.parametrize("where", ["copytree", "write_text"], ids=["посреди-копии", "файл-соседа"])
+def test_a185_live_helper_roots_failure_takes_back_what_it_made(
+    helper: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, where: str
+) -> None:
+    """A185: сбой посреди заведения корней, и посреди самой копии, — заведённое снято, полкопии
+    не остаётся, код 2; чужое не тронуто."""
     (tmp_path / "srv" / "other").mkdir()
 
-    def broken(*_args: Any, **_kwargs: Any) -> None:
+    def broken(*args: Any, **_kwargs: Any) -> None:
+        if where == "copytree":
+            (Path(args[1]) / "deploy").mkdir(parents=True)
         raise OSError("диск")
 
-    monkeypatch.setattr(Path, "write_text", broken)
+    monkeypatch.setattr(shutil if where == "copytree" else Path, where, broken)
     assert helper.main(["roots"]) == 2
     assert tree(tmp_path / "srv") == ["other"]
 
@@ -171,8 +196,8 @@ def test_a183_live_helper_owner_file_from_the_environment(
     helper: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A183: файл владельца — в каталоге входящих, права 600, ровно имена «задаёт владелец»,
-    значения — из окружения (`--preserve-env`), не из аргументов; нет значения — отказ с именем,
-    файла нет; файл уже есть — отказ, не перезапись."""
+    значения — из окружения (`--preserve-env`), не из аргументов; нет значения или оно пустое —
+    отказ с именем, файла нет; файл уже есть — отказ, не перезапись."""
     (helper.ETC / "incoming").mkdir(parents=True)
     values = {name: f"value-of-{name.lower()}" for name in helper.OWNER}
     for name in helper.OWNER[:-1]:
@@ -182,6 +207,8 @@ def test_a183_live_helper_owner_file_from_the_environment(
     assert f"нет в окружении: {helper.OWNER[-1]}" in capsys.readouterr().err
     path = helper.ETC / "incoming" / "owner.env"
     assert not path.exists()
+    monkeypatch.setenv(helper.OWNER[-1], "")
+    assert helper.main(["owner"]) == 2 and not path.exists()
     monkeypatch.setenv(helper.OWNER[-1], values[helper.OWNER[-1]])
     assert helper.main(["owner"]) == 0
     assert path.stat().st_mode & 0o777 == 0o600

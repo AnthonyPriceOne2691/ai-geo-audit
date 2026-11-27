@@ -737,6 +737,25 @@ def test_a185_neighbor_files_read_by_real_find_and_awk(tmp_path: Path) -> None:
     assert neighbor_scan(tmp_path / "b", ALIAS_TREE) == (set(), [], {"порт"})
 
 
+#: Теги Compose на месте списка портов (заход ведущей на сервер 2026-11-27T11:51:25Z): `!override`
+#: заменяет список — пункты под ним, вложенные и компактные; `!reset []` — портов нет.
+OVERRIDE_TREE = {
+    "nb-d/docker-compose.prod.yml": (
+        'services:\n  web:\n    ports: !override\n      - "18111:80"\n  api:\n'
+        '    ports: !override  # замена списка\n    - "18112:8000"\n    - target: 83\n'
+        "      published: 18113\n  db:\n    ports: !reset []\n"
+    ),
+}
+
+
+def test_a185_neighbor_ports_under_an_override_tag_are_read(tmp_path: Path) -> None:
+    """A185, третья строка: `ports: !override` открывает блок портов, как голый `ports:`, — и с
+    комментарием; `ports: !reset []` — портов нет; неизвестный тег — «сверить», его пункты мимо."""
+    assert neighbor_scan(tmp_path / "a", OVERRIDE_TREE) == ({18111, 18112, 18113}, [], set())
+    tag = {"nb-e/compose.yml": 'services:\n  web:\n    ports: !custom\n      - "18114:80"\n'}
+    assert neighbor_scan(tmp_path / "b", tag) == (set(), [], {"порт"})
+
+
 def test_a185_check_comment_with_a_colon_in_a_neighbor_port_line_is_not_a_port(ctx) -> None:
     """A185, третья строка, против порчи «без отреза комментария» (находка 5): в комментарии
     строки порта соседа — двоеточия и наш порт; порт строки — другой: «ок»."""
