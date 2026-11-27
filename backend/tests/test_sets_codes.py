@@ -173,13 +173,12 @@ async def test_a334_codes_of_refuses_in_words_with_what_to_do(
 
 
 ALL_METRICS: Items = [(code, "metric") for code, _, _ in METRICS]
+TEN: Items = [item for item in ALL_METRICS if item[0] != "historical_dynamics"]
 BLOCKS: dict[str, tuple[Items, str | int, str]] = {
     "all-metrics": (ALL_METRICS, "v1", "целиком"),
-    "without-historical-dynamics": (
-        [item for item in ALL_METRICS if item[0] != "historical_dynamics"],
-        "v1",
-        "частично",
-    ),
+    "without-historical-dynamics": (TEN, "v1", "частично"),
+    # метрика вне каталога (сырой вставкой, как устаревший код) блок целым не делает
+    "ten-and-a-stranger": ([*TEN, ("magic_metric", "metric")], "v1", "частично"),
     "no-metrics": ([("91", "check"), ("answer_mention", "answer")], "v1", "нет в наборе"),
     "builtin": ([], "builtin", "целиком"),
     "no-version": ([], 999, "версии набора с id 999 нет — перечитайте наборы"),
@@ -191,7 +190,7 @@ async def test_a337_ai_block_is_computed_from_the_metrics_of_the_version(
     committed: AsyncEngine, items: Items, version: str | int, expected: Any
 ) -> None:
     """A337: `ai_block` версий — все 11 кодов метрик — «целиком»; 10 без `historical_dynamics` —
-    «частично»; ни одного — «нет в наборе»; встроенный набор — «целиком»; версии с id 999 нет —
-    «версии набора с id 999 нет — перечитайте наборы»."""
+    «частично», и с метрикой вне каталога — тоже; ни одного — «нет в наборе»; встроенный набор —
+    «целиком»; версии с id 999 нет — «версии набора с id 999 нет — перечитайте наборы»."""
     ids = await given((1, "active", items))
     assert await block(committed, pick(ids, version)) == expected
