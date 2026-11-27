@@ -258,4 +258,6 @@ React с Vite и Mantine, pytest, docker compose.
 - Node 24 (`frontend/.nvmrc`); пакеты — `cd frontend && npm ci`: только по lock, скрипты
   установки выключены.
 - Проверка — `npm run check`: линтер, формат, типы, тесты, сборка и оракул сборки.
+- С API в разработке — API на `127.0.0.1:8107` (раздел «Сервер API»), затем `npm run dev`: фронт
+  на `127.0.0.1:5177`, `/api` идёт к API без переписывания пути; номера — `FRONT_PORT` и `API_PORT`.
 - Браузеры — Chrome и Edge 111+, Firefox 121+, Safari 15.4+; почему — в `frontend/UI_RULES.md`.

@@ -127,12 +127,16 @@ describe('F39: только своя машина, защиты Vite не осл
       'serve',
     );
     expect([ours.server.host, ours.preview.host]).toEqual(['127.0.0.1', '127.0.0.1']);
-    expect([ours.server.cors, ours.server.allowedHosts, ours.server.fs.strict]).toEqual([
-      base.server.cors,
-      base.server.allowedHosts,
-      true,
-    ]);
+    expect([ours.server.cors, ours.server.fs.strict]).toEqual([base.server.cors, true]);
     expect(base.server.fs.strict).toBe(true);
+    // Заданный узел `server.host` Vite 7.3.7 кладёт в `allowedHosts` сам (проба среза 3), а адреса
+    // IP пускает и без списка (`isHostAllowedInternal`). Сверх этого имён быть не должно.
+    for (const hosts of [ours.server.allowedHosts, ours.preview.allowedHosts]) {
+      expect(hosts).not.toBe(true);
+      expect((hosts as string[]).filter((name) => name !== '127.0.0.1')).toEqual(
+        base.server.allowedHosts,
+      );
+    }
   });
 
   it('F39: запущенный сервер разработки слушает 127.0.0.1', async () => {
