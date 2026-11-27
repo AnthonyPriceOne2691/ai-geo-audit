@@ -27,6 +27,8 @@ REPORT = ["92 · max_seconds 3.25 → 3.5 с", "91 · важность: Крит
 STALE = "справочник уже изменён: вы смотрели {}, активна {} — перечитайте"
 NOT_EXACT = "92 · max_seconds — нужно точное число"
 SHARE = "92 · доля — больше 0 и не больше 100"
+FINE = "92 · {} — не больше 6 знаков после точки и 15 значащих"
+TEXTS = "тексты строки этой функцией не правятся"
 SNAPSHOT = (
     "SELECT r.id, r.number, r.source, r.based_on_id, r.file_sha256, r.file_rows, r.source_date,"
     " r.reason, r.created_at, row_to_json(c)::text, row_to_json(p)::text"
@@ -126,6 +128,14 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         (("92", "param:max_seconds", 3.5), NOT_EXACT),
         (("92", "param:max_seconds", D("NaN")), NOT_EXACT),
         (("92", "param:max_seconds", D("sNaN")), NOT_EXACT),
+        (
+            ("92", "param:max_seconds", D("3.25000000000000000000000000001")),
+            FINE.format("max_seconds"),
+        ),
+        (("92", "param:max_seconds", D("3.1234567")), FINE.format("max_seconds")),
+        (("92", "share_percent", D("1E-16384")), FINE.format("доля")),
+        (("92", "share_percent", D("1234567890.123456")), FINE.format("доля")),
+        (("92", "share_percent", D("123456789.123456")), SHARE),
         (("92", "share_percent", D("0")), SHARE),
         (("92", "share_percent", D("100.5")), SHARE),
         (("92", "share_percent", 20), "92 · доля — нужно точное число"),
@@ -137,7 +147,11 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
             ("92", "param:max_seconds", D("3.250")),
             "92 · max_seconds: значение то же — ничего не меняется",
         ),
-        (("92", "norm", "другая норма"), "тексты строки этой функцией не правятся"),
+        (("92", "block", "другой блок"), TEXTS),
+        (("92", "name", "другое имя"), TEXTS),
+        (("92", "norm", "другая норма"), TEXTS),
+        (("92", "error", "другая ошибка"), TEXTS),
+        (("92", "recommendation", "другая рекомендация"), TEXTS),
         (("92", "scope", "site"), "поле scope этой функцией не правится"),
     ],
     ids=[
@@ -149,6 +163,11 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         "float",
         "nan",
         "snan",
+        "30-significant",
+        "7-places",
+        "share-1e-16384",
+        "share-16-significant",
+        "share-15-significant-then-limit",
         "share-0",
         "share-100.5",
         "share-int",
@@ -157,7 +176,11 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         "importance-word",
         "importance-same",
         "same-3.250",
-        "text",
+        "text-block",
+        "text-name",
+        "text-norm",
+        "text-error",
+        "text-recommendation",
         "other-field",
     ],
 )
@@ -166,7 +189,9 @@ async def test_a318_a_bad_change_is_refused_with_its_reason(
 ) -> None:
     """A318: каждая негодная правка отдельно — своя причина словами, с кодом и полем, число
     предела — из редакции; NaN и sNaN — «нужно точное число» до сравнения с пределом, а не
-    исключение; редакция по-прежнему одна."""
+    исключение; тоньше 6 знаков после точки или 15 значащих — отказ до предела, 15 значащих —
+    дальше к пределу (сверка среза 2: отчёт округлял, запись падала); все пять текстовых полей —
+    «тексты…»; редакция по-прежнему одна."""
     await insert_all(ONE)
     assert (await refused(committed, change), await numbers()) == ([reason], [(1, "active")])
 
@@ -190,14 +215,18 @@ async def test_a318_a_repeat_nothing_and_two_bad_changes_are_refused(
 async def test_a318_the_limits_and_the_neighbours_are_those_of_the_revision(
     committed: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A318: пределы `92` в редакции 1 — 1–5 с (вставка с подменой таблицы единиц): 6 — «вне
-    пределов 1–5 с», хотя таблица пускает до 60; 5 и доля 100 — годны, запись; у порога редакции 2
-    те же пределы 1–5."""
+    """A318: пределы `92` в редакции 1 — 1–5 с (вставка с подменой таблицы единиц): 6 и 0.9 —
+    «вне пределов 1–5 с», хотя таблица пускает 0.1–60; нижний предел 1 и доля с 6 знаками после
+    точки — годны (предпросмотр); 5 и доля 100 — годны, запись; у порога редакции 2 те же пределы
+    1–5."""
     with monkeypatch.context() as patch:
         patch.setitem(file.UNITS, Unit.SECONDS, (D("1"), D("5")))
         await insert_all(ONE)
-    above = ["92 · max_seconds: 6 вне пределов 1–5 с"]
-    assert await refused(committed, ("92", "param:max_seconds", D("6"))) == above
+    outside = [await refused(committed, ("92", "param:max_seconds", D(v))) for v in ("6", "0.9")]
+    assert outside == [[f"92 · max_seconds: {v} вне пределов 1–5 с"] for v in ("6", "0.9")]
+    low = [("92", "param:max_seconds", D("1")), ("92", "share_percent", D("99.123456"))]
+    preview = ["92 · max_seconds 3.25 → 1 с", "92 · доля: 10 % → 99.123456 %", "редакция 1 → 2"]
+    assert await edit(committed, *low, apply=False) == preview
     edge = [("92", "param:max_seconds", D("5")), ("92", "share_percent", D("100"))]
     lines = ["92 · max_seconds 3.25 → 5 с", "92 · доля: 10 % → 100 %", "редакция 1 → 2"]
     assert await edit(committed, *edge) == lines
