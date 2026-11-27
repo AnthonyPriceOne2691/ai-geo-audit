@@ -18,7 +18,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from test_stack_rules import CODES, PASS_LINE, drop, put, svc, valid
+from test_stack_rules import CODES, PASS_LINE, drop, env, put, svc, valid
 
 from ai_geo_audit.ops import stack_prod as prod_rules
 from ai_geo_audit.ops import stack_rules as sr
@@ -34,14 +34,23 @@ LIMITS = {
 #: Флаги потолка Redis в боевом наложении — после `-` команды `sh -c` (A89, A171).
 FLAGS_LINE = "--maxmemory 100mb --maxmemory-policy noeviction"
 Found = set[tuple[str, str | None, str | None]]
+#: Свои образы боя — из файла сервера (A181): переменная образа у migrate, api и web.
+SERVER_IMAGES = {"migrate": "BACKEND_IMAGE", "api": "BACKEND_IMAGE", "web": "WEB_IMAGE"}
 
 
 def prod() -> dict[str, Any]:
-    """Верный слитый вывод: основной стек и боевое наложение."""
+    """Верный слитый вывод: основной стек и боевое наложение. Своих образов наложение не
+    собирает (`build: !reset null`, проба compose 5.7.1 2026-11-26T11:55:43Z) и не скачивает."""
     stack = valid()
     for name, (memory, cpus) in LIMITS.items():
         journal = {"driver": "journald", "options": {"tag": f"ai-geo-audit-{name}"}}
         stack["services"][name] |= {"mem_limit": memory, "cpus": cpus, "logging": journal}
+    for name, var in SERVER_IMAGES.items():
+        service = stack["services"][name]
+        service.pop("build", None)
+        service |= {"image": f"${{{var}:?образ из файла сервера}}", "pull_policy": "never"}
+    for name in ("migrate", "api"):
+        stack["services"][name]["environment"] |= {"APP_ENV": "prod", "LOG_FORMAT": "json"}
     stack["services"]["redis"]["command"] = ["sh", "-c", queue_script(FLAGS_LINE)]
     stack["services"]["db"]["command"] = ["postgres", "-c", "max_connections=50"]
     return stack
@@ -104,6 +113,10 @@ PROBES = [
     (command("--maxmemory", "100mb", "--maxmemory-policy", "allkeys-lru"), "redis-memory", "redis"),
     (command("--maxmemory", "100mb"), "redis-memory", "redis"),
     (command("--maxmemory-policy", "noeviction", "--maxmemory"), "redis-memory", "redis"),
+    (put(svc("web"), "image", "${BACKEND_IMAGE:?образ}"), "image-from-server", "web"),
+    (drop(svc("api"), "pull_policy"), "image-from-server", "api"),
+    (put(svc("migrate"), "pull_policy", "if_not_present"), "image-from-server", "migrate"),
+    (put(svc("web"), "build", {"context": "/srv/copy"}), "image-from-server", "web"),
 ]
 PROBE_IDS = [
     "db-без-памяти",
@@ -122,7 +135,20 @@ PROBE_IDS = [
     "redis-вытеснение",
     "redis-без-политики",
     "redis-потолок-без-значения",
+    "web-чужой-образ",
+    "api-без-pull-policy",
+    "migrate-pull-policy-скачать",
+    "web-сборка-на-сервере",
 ]
+#: A181, первая строка, `prod-mode`: бой — литералами у migrate и api; проба — сервис и имя.
+PROD_MODE = [
+    (drop(env("migrate"), "LOG_FORMAT"), "migrate", "LOG_FORMAT"),
+    (put(env("api"), "LOG_FORMAT", "text"), "api", "LOG_FORMAT"),
+    (put(env("api"), "APP_ENV", "dev"), "api", "APP_ENV"),
+    (put(env("migrate"), "APP_ENV", "${APP_ENV:-prod}"), "migrate", "APP_ENV"),
+    (drop(env("api"), "APP_ENV"), "api", "APP_ENV"),
+]
+PROD_MODE_IDS = ["migrate-без-формата", "api-текст", "api-dev", "migrate-ссылкой", "api-без-режима"]
 
 
 def test_a89_valid_prod_stack_has_no_violations() -> None:
@@ -132,12 +158,54 @@ def test_a89_valid_prod_stack_has_no_violations() -> None:
 
 @pytest.mark.parametrize(("spoil", "code", "service"), PROBES, ids=PROBE_IDS)
 def test_a89_each_prod_rule_has_its_probe(spoil: Callable, code: str, service: str) -> None:
-    """A89, первая строка: `limits` — нет `mem_limit` или `cpus` (пусто и ноль — тоже нет);
-    `journald` — журнал не journald или без метки своего сервиса; `redis-memory` — нет
-    `--maxmemory` (или 0) или вытеснение не `noeviction`: ровно её нарушение с именем сервиса."""
+    """A89, первая строка, A181, первая строка: `limits` — нет `mem_limit` или `cpus` (пусто и
+    ноль — тоже нет); `journald` — журнал не journald или без метки своего сервиса;
+    `redis-memory` — нет `--maxmemory` (или 0) или вытеснение не `noeviction`;
+    `image-from-server` — у migrate, api или web образ строкой, через `${VAR}` или `${VAR:-…}`,
+    чужая переменная, `pull_policy` не `never`, сборка на сервере: ровно её нарушение с именем
+    сервиса."""
     config = prod()
     spoil(config)
     assert found(config) == {(code, service, None)}
+
+
+@pytest.mark.parametrize(
+    ("service", "image"),
+    [
+        ("api", "ai-geo-audit-backend:local"),
+        ("migrate", "${BACKEND_IMAGE}"),
+        ("web", "${WEB_IMAGE:-ai-geo-audit-web:local}"),
+    ],
+    ids=["api-образ-строкой", "migrate-образ-без-причины", "web-образ-с-умолчанием"],
+)
+def test_a181_image_not_from_server_is_red_in_both_image_rules(service: str, image: str) -> None:
+    """A181, первая строка: у migrate, api или web образ строкой, через `${VAR}` или `${VAR:-…}` —
+    нарушение `image-from-server`; и `image-digest` тоже: такой образ не из файла сервера и не
+    закреплён дайджестом."""
+    config = prod()
+    put(svc(service), "image", image)(config)
+    assert found(config) == {("image-from-server", service, None), ("image-digest", service, None)}
+
+
+@pytest.mark.parametrize(("spoil", "service", "variable"), PROD_MODE, ids=PROD_MODE_IDS)
+def test_a181_prod_mode_needs_literals_at_migrate_and_api(
+    spoil: Callable, service: str, variable: str
+) -> None:
+    """A181, первая строка: у migrate или api нет литерала `APP_ENV: prod` или `LOG_FORMAT: json`
+    — значение другое, ссылкой или его нет — нарушение `prod-mode` с сервисом и именем."""
+    config = prod()
+    spoil(config)
+    assert found(config) == {("prod-mode", service, variable)}
+
+
+def test_a181_image_digest_does_not_judge_own_server_images() -> None:
+    """A181, вторая строка: `image-digest` значение `${VAR:?…}` у migrate, api и web не судит —
+    его судит `image-from-server`; у db и redis судит, как прежде. Порча «`image-digest` судит и
+    `${VAR:?…}`» — три нарушения, красное."""
+    config = prod()
+    assert {v.code for v in sr.check(config)} == set()
+    put(svc("redis"), "image", "${REDIS_IMAGE:?образ}")(config)
+    assert found(config) == {("image-digest", "redis", None)}
 
 
 CALM = [
@@ -148,6 +216,12 @@ CALM = [
     put(svc("web"), "mem_limit", "134217728"),
     put(options("api"), "labels", "service"),
     command("--dir", "${REDIS_DIR:?каталог}", *FLAGS_LINE.split()),
+    put(svc("api"), "image", "${BACKEND_IMAGE:?другая причина}"),
+    put(
+        svc("migrate"),
+        "environment",
+        ["APP_ENV=prod", "LOG_FORMAT=json", "DATABASE_URL=${MIGRATE_DATABASE_URL:?адрес базы}"],
+    ),
 ]
 
 
@@ -162,6 +236,8 @@ CALM = [
         "память-в-байтах",
         "ещё-опция",
         "ссылка-в-другом-слове",
+        "образ-с-другой-причиной",
+        "окружение-списком",
     ],
 )
 def test_a89_neighbour_cases_are_not_violations(change: Callable) -> None:
@@ -174,24 +250,27 @@ def test_a89_neighbour_cases_are_not_violations(change: Callable) -> None:
 
 
 def test_a89_prod_codes_follow_the_main_set_in_order() -> None:
-    """A89: боевой набор — 26 кодов основного и три боевых, по порядку."""
-    assert (*CODES, "limits", "journald", "redis-memory") == sr.PROD_RULES
+    """A89, A181: боевой набор — 26 кодов основного и пять боевых, по порядку: два правила боя
+    6а-2 — в конце."""
+    prod_codes = ("limits", "journald", "redis-memory", "image-from-server", "prod-mode")
+    assert (*CODES, *prod_codes) == sr.PROD_RULES
 
 
 def test_a89_prod_rules_run_only_under_the_flag(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A89, вторая строка: без флага — основной набор, «правил 26», лимитов нет — не нарушение,
-    и у `run()` по умолчанию тоже; с `--prod` на верном слитом выводе — «сервисов 5, правил 29,
-    нарушений 0»."""
+    и у `run()` по умолчанию тоже; с `--prod` на верном слитом выводе — «сервисов 5, правил 31,
+    нарушений 0» (A181, блок замены подписанных чисел). Основной стек под `--prod` — 16: лимиты и
+    журнал пяти сервисов, потолок Redis, свои образы трёх сервисов, бой у migrate и api."""
     plain = json.dumps(valid())
     assert sr.run(plain) == (0, ["итог: сервисов 5, правил 26, нарушений 0"])
     assert run_main(monkeypatch, capsys, plain) == (0, "итог: сервисов 5, правил 26, нарушений 0\n")
-    summary = "итог: сервисов 5, правил 29, нарушений 0\n"
+    summary = "итог: сервисов 5, правил 31, нарушений 0\n"
     assert run_main(monkeypatch, capsys, json.dumps(prod()), "--prod") == (0, summary)
     code, out = run_main(monkeypatch, capsys, plain, "--prod")
     assert code == 1
-    assert out.splitlines()[-1] == "итог: сервисов 5, правил 29, нарушений 11"
+    assert out.splitlines()[-1] == "итог: сервисов 5, правил 31, нарушений 16"
 
 
 def test_a89_violation_lines_name_the_rule_and_the_service(
@@ -210,7 +289,7 @@ def test_a89_violation_lines_name_the_rule_and_the_service(
         "limits: сервис db — нет mem_limit и cpus",
         "journald: сервис api — журнал не journald с меткой ai-geo-audit-api",
         "redis-memory: сервис redis — нет --maxmemory или вытеснение не noeviction",
-        "итог: сервисов 5, правил 29, нарушений 3",
+        "итог: сервисов 5, правил 31, нарушений 3",
     ]
 
 
@@ -348,7 +427,7 @@ def test_a89_reference_in_a_flag_of_the_sh_c_line_is_refused(
 @pytest.mark.parametrize(
     ("spoil", "code", "line"),
     [
-        (lambda config: None, 0, "итог: сервисов 5, правил 29, нарушений 0"),
+        (lambda config: None, 0, "итог: сервисов 5, правил 31, нарушений 0"),
         *((spoil, 2, f"отказ: сервис {reason}") for spoil, reason in REFUSALS),
     ],
     ids=["верный", *REFUSAL_IDS],
@@ -357,7 +436,7 @@ def test_a89_python_m_entry_as_in_the_image(spoil: Callable, code: int, line: st
     """A89, вторая строка, находка 4 приёмки: настоящий вход — `python -m … --prod`, как его зовёт
     шаг A89 в образе. Модуль правил тогда — `__main__`, а отказ боевых правил — тот же класс:
     строка отказа целиком, код 2 и пустой поток ошибок, а не трассировка с кодом 1; на верном
-    слитом выводе — «правил 29»: флаг доходит до входа."""
+    слитом выводе — «правил 31»: флаг доходит до входа."""
     config = prod()
     spoil(config)
     assert python_m(json.dumps(config)) == (code, f"{line}\n", "")

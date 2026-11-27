@@ -30,6 +30,7 @@ from urllib.parse import quote
 from oracle_guard import LockBusyError, copy_lock, guarded, say, stack_name, start_cleanup
 from stack_oracle_compose import APP_UID, BREAKING_STEPS, STACK_STEPS, StepError, write_master_key
 from stack_oracle_compose import cleanup as stack_cleanup
+from stack_oracle_deploy import DEPLOY_STEPS
 from stack_oracle_docker import LIMITS, Docker
 from stack_oracle_hardening import HARDENING_STEPS
 from stack_oracle_redis import REDIS_STEPS
@@ -56,6 +57,8 @@ OPEN_PATHS = (
 DEEP_CANARY = "backend/src/ai_geo_audit/.env.local"
 #: Имена из списков проверки старта; шаг A64 сверяет их со списками пакета в образе.
 BUILD_ARG_NAMES = (
+    "ALERT_TELEGRAM_BOT_TOKEN",
+    "ALERT_TELEGRAM_CHAT_ID",
     "API_TRUSTED_PROXIES",
     "DATABASE_URL",
     "JWT_SECRET",
@@ -210,6 +213,9 @@ class Run:
     app_password: str = field(default_factory=lambda: secrets.token_hex(12))
     #: Пароль очереди (A171): 24 знака hex — проверка старта в бою его принимает (A175).
     redis_password: str = field(default_factory=lambda: secrets.token_hex(12))
+    #: Пара бота тревог (A192): токен — 40 знаков hex, номер чата — группы, с минусом.
+    bot_token: str = field(default_factory=lambda: secrets.token_hex(20))
+    chat_id: str = field(default_factory=lambda: f"-100{secrets.randbelow(10**10):010d}")
 
     def __post_init__(self) -> None:
         """Выдуманные секреты — в маске исполнителя с созданием прогона, до его команд (A172)."""
@@ -220,7 +226,7 @@ class Run:
         """Выдуманные секреты прогона; пароль роли миграций — и в процентной записи."""
         encoded = quote(self.migrate_password, safe="")
         app, queue = self.app_password, self.redis_password
-        return (self.password, self.jwt, self.migrate_password, encoded, app, queue)
+        return (self.password, self.jwt, self.migrate_password, encoded, app, queue, self.bot_token)
 
     @property
     def image(self) -> str:
@@ -380,6 +386,7 @@ STEPS: list[tuple[str, str, Callable[[Run], str], bool]] = [
     *WEB_BUILD_STEPS,
     *STACK_STEPS,
     *WEB_STACK_STEPS,
+    *DEPLOY_STEPS,
     *HARDENING_STEPS,
     *STOP_STEPS,
     *ROLE_STEPS,

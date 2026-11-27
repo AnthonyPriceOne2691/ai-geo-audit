@@ -1,7 +1,7 @@
-"""Боевые правила стека (A89): лимиты памяти и процессора у каждого сервиса, журнал journald с
-меткой сервиса и потолок Redis без вытеснения. Включаются флагом `--prod` правил стека над слитым
-выводом основного файла с боевым наложением; перечень, порядок и вывод — в `stack_rules`: там
-коды 25–27 ведут сюда.
+"""Боевые правила стека (A89, A181): лимиты памяти и процессора у каждого сервиса, журнал journald
+с меткой сервиса, потолок Redis без вытеснения, свои образы — из файла сервера, бой — литералами.
+Включаются флагом `--prod` правил стека над слитым выводом основного файла с боевым наложением;
+перечень, порядок и вывод — в `stack_rules`: там коды 27–31 ведут сюда.
 
 Вход — вывод `--no-interpolate`: значения стоят как в файле — `mem_limit` строкой (`1g`), `cpus`
 числом или строкой, `command` списком или строкой (замер compose 5.7.0, decisions Ч1.5в), у redis —
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 import shlex
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,10 @@ TAG = "ai-geo-audit-{service}"
 UNLIMITED = (None, "", 0, "0")
 #: Потолок Redis — `--maxmemory` не ноль и вытеснение явной строкой `noeviction`.
 POLICY = "noeviction"
+#: Свои образы боя — из файла сервера по дайджесту (A181): переменная образа у migrate, api и web.
+SERVER_IMAGES = {"migrate": "BACKEND_IMAGE", "api": "BACKEND_IMAGE", "web": "WEB_IMAGE"}
+#: Бой — литералами в окружении migrate и api (A181): без `APP_ENV=prod` проверки старта молчат.
+PROD_MODE = {"APP_ENV": "prod", "LOG_FORMAT": "json"}
 
 
 def _unknown(name: str, what: str, values: tuple[object, ...]) -> None:
@@ -85,8 +90,37 @@ def redis_memory(stack: Stack) -> Iterator[Finding]:
         yield "redis", None, f"нет --maxmemory или вытеснение не {POLICY}"
 
 
+def image_from_server(stack: Stack) -> Iterator[Finding]:
+    """Образ своего сервиса — `${ПЕРЕМЕННАЯ:?…}` файла сервера, без скачивания и сборки (A181);
+    одно нарушение на сервис — первое найденное."""
+    for name, var in SERVER_IMAGES.items():
+        service = stack.services.get(name)
+        if service is None:
+            continue
+        if not re.fullmatch(rf"\$\{{{var}:\?[^}}]+\}}", str(service.get("image") or "")):
+            yield name, None, f"образ — не ${{{var}:?…}} из файла сервера"
+        elif service.get("pull_policy") != "never":
+            yield name, None, "pull_policy не never — образ скачивался бы"
+        elif service.get("build"):
+            yield name, None, "сборка на сервере — в наложении build: !reset null"
+
+
+def prod_mode(stack: Stack) -> Iterator[Finding]:
+    """Бой у migrate и api — литералами: значение ссылкой `${…}`, другое или его нет —
+    нарушение с именем переменной (A181)."""
+    for name in ("migrate", "api"):
+        values = stack.env.get(name)
+        if values is None:
+            continue
+        for var, literal in PROD_MODE.items():
+            if values.get(var) != literal:
+                yield name, var, f"не литерал {var}: {literal}"
+
+
 CHECKS: tuple[tuple[str, Callable[[Stack], Iterator[Finding]]], ...] = (
     ("limits", limits),
     ("journald", journald),
     ("redis-memory", redis_memory),
+    ("image-from-server", image_from_server),
+    ("prod-mode", prod_mode),
 )

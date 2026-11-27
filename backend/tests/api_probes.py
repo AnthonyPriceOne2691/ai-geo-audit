@@ -251,6 +251,8 @@ CLOSED_WORDS = "probe-words-123456"
 PROD_DB_WORDS = "prod-db-words-123456"
 PROD_QUEUE_WORDS = "prod-queue-words-123456"
 PROD_JWT_WORDS = "prod-jwt-from-plain-words-for-tests-only"
+#: Токен бота тревог боя в пробах (A192) — тоже из слов-заглушек.
+PROD_BOT_WORDS = "prod-bot-from-plain-words-for-tests-only"
 
 
 def closed_port_url() -> str:
@@ -271,6 +273,8 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "JWT_SECRET": PROD_JWT_WORDS,
         "KEYS_MASTER_KEY_FILE": str(key),
         "API_TRUSTED_PROXIES": "10.9.9.9",
+        "ALERT_TELEGRAM_BOT_TOKEN": PROD_BOT_WORDS,
+        "ALERT_TELEGRAM_CHAT_ID": "-1001234567890",
     }
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -280,6 +284,7 @@ def prod_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         ("access", config.AccessSettings),
         ("keys", config.KeySettings),
         ("api", config.ApiSettings),
+        ("alerts", config.AlertSettings),
     ):
         monkeypatch.setattr(config, name, domain())
 

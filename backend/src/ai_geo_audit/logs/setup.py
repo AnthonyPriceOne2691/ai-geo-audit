@@ -263,7 +263,7 @@ class _Handler(logging.StreamHandler[TextIO]):
 
 def setup_logging(level: str | None = None, fmt: str | None = None) -> None:
     """Собрать корневой логгер; повторный вызов заменяет обработчик, а не добавляет второй."""
-    register_config_secrets(config.storage, config.access, config.keys)
+    register_config_secrets(config.storage, config.access, config.keys, config.alerts)
     chosen = (fmt or config.logs.format).lower()
     handler = _Handler(sys.stderr, JsonFormatter() if chosen == "json" else TextFormatter())
     handler.addFilter(ContextFilter())

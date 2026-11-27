@@ -109,6 +109,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?задайте секрет подписи — openssl rand -hex 32}
       KEYS_MASTER_KEY_FILE: /run/secrets/master_key
       API_TRUSTED_PROXIES: ${WEB_ADDRESS:?задайте адрес web — единственный доверенный прокси}
+      # Пара бота тревог (A192): в бою обязательна у api, доставку делает хост (Ч1.14а2).
+      ALERT_TELEGRAM_BOT_TOKEN: ${ALERT_TELEGRAM_BOT_TOKEN:?задайте токен бота тревог — .env.example}
+      ALERT_TELEGRAM_CHAT_ID: ${ALERT_TELEGRAM_CHAT_ID:?задайте номер чата тревог — .env.example}
     secrets:
       - master_key
     healthcheck:

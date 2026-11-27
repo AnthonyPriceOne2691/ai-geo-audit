@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -28,7 +29,8 @@ MIN_DB_PASSWORD = 12
 #: Причина, когда драйвер и `urlsplit` читают адрес базы по-разному: без адреса и его кусков.
 DB_URL_UNENCODED_CHARS = "в пароле незакодированные знаки — закодируйте @ / ? # как %40 %2F %3F %23"
 
-Process = Literal["api", "worker", "migrate"]
+#: `reference` — команда справочника (A310): сервиса в compose нет, идёт в контейнере api.
+Process = Literal["api", "worker", "migrate", "reference"]
 
 #: Роль базы у каждого процесса (A174): в бою адрес с чужой ролью не даёт старта. Те же имена
 #: заводит `deploy/db/roles.sql`; их равенство держит A179.
@@ -36,17 +38,31 @@ DB_ROLES: dict[Process, str] = {
     "migrate": "audit_migrate",
     "api": "audit_app",
     "worker": "audit_app",
+    "reference": "audit_app",
 }
 #: Причина чужой роли — с нужной ролью, без найденного имени: на месте имени бывает пароль.
 DB_ROLE_FOREIGN = "в адресе чужая роль базы — нужна {}"
 
-#: Миграциям не нужен секрет входа, воркеру — тоже; адреса прокси нужны только api.
+#: Номер чата тревог — целое, у группы с минусом; цифры только ASCII (A192).
+_CHAT_ID = re.compile(r"-?[0-9]+")
+
+#: Миграциям не нужен секрет входа, воркеру — тоже; адреса прокси и пара бота тревог (A192) нужны
+#: только api.
 _NEEDS: dict[Process, frozenset[str]] = {
     "api": frozenset(
-        {"DATABASE_URL", "REDIS_URL", "JWT_SECRET", "KEYS_MASTER_KEY_FILE", "API_TRUSTED_PROXIES"}
+        {
+            "DATABASE_URL",
+            "REDIS_URL",
+            "JWT_SECRET",
+            "KEYS_MASTER_KEY_FILE",
+            "API_TRUSTED_PROXIES",
+            "ALERT_TELEGRAM_BOT_TOKEN",
+            "ALERT_TELEGRAM_CHAT_ID",
+        }
     ),
     "worker": frozenset({"DATABASE_URL", "REDIS_URL", "KEYS_MASTER_KEY_FILE"}),
     "migrate": frozenset({"DATABASE_URL"}),
+    "reference": frozenset({"DATABASE_URL"}),
 }
 
 
@@ -162,6 +178,16 @@ def _master_key(path: str) -> Problem | None:
     return None
 
 
+def _chat(value: str) -> Problem | None:
+    """Номер чата тревог в бою (A192): задан, без заглушки, целое; значения в причине нет."""
+    purpose = "номер чата тревог"
+    if missing := _missing("ALERT_TELEGRAM_CHAT_ID", value, purpose):
+        return missing
+    if not _CHAT_ID.fullmatch(value):
+        return Problem("ALERT_TELEGRAM_CHAT_ID", f"не целое — {purpose}")
+    return None
+
+
 def problems(
     process: Process,
     *,
@@ -170,12 +196,15 @@ def problems(
     access: config.AccessSettings | None = None,
     keys: config.KeySettings | None = None,
     api: config.ApiSettings | None = None,
+    alerts: config.AlertSettings | None = None,
 ) -> list[Problem]:
     """Все негодные настройки процесса в боевом режиме; вне `prod` — пустой список."""
     if (app or config.app).env != "prod":
         return []
     storage = storage or config.storage
     secret = (access or config.access).jwt_secret.get_secret_value()
+    pair = alerts or config.alerts
+    token = pair.bot_token.get_secret_value()
     checks = {
         "DATABASE_URL": _database(storage, process),
         "REDIS_URL": _queue(storage),
@@ -184,6 +213,10 @@ def problems(
         "API_TRUSTED_PROXIES": _explicit(
             "API_TRUSTED_PROXIES", api or config.api, "trusted_proxies_text"
         ),
+        "ALERT_TELEGRAM_BOT_TOKEN": _missing(
+            "ALERT_TELEGRAM_BOT_TOKEN", token, "токен бота тревог"
+        ),
+        "ALERT_TELEGRAM_CHAT_ID": _chat(pair.chat_id),
     }
     return [p for name, p in checks.items() if name in required(process) and p is not None]
 

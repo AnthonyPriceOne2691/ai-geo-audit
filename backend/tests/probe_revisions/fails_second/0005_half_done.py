@@ -1,12 +1,12 @@
-"""Ревизия-проба: таблица уже создана, потом сбой — база должна остаться на прежней ревизии."""
+"""Ревизия-проба: вторая из двух, падает посередине — откатывается и первая."""
 
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0003"
-down_revision: str | None = "0002"
+revision: str = "0005"
+down_revision: str | None = "0004"
 branch_labels: str | None = None
 depends_on: str | None = None
 

@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -32,7 +32,7 @@ from ai_geo_audit.storage import build_engine, models
 PREFIX = "audit_test_"
 #: Голова настоящей цепочки ревизий: на неё пробы A18–A20 возвращают базу, поверх неё — их номера.
 #: Новая ревизия сервиса — правка здесь и в номерах `probe_revisions/`.
-HEAD = "0002"
+HEAD = "0003"
 # pragma: allowlist nextline secret
 SERVER = "postgresql+asyncpg://audit:audit@127.0.0.1:5462/postgres"
 START = "docker compose -f docker-compose.dev.yml up -d db"
@@ -346,6 +346,27 @@ async def rows(engine: AsyncEngine, key: str | None = None) -> int:
         query = query.where(probe.c.key == key)
     async with engine.connect() as conn:
         return (await conn.execute(query)).scalar_one()
+
+
+async def refused_by(*inserts: tuple[str, Mapping[str, object]]) -> str | None:
+    """Сырые вставки «таблица, строка» по порядку в одной транзакции с откатом: имя нарушенного
+    ограничения или None. Таблицы после вызова те же, что до."""
+    conn = await asyncpg.connect(_raw(own_url()))
+    try:
+        transaction = conn.transaction()
+        await transaction.start()
+        try:
+            for table, row in inserts:
+                marks = ", ".join(f"${n}" for n in range(1, len(row) + 1))
+                insert = f"INSERT INTO {table} ({', '.join(row)}) VALUES ({marks})"
+                await conn.execute(insert, *row.values())
+        except asyncpg.IntegrityConstraintViolationError as violation:
+            return violation.constraint_name
+        finally:
+            await transaction.rollback()
+    finally:
+        await conn.close()
+    return None
 
 
 def service_tables() -> list[str]:
