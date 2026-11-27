@@ -514,16 +514,22 @@ def containers(runner: Runner) -> list[Container]:
 
 
 def health_urls(raw: str) -> list[str]:
-    """Адреса проверки соседа: только http на петле, иначе отказ — до любого запроса."""
+    """Адреса проверки соседа: только http на петле и без учётных данных, иначе отказ — до любого
+    запроса; кривая запись адреса — тот же отказ, а не сбой разбора."""
     urls = [url.strip() for url in raw.split(",") if url.strip()]
     for number, url in enumerate(urls, 1):
-        parts = urlsplit(url)
         try:
-            loopback = ipaddress.ip_address(parts.hostname or "").is_loopback
-            port = parts.port
-        except ValueError:
-            loopback, port = False, None
-        if parts.scheme != "http" or not loopback or parts.username or port == 0:
+            parts = urlsplit(url)
+            good = (
+                parts.scheme == "http"
+                and ipaddress.ip_address(parts.hostname or "").is_loopback
+                # Любая часть учётных данных — `@` в адресе: и пустое имя (`:p@`, `@`, `:@`).
+                and parts.username is None
+                and parts.port != 0
+            )
+        except ValueError:  # запись адреса, порта или IP не разбирается
+            good = False
+        if not good:
             raise RefusedError(
                 f"NEIGHBOR_HEALTH_URLS: адрес № {number} не на петле — нужен "
                 "http://127.0.0.1:<порт>/<путь>"
