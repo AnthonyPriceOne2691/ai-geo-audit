@@ -4,10 +4,12 @@
 Правка — `(код, поле, значение)`; поле — `importance`, `share_percent` или `param:<имя>`, тексты и
 прочие поля строки — отказ: тексты меняет инженер файлом (ТЗ:189). Значение доли и порога —
 только `Decimal` и не NaN, до сравнения с пределом: NaN в сравнении бросает `InvalidOperation`
-(L131; decisions, проба 2026-11-27T08:48:51Z); бесконечность — вне пределов. Предел порога — из
-редакции, в новую он переходит тем же. Все причины — за один вызов, в порядке правок. Отчёт — строки
-`diff` Ч2.1 в порядке правок и «редакция N → N+1» — один у предпросмотра и у записи (Р94). Запись —
-`store.write_revision`: замок, активная после него, сверка `expected` под ним (A319)."""
+(L131; decisions, проба 2026-11-27T08:48:51Z); бесконечность — вне пределов. Не больше 6 знаков
+после точки и 15 значащих — тоже до предела: иначе отчёт округлит значение, а `numeric` его не
+запишет (decisions, сверка среза 2). Предел порога — из редакции, в новую он переходит тем же. Все
+причины — за один вызов, в порядке правок. Отчёт — строки `diff` Ч2.1 в порядке правок и «редакция
+N → N+1» — один у предпросмотра и у записи (Р94). Запись — `store.write_revision`: замок, активная
+после него, сверка `expected` под ним (A319)."""
 
 from __future__ import annotations
 
@@ -35,6 +37,9 @@ Change = tuple[str, str, object]
 STALE: Final = "справочник уже изменён: вы смотрели {}, активна {} — перечитайте"
 NOTHING: Final = "правок нет — ничего не меняется"
 TEXTS: Final = "тексты строки этой функцией не правятся"
+PLACES: Final = 6
+SIGNIFICANT: Final = 15
+TOO_FINE: Final = f"не больше {PLACES} знаков после точки и {SIGNIFICANT} значащих"
 _TEXT_FIELDS: Final = frozenset({"block", "name", "norm", "error", "recommendation"})
 _IMPORTANCE: Final = frozenset(Importance)
 _WORDS: Final = {"importance": "важность", "share_percent": "доля"}
@@ -144,6 +149,8 @@ def _share_problem(row: RowIn, value: object) -> str | None:
         return f"{row.code} · у проверки по сайту доли нет"
     if not _exact(value):
         return f"{row.code} · доля — нужно точное число"
+    if _too_fine(value):
+        return f"{row.code} · доля — {TOO_FINE}"
     if not Decimal(0) < value <= 100:
         return f"{row.code} · доля — больше 0 и не больше 100"
     return _same(row.code, _WORDS["share_percent"], row.share_percent == value)
@@ -155,6 +162,8 @@ def _param_problem(row: RowIn, name: str, value: object, bounds: store.Bounds) -
         return f"{row.code}: порога {name} у строки нет"
     if not _exact(value):
         return f"{row.code} · {name} — нужно точное число"
+    if _too_fine(value):
+        return f"{row.code} · {name} — {TOO_FINE}"
     low, high = bounds[(row.code, name)]
     if not low <= value <= high:
         unit = UNIT_WORDS[params[name].unit]
@@ -166,6 +175,18 @@ def _param_problem(row: RowIn, name: str, value: object, bounds: store.Bounds) -
 def _exact(value: object) -> TypeGuard[Decimal]:
     """Точное число: `Decimal` и не NaN; булево, `float`, `int` и строка — нет (L131)."""
     return type(value) is Decimal and not value.is_nan()
+
+
+def _too_fine(value: Decimal) -> bool:
+    """Знаков после точки больше `PLACES` или значащих больше `SIGNIFICANT` — по цифрам записи
+    без хвостовых нулей, без округления контекста (`normalize` округлил бы до 28 знаков);
+    бесконечность и ноль — не тоньше: бесконечность судит предел."""
+    _, digits, exponent = value.as_tuple()
+    kept = "".join(map(str, digits)).rstrip("0")
+    if not isinstance(exponent, int) or not kept:
+        return False
+    last = exponent + len(digits) - len(kept)
+    return -last > PLACES or len(kept) > SIGNIFICANT
 
 
 def _same(code: str, word: str, same: bool) -> str | None:

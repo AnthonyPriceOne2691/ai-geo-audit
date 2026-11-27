@@ -136,6 +136,7 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         (("92", "share_percent", D("1E-16384")), FINE.format("доля")),
         (("92", "share_percent", D("1234567890.123456")), FINE.format("доля")),
         (("92", "share_percent", D("123456789.123456")), SHARE),
+        (("92", "share_percent", D("0.00000000")), SHARE),
         (("92", "share_percent", D("0")), SHARE),
         (("92", "share_percent", D("100.5")), SHARE),
         (("92", "share_percent", 20), "92 · доля — нужно точное число"),
@@ -145,6 +146,10 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         (("91", "importance", "critical"), "91 · важность: значение то же — ничего не меняется"),
         (
             ("92", "param:max_seconds", D("3.250")),
+            "92 · max_seconds: значение то же — ничего не меняется",
+        ),
+        (
+            ("92", "param:max_seconds", D("3.2500000000")),
             "92 · max_seconds: значение то же — ничего не меняется",
         ),
         (("92", "block", "другой блок"), TEXTS),
@@ -168,6 +173,7 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         "share-1e-16384",
         "share-16-significant",
         "share-15-significant-then-limit",
+        "share-0-with-8-zeros",
         "share-0",
         "share-100.5",
         "share-int",
@@ -176,6 +182,7 @@ async def test_a317_earlier_revisions_do_not_change_after_later_ones(
         "importance-word",
         "importance-same",
         "same-3.250",
+        "same-with-trailing-zeros",
         "text-block",
         "text-name",
         "text-norm",
@@ -190,8 +197,9 @@ async def test_a318_a_bad_change_is_refused_with_its_reason(
     """A318: каждая негодная правка отдельно — своя причина словами, с кодом и полем, число
     предела — из редакции; NaN и sNaN — «нужно точное число» до сравнения с пределом, а не
     исключение; тоньше 6 знаков после точки или 15 значащих — отказ до предела, 15 значащих —
-    дальше к пределу (сверка среза 2: отчёт округлял, запись падала); все пять текстовых полей —
-    «тексты…»; редакция по-прежнему одна."""
+    дальше к пределу (сверка среза 2: отчёт округлял, запись падала); хвостовые нули знаками не
+    считаются — ни у числа, ни у нуля; все пять текстовых полей — «тексты…»; редакция
+    по-прежнему одна."""
     await insert_all(ONE)
     assert (await refused(committed, change), await numbers()) == ([reason], [(1, "active")])
 
