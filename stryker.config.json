@@ -7,7 +7,7 @@
     "!frontend/src/test/**",
     "!frontend/src/main.tsx"
   ],
-  "ignorePatterns": ["/*", "!/frontend", "/frontend/dist", "/frontend/coverage"],
+  "ignorePatterns": ["/*", "!/frontend", "!/contracts", "/frontend/dist", "/frontend/coverage"],
   "concurrency": 4,
   "tempDirName": ".stryker-tmp",
   "jsonReporter": { "fileName": "reports/stryker/mutation.json" }

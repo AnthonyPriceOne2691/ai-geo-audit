@@ -20,6 +20,13 @@ module.exports = {
       to: { path: '^frontend/src/', pathNot: '^frontend/src/(theme/|words\\.ts$|brand\\.ts$)' },
     },
     {
+      name: 'api-below-pages',
+      comment: 'слой API не знает страниц и темы: берёт только себя и слова (F52)',
+      severity: 'error',
+      from: { path: '^frontend/src/api/' },
+      to: { path: '^frontend/src/', pathNot: '^frontend/src/(api/|words\\.ts$)' },
+    },
+    {
       name: 'no-test-helpers-in-app',
       comment: 'код приложения не берёт помощников тестов из src/test/',
       severity: 'error',
