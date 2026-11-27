@@ -1,30 +1,13 @@
 // @vitest-environment node
 // F24, F23, F29 [договор]: клиент на всех образцах файла `contracts/api-refusals.json` — каждый
 // образец ведёт к своей строке таблицы, а строка таблицы без образца в файле — тоже красное.
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { describe, expect, it } from 'vitest';
 
+import { reply, sample as named, SAMPLES } from '../test/contract';
 import { answer } from '../test/server';
 
 import { ApiError, type ApiErrorKind } from './client';
 import { getHealth } from './health';
-
-interface Sample {
-  id: string;
-  status: number;
-  headers: Record<string, string>;
-  body: { detail?: string; kind?: string; retry?: boolean; status?: string };
-}
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const FILE = JSON.parse(readFileSync(join(ROOT, 'contracts', 'api-refusals.json'), 'utf8')) as {
-  samples: Sample[];
-  proxy: Sample[];
-};
-const SAMPLES = [...FILE.samples, ...FILE.proxy];
 
 /** Вид ошибки клиента на каждый образец отказа; `health-ok` — не отказ, у него свой тест. */
 const REFUSALS: Record<string, ApiErrorKind> = {
@@ -41,9 +24,6 @@ const REFUSALS: Record<string, ApiErrorKind> = {
   'proxy-gateway-timeout': 'server',
 };
 
-const reply = (sample: Sample) => () =>
-  new Response(JSON.stringify(sample.body), { status: sample.status, headers: sample.headers });
-
 describe('клиент на образцах файла договора', () => {
   it('F24: каждый образец файла — в таблице теста, каждая строка таблицы — в файле', () => {
     const ids = SAMPLES.map((s) => s.id).filter((id) => id !== 'health-ok');
@@ -51,9 +31,7 @@ describe('клиент на образцах файла договора', () =>
   });
 
   it('F29: образец health-ok — здоровье отвечает', async () => {
-    const sample = SAMPLES.find((s) => s.id === 'health-ok');
-    if (!sample) throw new Error('в файле договора нет health-ok');
-    answer('GET', '/api/health', reply(sample));
+    answer('GET', '/api/health', reply(named('health-ok')));
     await expect(getHealth()).resolves.toEqual({ status: 'ok' });
   });
 
@@ -78,9 +56,7 @@ describe('клиент на образцах файла договора', () =>
   );
 
   it('F23: signed-out — «входа нет» по признаку из заголовка', async () => {
-    const sample = SAMPLES.find((s) => s.id === 'signed-out');
-    if (!sample) throw new Error('в файле договора нет signed-out');
-    answer('GET', '/api/health', reply(sample));
+    answer('GET', '/api/health', reply(named('signed-out')));
     const error = (await getHealth().then(
       () => undefined,
       (e: unknown) => e,

@@ -4,12 +4,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { App } from './App';
 import { SERVICE_NAME } from './brand';
 import { StubPage } from './StubPage';
+import { reply, sample } from './test/contract';
 import { renderWithProviders } from './test/render';
+import { answer } from './test/server';
 import { cssVar } from './theme/tokens';
 import { words } from './words';
 
@@ -23,6 +25,11 @@ function themeTrace(): { variables: string; scheme: string | null } {
     scheme: document.documentElement.getAttribute('data-mantine-color-scheme'),
   };
 }
+
+// На заглушке — проверка связи: тест, который её рисует, называет ответ сервера (F30).
+beforeEach(() => {
+  answer('GET', '/api/health', reply(sample('health-ok')));
+});
 
 describe('заглушка', () => {
   it('F8: имя из brand.ts — в заголовке заглушки и в <title> index.html', () => {
@@ -46,7 +53,9 @@ describe('заглушка', () => {
 
   it('F16: заглушка называет сервис и то, что на ней есть, без обещаний', () => {
     renderWithProviders(<StubPage />);
-    expect(screen.getByText('Сейчас здесь проверка сборки и образцы вида')).toBeInTheDocument();
+    expect(
+      screen.getByText('Сейчас здесь проверка сборки, связь с сервером и образцы вида'),
+    ).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/скоро/i);
   });
 });
