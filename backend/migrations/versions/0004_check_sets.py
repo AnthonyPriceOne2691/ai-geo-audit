@@ -22,8 +22,10 @@ depends_on: str | None = None
 #: Одна функция на три таблицы (decisions, пробы 1–1г шага 0). Набор: вид и имя неизменны. Версия:
 #: черновик правится и удаляется; у опубликованной меняются только статус и `archived_at`, удалить
 #: её нельзя. Строка состава: вставка, правка и удаление — только у черновика, на правке сверяются
-#: прежняя версия и новая. Отказ — имя ограничения `check_set_frozen` в ответе базы, как у
-#: `reference_frozen`; нет версии строки — отказ ключа, а не этот.
+#: прежняя версия и новая; статус версии строка читает под `FOR SHARE` — публикация черновика ждёт
+#: незафиксированную правку его строк (находка второй проверяющей 2026-11-27T14:27Z, decisions).
+#: Отказ — имя ограничения `check_set_frozen` в ответе базы, как у `reference_frozen`; нет версии
+#: строки — отказ ключа, а не этот.
 FROZEN = """
 CREATE FUNCTION check_set_frozen() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -42,13 +44,13 @@ BEGIN
             RETURN NEW;
         END IF;
     ELSE
-        IF TG_OP <> 'INSERT' AND (SELECT status FROM check_set_versions WHERE id = OLD.version_id)
-                <> 'draft' THEN
+        IF TG_OP <> 'INSERT' AND (SELECT status FROM check_set_versions WHERE id = OLD.version_id
+                FOR SHARE) <> 'draft' THEN
             RAISE EXCEPTION 'опубликованная версия набора не меняется — правка идёт черновиком'
                 USING ERRCODE = 'restrict_violation', CONSTRAINT = 'check_set_frozen';
         END IF;
-        IF TG_OP <> 'DELETE' AND (SELECT status FROM check_set_versions WHERE id = NEW.version_id)
-                <> 'draft' THEN
+        IF TG_OP <> 'DELETE' AND (SELECT status FROM check_set_versions WHERE id = NEW.version_id
+                FOR SHARE) <> 'draft' THEN
             RAISE EXCEPTION 'опубликованная версия набора не меняется — правка идёт черновиком'
                 USING ERRCODE = 'restrict_violation', CONSTRAINT = 'check_set_frozen';
         END IF;
