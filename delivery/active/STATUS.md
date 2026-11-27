@@ -18,9 +18,16 @@
        план, два пакета, решение по цепочке Stryker. -->
 - **builder:** agent:front-session
 - **verifier:** agent:reviewer2-session
-- **human_ok_spec:** pending
-- **human_ok_plan:** pending
-  <!-- Строки `new_dependency` двух пакетов — после слова владельца, с `by=human:owner`. -->
+- **human_ok_spec:** yes (by=human:owner at=2026-11-27T10:16Z)
+- **human_ok_plan:** yes (by=human:owner at=2026-11-27T10:16Z)
+  <!-- Слово владельца 2026-11-27T10:16:54Z «Публикуем В1б, подписываю Клиент API и связь —
+       вариант (а)» на показ ведущей (`docs/deliveries/ch1-04cd-sign-show.md`), вершина `891ce2b`:
+       спека `9454884f7e9d` (302 строки), план `e66c0e11ef34`, строк примеров 25 — `7b5352b898ee`.
+       Тем же словом: два пакета (`@tanstack/react-query` в сборку, `@testing-library/user-event`
+       в тесты) — строки `new_dependency` с `by=human:owner` и этим временем вносит исполнитель на
+       срезе, где пакет ставится, с версией и датой по реестру; цепочка Stryker — вариант (а),
+       `overrides` на `qs` 6.16.2 под `typed-rest-client` (decisions). Окно подписи необратимого —
+       тем же словом, запускает ведущая. -->
 - **shape-oracles:** cqg-deployed
   <!-- TS-половины гейтов — с В1б: она в main раньше этой поставки. -->
 - **behavior-oracles:** tests-present — Vitest и jsdom: клиент, договор, связь на заглушке; среда Node: перенаправление на сокетах, сервер разработки; живой прогон с API; снимки в обеих схемах; шаг через web — `eval-smoke.md`
