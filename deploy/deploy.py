@@ -732,13 +732,13 @@ NETWORK_FORMAT = (
 )
 VOLUME_FORMAT = '{"name":{{json .Name}},"project":{{json (.Label "com.docker.compose.project")}}}'
 #: Строки портов и подсетей файлов compose соседа — разбор блока 12 разведки, строже (decisions):
-#: значение `ports:` строкой; строки блока `ports:` — глубже его отступа и пункты `-` на нём;
-#: `subnet`, `ip_range`, `gateway`; комментарии мимо; вывод — «путь: строка».
+#: значение `ports:` строкой; строки блока `ports:` и `ports: !override` — глубже его отступа и
+#: пункты `-` на нём; `subnet`, `ip_range`, `gateway`; комментарии мимо; вывод — «путь: строка».
 NEIGHBOR_AWK = (
     "FNR == 1 { p = 0 } /^[[:space:]]*#/ { next } "
-    '/^[[:space:]]*ports:[[:space:]]*[^[:space:]#]/ { print FILENAME ": " $0; next } '
-    "/^[[:space:]]*ports:[[:space:]]*(#.*)?$/ "
+    "/^[[:space:]]*ports:[[:space:]]*(!override[[:space:]]*)?(#.*)?$/ "
     "{ p = 1; match($0, /^[[:space:]]*/); ind = RLENGTH; next } "
+    '/^[[:space:]]*ports:[[:space:]]*[^[:space:]#]/ { print FILENAME ": " $0; next } '
     "p && /^[[:space:]]*$/ { next } p { match($0, /^[[:space:]]*/); "
     "if (RLENGTH < ind || (RLENGTH == ind && $0 !~ /^[[:space:]]*-/)) p = 0; "
     'else { print FILENAME ": " $0; next } } '
