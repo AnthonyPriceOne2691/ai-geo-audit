@@ -221,8 +221,9 @@ LIMITS: dict[str, str | None] = {
 
 def compose_config(limits: dict[str, str | None] | None = None) -> str:
     """Ответ `docker compose … config --no-interpolate --format json` на наши файлы — форма
-    раннера: `mem_limit` — строка, как в файле; у сетей и тома — имена с именем проекта. Прочие
-    ключи ответа проверке не нужны и опущены; `None` — у сервиса нет предела."""
+    раннера: многострочный JSON с отступом 2; `mem_limit` — строка, как в файле; у сетей и тома
+    — имена с именем проекта. Прочие ключи ответа проверке не нужны и опущены; `None` — у
+    сервиса нет предела."""
     services = {
         name: {} if size is None else {"mem_limit": size}
         for name, size in (LIMITS if limits is None else limits).items()
@@ -230,4 +231,4 @@ def compose_config(limits: dict[str, str | None] | None = None) -> str:
     nets = {key: {"name": f"ai-geo-audit_{key}"} for key in ("data", "edge", "front")}
     volumes = {"db-data": {"name": "ai-geo-audit_db-data"}}
     config = {"name": "ai-geo-audit", "networks": nets, "services": services, "volumes": volumes}
-    return json.dumps(config)
+    return json.dumps(config, indent=2) + "\n"

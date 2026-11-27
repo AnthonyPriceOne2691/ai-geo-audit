@@ -137,7 +137,9 @@ def test_a185_check_refuses_the_server_file_by_name_and_reason(
     ctx.owner += owner
     code, lines = check(ctx)
     assert (code, lines["файл окружения"], lines["образы"]) == (1, refused(reason), FIRST_DEPLOY)
-    assert [value for value in values.values() if len(value) > 7 and value in said(ctx)] == []
+    # Заглушка — слово ядра в тексте отказа, а не значение.
+    shown = [value for value in values.values() if len(value) > 7 and value in said(ctx)]
+    assert [value for value in shown if value != tool.PLACEHOLDER] == []
 
 
 @pytest.mark.parametrize(
@@ -580,10 +582,16 @@ def test_a185_check_exit_code_is_not_zero_exactly_when_a_line_is_refused(ctx) ->
     [
         ("docker compose", (1, ""), "docker compose config: код 1"),
         ("docker compose", (0, "{"), "ответ docker compose config не разобран"),
+        ("docker compose", (0, '{"services": 1}\n'), "ответ docker compose config не разобран"),
         ("docker network ls", (1, ""), "docker network ls: код 1"),
         ("docker network ls", (0, "сеть\n"), "ответ docker network ls не разобран"),
         ("docker network inspect", (1, ""), "docker network inspect: код 1"),
         ("docker network inspect", (0, "[]\n"), "ответ docker network inspect не разобран"),
+        (
+            "docker network inspect",
+            (0, '{"name":"x","labels":{},"ipam":[{"Subnet":"300.0.0.0/8"}]}\n'),
+            "ответ docker network inspect не разобран",
+        ),
         ("docker volume ls", (0, "том\n"), "ответ docker volume ls не разобран"),
         ("ss", (1, ""), "ss: код 1"),
         ("ss", (0, "LISTEN 0 4096\n"), "ответ ss не разобран"),
