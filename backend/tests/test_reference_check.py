@@ -87,7 +87,8 @@ EDITED = with92(SAMPLE, params=SLOW)
 def test_a304_without_revisions_all_rows_are_new_and_the_sign_is_zero(
     seed: Seed, check: Run
 ) -> None:
-    """A304: редакций нет, `check` Ф — код 0, «новых строк 6», последняя строка — Т(0)."""
+    """A304: редакций нет, `check` Ф — код 0, «новых строк 6», последняя строка — Т(0), а перед
+    ней — готовая запись (A311)."""
     assert seed() == []
     assert check(F) == (0, NL.join([GOOD.format(6), "новых строк 6", *tail(F, 0)]), "")
     assert seed() == []
@@ -107,7 +108,8 @@ def test_a304_changes_against_the_active_revision(seed: Seed, check: Run) -> Non
 
 def test_a304_edits_the_file_would_cancel_are_named(seed: Seed, check: Run) -> None:
     """A304: активна 2 — правка поверх 1 из Ф (у `92` `max_seconds` 3.5): `check` Ф называет
-    правку, которую запись отменит; последняя строка — Т(2); база не тронута."""
+    правку, которую запись отменит; последняя строка — Т(2), перед ней — готовая запись (A311);
+    база не тронута."""
     first = {"rows": SAMPLE, "number": 1, "status": "archived"}
     before = seed(first, {"rows": EDITED, "number": 2, "source": "edit"})
     cancelled = "будут отменены правки редакции 2: 92 · max_seconds 3.5 → 3.25 с"
@@ -150,7 +152,7 @@ def test_a304_order_and_threshold_changes_are_named(
     другие, «изменений нет» было бы неправдой. Строка `95` в середине сдвигает места ниже, но
     порядок общих строк прежний — только «новая строка». Смена единицы — со старой единицей:
     «3.25 → 3250 мс» читалось бы ростом в тысячу раз. Порог убран и порог новый — по имени; у
-    единицы `number` слова нет."""
+    единицы `number` слова нет. В конце — готовая запись и знак (A311)."""
     seed({"rows": SAMPLE, "number": 1})
     data = dump(document(rows))
     assert check(data) == (0, NL.join([GOOD.format(len(rows)), line, *tail(data, 1)]), "")

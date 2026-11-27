@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import shlex
 import subprocess
 import sys
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -44,6 +45,7 @@ from ai_geo_audit.reference.file import UNITS
 from ai_geo_audit.storage import locks
 
 Cli = Callable[..., tuple[int, str, str]]
+#: Отказ `load` без знака или со знаком не того вида (A309).
 EXPECT = "нужен знак из проверки: --expect <sha256>@<номер>"
 REASON = "нужна причина — чьё слово и когда"
 ONE_LINE = "причина — одной строкой, без управляющих знаков"
@@ -59,7 +61,7 @@ EDIT_OVER_1 = (
 )
 HEADS = (
     "SELECT r.number, r.status, r.source, b.number, r.file_sha256, r.source_date, r.reason,"
-    " r.archived_at IS NOT NULL FROM reference_revisions r"
+    " r.archived_at IS NOT NULL, r.file_rows FROM reference_revisions r"
     " LEFT JOIN reference_revisions b ON b.id = r.based_on_id ORDER BY r.number"
 )
 ROWS = (
@@ -96,8 +98,8 @@ def expected(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
 
 
 def head(number: int, status: str = "active", base: int | None = None) -> tuple[Any, ...]:
-    """Заголовок редакции из Ф с причиной «проба»."""
-    return (number, status, "file", base, sha(F), SNAPSHOT, "проба", status == "archived")
+    """Заголовок редакции из Ф с причиной «проба»; строк файла — 6."""
+    return (number, status, "file", base, sha(F), SNAPSHOT, "проба", status == "archived", 6)
 
 
 async def _state(numbers: tuple[int, ...], when: int | None) -> tuple[Any, ...]:
@@ -152,8 +154,8 @@ def in_process(args: list[str], data: bytes, **env: str) -> tuple[int, str, str]
 
 def test_a311_load_writes_revision_1_and_status_names_it(cli: Cli, capsys: Cap) -> None:
     """A311: пустая база; `load Ф --expect Т(0) --reason проба` — код 0, редакция 1 активна:
-    файл, sha256 и дата Ф, причина, пороги с пределами единицы; `status` — она целиком, время
-    записи — UTC с Z."""
+    файл, sha256, дата и число строк Ф, причина, пороги с пределами единицы; `status` — она
+    целиком, время записи — UTC с Z."""
     assert cli("load", F, *signed(F, 0)) == (0, WROTE.format(1, 6, 1), "")
     heads, rows, written = state(1, when=1)
     assert (heads, rows) == ([head(1)], [expected(SAMPLE)])
@@ -202,8 +204,8 @@ def test_a311_swapped_rows_are_a_new_revision_in_file_order(cli: Cli) -> None:
 
 def test_a311_check_names_the_load_and_the_load_archives_revision_1(cli: Cli) -> None:
     """A311: активна 1 из Ф; `check` Ф2 — перед знаком строка готовой команды, последняя — Т(1);
-    `load Ф2 --expect Т(1) --reason «проба 2»` — редакция 2 из файла на основе 1, редакция 1 в
-    архиве с `archived_at`, её строки и пороги прежние."""
+    `load Ф2 --expect Т(1) --reason «проба 2»` — редакция 2 из файла на основе 1, строк файла 7,
+    редакция 1 в архиве с `archived_at`, её строки и пороги прежние."""
     revisions({"rows": SAMPLE, "number": 1})
     before = state(1)[1]
     code, out, err = cli("check", F2)
@@ -215,10 +217,26 @@ def test_a311_check_names_the_load_and_the_load_archives_revision_1(cli: Cli) ->
     assert cli("load", F2, *signed(F2, 1, "проба 2")) == (0, WROTE.format(2, 7, 1), "")
     heads, after, _ = state(1)
     assert [h[:4] + h[6:] for h in heads] == [
-        (1, "archived", "file", None, "проба 1", True),
-        (2, "active", "file", 1, "проба 2", False),
+        (1, "archived", "file", None, "проба 1", True, 6),
+        (2, "active", "file", 1, "проба 2", False, 7),
     ]
     assert after == before
+
+
+@pytest.mark.usefixtures("cli")
+def test_a311_the_ready_line_keeps_a_path_with_a_space_and_a_quote(
+    tmp_path: Path, capsys: Cap
+) -> None:
+    """A311: путь файла с пробелом и `'` — в готовой строке записи он в кавычках оболочки:
+    `shlex.split` строки отдаёт ровно этот путь (план, проба 6)."""
+    folder = tmp_path / "файлы ведущей 'v2'"
+    folder.mkdir()
+    _, spec = files(folder, F, manifest_of(F, 6))
+    path = str(folder / "reference.json")
+    assert command.main(["check", path, "--manifest", spec]) == 0
+    line = capsys.readouterr().out.split(NL)[-3].removeprefix("запись: ")
+    load = ["python", "-m", "ai_geo_audit.reference", "load", path]
+    assert shlex.split(line) == [*load, "--expect", sign(F, 0), "--reason", "<чьё слово и когда>"]
 
 
 def test_a311_a_load_over_an_edit_needs_replace_edits(cli: Cli) -> None:
@@ -287,6 +305,21 @@ def test_a309_the_sign_and_the_reason_are_checked_before_writing(
 def test_a309_a_reason_of_500_characters_is_accepted(cli: Cli) -> None:
     """A309, соседний годный случай: причина ровно 500 знаков — запись."""
     assert cli("load", F, *signed(F, 0, "п" * 500)) == (0, WROTE.format(1, 6, 1), "")
+
+
+@pytest.mark.usefixtures("cli")
+def test_a309_without_a_sign_the_standard_input_is_not_read(monkeypatch: MP, capsys: Cap) -> None:
+    """A309: `load -` без знака — «нужен знак…», код 1; стандартный ввод не читается: знак и
+    причина сверяются до файла (decisions, порядок `load`)."""
+
+    class Unread:
+        @property
+        def buffer(self) -> Any:
+            raise AssertionError("ввод прочитан до знака")
+
+    monkeypatch.setattr(sys, "stdin", Unread())
+    assert command.main(["load", "-", "--reason", "проба"]) == 1
+    assert capsys.readouterr() == ("", EXPECT + NL)
 
 
 @pytest.mark.parametrize(
@@ -379,6 +412,25 @@ def test_a313_a_failure_at_commit_is_not_called_untouched(
         patch.setattr(AsyncSession, "commit", commit_then_fail)
         assert cli("load", F2, *signed(F2, 1)) == (1, "", at_commit + NL)
     assert status(capsys)[1].startswith("редакция 2 активна: файл, строк 7, порогов 1, sha256")
+
+
+def test_a313_a_failure_outside_the_known_steps_sends_to_status(
+    cli: Cli, monkeypatch: MP, capsys: Cap
+) -> None:
+    """A313: сбой вне опознанных шагов — закрытие движка бросает после записи (подмена): общий
+    отказ шага не знает — «сбой записи: <тип> — проверьте status», а не «не тронут»; `status` —
+    редакция 1 (сверка второй проверяющей среза 1, проба P6)."""
+    real = AsyncEngine.dispose
+
+    async def dispose_then_fail(self: AsyncEngine, close: bool = True) -> None:
+        await real(self, close)
+        raise RuntimeError("подмена: сбой после записи")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AsyncEngine, "dispose", dispose_then_fail)
+        failed = cli("load", F, *signed(F, 0))
+    assert failed == (1, "", "сбой записи: RuntimeError — проверьте status" + NL)
+    assert status(capsys)[1].startswith("редакция 1 активна: файл, строк 6, порогов 1, sha256")
 
 
 @contextlib.asynccontextmanager

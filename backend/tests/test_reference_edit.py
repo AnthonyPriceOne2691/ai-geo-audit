@@ -38,7 +38,8 @@ SNAPSHOT = (
 
 async def edit(engine: AsyncEngine, *changes: Any, expected: int = 1, apply: bool = True) -> Any:
     """`change_thresholds` в своей сессии; модуль — здесь: без кода среза тест красный сам. Запись
-    завершает свою транзакцию — фиксацией, отказом или сбоем: замок снят и при открытой сессии."""
+    завершает свою транзакцию — фиксацией, отказом или сбоем: замок снят и при открытой сессии
+    (A313, A319)."""
     from ai_geo_audit.reference import edit as module
 
     async with AsyncSession(engine, expire_on_commit=False) as session:
