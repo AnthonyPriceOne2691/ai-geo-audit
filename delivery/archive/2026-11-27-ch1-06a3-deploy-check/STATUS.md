@@ -12,7 +12,10 @@
 - **kind:** feature
 - **repro_test:** n/a reason=не bugfix
 - **diagnosis:** n/a reason=не bugfix
-- **phase:** verify
+- **phase:** handoff
+  <!-- Слово владельца 2026-11-27T12:48:42Z «Публикуем 6а-3» (через ведущую): публикация и
+       подпись десяти утверждений дайджеста без примера; строка `asserts_reviewed_by` — коммитом
+       ведущей. -->
 - **builder:** agent:hands-session
 - **verifier:** agent:reviewer3-session
   <!-- Третья проверяющая — решение ведущей 2026-11-27: полная приёмка, чтение черновиков —
@@ -56,6 +59,6 @@
        стандартной библиотеки, `python3 -I`. Снимок (`scripts/lint/file_length_baseline.txt`)
        правит исполнитель на срезе, где файл растёт, — по фактической длине, не выше 1100. -->
 - **observability:** 1
-- **observe_signal:** <заполняется на handoff>
-- **observe_until:** <заполняется на handoff>
+- **observe_signal:** первый прогон CI на main после слияния 6а-3 (`quality`, `ubuntu-24.04`): джоба `stack` — оракул шагов 44, красных 0, живой шаг «A185 A183» — «ок: судимых строк 8», значений в выводе 0; доли порч — success. A185, шестая строка, — `deploy.py check` на сервере перед первым выкатом, заход ведущей: каждая строка «ок» или названное исключение, код 0
+- **observe_until:** 2026-12-04 — неделя прогонов CI на main после 6а-3: джоба `stack` (живой `deploy.py check`) и доли порч; шестая строка A185 — заход ведущей на сервер перед первым выкатом
 - **circuit_breakers:** max_loc_diff=2500 max_files_touched=50
