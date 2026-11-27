@@ -1,6 +1,7 @@
 // F31–F36 и половины F24, F28, F29 о заглушке: блок «Связь с сервером» на общем клиенте кэша —
 // состояние словами в области role="status", повтор только кнопкой, прежний ответ — пока едет новый.
 // Тексты блока — точными строками спеки: поиск подстроки дал бы ложный зелёный (F31).
+import { type QueryClient, useQueryClient } from '@tanstack/react-query';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -75,7 +76,7 @@ describe('F31: состояние проверки связи — словами
   });
 });
 
-describe('F32–F36: повтор только кнопкой, один на двойное нажатие, прежний ответ на экране', () => {
+describe('F32, F33, F35, F36: повтор только кнопкой, один на два нажатия, прежний ответ', () => {
   it('F32: 503, возврат во вкладку и сеть пропала и появилась — запрос один', async () => {
     answer('GET', '/api/health', reply(sample('unavailable')));
     render(<App />);
@@ -109,16 +110,6 @@ describe('F32–F36: повтор только кнопкой, один на д�
     expect(requests()).toHaveLength(2);
   });
 
-  it('F34: родитель отрисовал App заново — клиент кэша тот же, проверка не уходит снова', async () => {
-    answer('GET', '/api/health', reply(sample('health-ok')));
-    const { rerender } = render(<App />);
-    await waitFor(() => expect(status()).toBe(OK));
-    rerender(<App />);
-    await tick();
-    expect(status()).toBe(OK);
-    expect(requests()).toHaveLength(1);
-  });
-
   it('F35: после offline проверка уходит и кончается «Ответа нет…»; пока ждём — в загрузке', async () => {
     answer('GET', '/api/health', reply(sample('health-ok')));
     render(<App />);
@@ -146,6 +137,40 @@ describe('F32–F36: повтор только кнопкой, один на д�
     expect(status()).toBe(words.api.noResponse);
     act(() => late.settle(reply(sample('health-ok'))));
     await waitFor(() => expect(status()).toBe(OK));
+  });
+});
+
+describe('F34: клиент кэша — один на жизнь провайдеров', () => {
+  it('F34: родитель отрисовал App заново — клиент кэша тот же, проверка не уходит снова', async () => {
+    answer('GET', '/api/health', reply(sample('health-ok')));
+    const { rerender } = render(<App />);
+    await waitFor(() => expect(status()).toBe(OK));
+    rerender(<App />);
+    await tick();
+    expect(status()).toBe(OK);
+    expect(requests()).toHaveLength(1);
+  });
+
+  // Запрос второй раз не уходит и при клиенте, созданном в разметке: `useQuery` держит наблюдателя
+  // в состоянии и к новому клиенту не переходит (ручная порча P7 выжила). Поэтому — сам клиент.
+  it('F34: провайдеры отрисованы заново — клиент кэша тот же по ссылке', async () => {
+    answer('GET', '/api/health', reply(sample('health-ok')));
+    const seen: QueryClient[] = [];
+    function Probe() {
+      seen.push(useQueryClient());
+      return null;
+    }
+    const tree = () => (
+      <AppProviders>
+        <StubPage />
+        <Probe />
+      </AppProviders>
+    );
+    const { rerender } = render(tree());
+    await waitFor(() => expect(status()).toBe(OK));
+    rerender(tree());
+    expect(seen.length).toBeGreaterThan(1);
+    expect(new Set(seen).size).toBe(1);
   });
 });
 
